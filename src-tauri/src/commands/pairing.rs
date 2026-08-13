@@ -196,3 +196,27 @@ pub async fn pair_with_peer(
         ErrorPayload::new("pairing_failed", "The pairing attempt failed.", None)
     }))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{parse_manual_endpoint, PAIRING_PORT};
+    use std::net::{Ipv4Addr, SocketAddr};
+
+    #[test]
+    fn manual_ipv4_address_uses_the_standard_pairing_port() {
+        assert_eq!(
+            parse_manual_endpoint(Some("192.168.50.2")).unwrap(),
+            Some(SocketAddr::from((Ipv4Addr::new(192, 168, 50, 2), PAIRING_PORT)))
+        );
+    }
+
+    #[test]
+    fn manual_endpoint_can_override_the_standard_port_and_reports_invalid_input() {
+        assert_eq!(
+            parse_manual_endpoint(Some("169.254.20.8:50123")).unwrap(),
+            Some("169.254.20.8:50123".parse().unwrap())
+        );
+        let error = parse_manual_endpoint(Some("not-an-address")).unwrap_err();
+        assert_eq!(error.code, "manual_peer_endpoint_invalid");
+    }
+}
