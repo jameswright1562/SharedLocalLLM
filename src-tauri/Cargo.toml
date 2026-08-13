@@ -1,6 +1,6 @@
 [package]
 name = "shared-local-llm"
-version = "0.1.0"
+version = "0.1.1"
 description = "Secure two-node local LLM orchestration"
 authors = ["SharedLocalLLM contributors"]
 edition = "2021"

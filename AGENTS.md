@@ -50,7 +50,7 @@ conflicts and stale competing status reports.
 | `rust_core`        | Complete | Native implementation is green with 14/14 tests, formatting, Clippy warnings-as-errors, Cargo build, and the direct-Ethernet release bundle. |
 | `desktop_ui`       | Complete | Frontend is green with 37/37 tests, coverage above 86% in every dimension, production build, and 4/4 browser workflows.                      |
 | `tooling_docs`     | Complete | Junior-friendly README, developer docs, pinned runtime manifest, CI, release packaging, and checksum workflow are in place.                  |
-| `root` integration | Active   | Manual Ethernet IP fallback is implemented; all gates and the NSIS rebuild are green. Retry the new build on two physical computers.         |
+| `root` integration | Active   | Automatic link-local discovery and LM Studio hub storage resolution are green in focused tests; run full gates and package version 0.1.1.    |
 
 ## Validation checklist
 
@@ -68,13 +68,13 @@ acceptance.
 - [x] `pnpm build` — production Vite build succeeds.
 - [x] `pnpm e2e` — four of four Chromium browser-demo workflows pass.
 - [x] `cargo fmt --manifest-path src-tauri/Cargo.toml --all --check` — passes.
-- [x] `cargo test --manifest-path src-tauri/Cargo.toml --all-targets` — 14/14 tests pass.
+- [x] `cargo test --manifest-path src-tauri/Cargo.toml --all-targets` — 18/18 tests pass.
 - [x] `cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings` — passes.
 - [x] `cargo build --manifest-path src-tauri/Cargo.toml` — development build succeeds.
 - [x] Production readability audit — every production TypeScript, TSX, CSS, and Rust file is under
       300 lines; the largest is `src-tauri/src/runtime/installer.rs` at 299 lines.
-- [x] `pnpm tauri build --bundles nsis` — unsigned x64 installer with manual Ethernet pairing and
-      matching `SHA256SUMS.txt` generated successfully.
+- [ ] `pnpm tauri build --bundles nsis` — rebuild version 0.1.1 with automatic Ethernet discovery
+      and LM Studio hub storage resolution.
 - [ ] Physical two-computer acceptance in `docs/testing.md`; automated loopback/demo tests do not
       satisfy this item.
 

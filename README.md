@@ -118,7 +118,9 @@ Model discovery runs independently on both computers:
 
 1. If LM Studio's `lms` command is available, the app reads `lms ls --json --detailed`. This follows
    the model location configured inside LM Studio, including a non-default location.
-2. If the CLI is unavailable, it checks `%USERPROFILE%\.lmstudio\models`.
+2. If the CLI is unavailable, it checks the legacy `%USERPROFILE%\.lmstudio\models` layout, the
+   current `.lmstudio\hub\models` catalogue, bundled models, and the real `downloadsFolder` recorded
+   in `.lmstudio\settings.json` (often `%USERPROFILE%\.cache\huggingface\hub`).
 3. It also indexes every custom folder you add in SharedLocalLLM.
 
 Configured folders are read-only. SharedLocalLLM does not move, rename, overwrite, delete, or copy
