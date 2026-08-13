@@ -236,7 +236,10 @@ mod tests {
     fn manual_ipv4_address_uses_the_standard_pairing_port() {
         assert_eq!(
             parse_manual_endpoint(Some("192.168.50.2")).unwrap(),
-            Some(SocketAddr::from((Ipv4Addr::new(192, 168, 50, 2), PAIRING_PORT)))
+            Some(SocketAddr::from((
+                Ipv4Addr::new(192, 168, 50, 2),
+                PAIRING_PORT
+            )))
         );
     }
 
