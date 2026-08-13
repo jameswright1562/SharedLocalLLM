@@ -89,3 +89,27 @@ fn io_error(error: std::io::Error) -> ErrorPayload {
         Some("Allow SharedLocalLLM on Private networks or enter the peer address manually.".into()),
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::directed_broadcast;
+    use std::net::Ipv4Addr;
+
+    #[test]
+    fn calculates_a_directed_broadcast_for_private_and_link_local_interfaces() {
+        assert_eq!(
+            directed_broadcast(
+                Ipv4Addr::new(192, 168, 50, 12),
+                Ipv4Addr::new(255, 255, 255, 0)
+            ),
+            Ipv4Addr::new(192, 168, 50, 255)
+        );
+        assert_eq!(
+            directed_broadcast(
+                Ipv4Addr::new(169, 254, 179, 236),
+                Ipv4Addr::new(255, 255, 0, 0)
+            ),
+            Ipv4Addr::new(169, 254, 255, 255)
+        );
+    }
+}

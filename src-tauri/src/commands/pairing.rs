@@ -229,8 +229,8 @@ fn parse_manual_endpoint(value: Option<&str>) -> Result<Option<SocketAddr>, Erro
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_manual_endpoint, PAIRING_PORT};
-    use std::net::{Ipv4Addr, SocketAddr};
+    use super::{parse_manual_endpoint, reject_local_endpoint, PAIRING_PORT};
+    use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
     #[test]
     fn manual_ipv4_address_uses_the_standard_pairing_port() {
@@ -251,5 +251,13 @@ mod tests {
         );
         let error = parse_manual_endpoint(Some("not-an-address")).unwrap_err();
         assert_eq!(error.code, "manual_peer_endpoint_invalid");
+    }
+
+    #[test]
+    fn manual_endpoint_rejects_an_address_owned_by_this_computer() {
+        let endpoint = SocketAddr::from((Ipv4Addr::new(169, 254, 179, 236), PAIRING_PORT));
+        let local_addresses = [IpAddr::V4(Ipv4Addr::new(169, 254, 179, 236))];
+        let error = reject_local_endpoint(endpoint, &local_addresses).unwrap_err();
+        assert_eq!(error.code, "manual_peer_endpoint_is_local");
     }
 }
