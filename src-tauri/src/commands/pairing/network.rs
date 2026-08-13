@@ -143,12 +143,28 @@ fn network_profiles_are_trusted(profiles: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::network_profiles_are_trusted;
+    use super::{network_profiles_are_trusted, temporary_firewall_script};
+    use std::path::Path;
     #[test]
     fn accepts_private_and_domain_profiles_but_rejects_public_profiles() {
         assert!(network_profiles_are_trusted("Private"));
         assert!(network_profiles_are_trusted("Public,DomainAuthenticated"));
         assert!(!network_profiles_are_trusted("Public"));
         assert!(!network_profiles_are_trusted(""));
+    }
+
+    #[test]
+    fn temporary_pairing_rule_allows_tcp_pairing_and_udp_discovery() {
+        let script = temporary_firewall_script(
+            "SharedLocalLLM temporary pairing test",
+            Path::new("C:\\SharedLocalLLM.exe"),
+            49_158,
+            49_157,
+            Path::new("C:\\ready"),
+            Path::new("C:\\lease"),
+        );
+        assert!(script.contains("-Protocol TCP -LocalPort 49158"));
+        assert!(script.contains("-Protocol UDP -LocalPort 49157"));
+        assert!(script.contains("Remove-NetFirewallRule"));
     }
 }
