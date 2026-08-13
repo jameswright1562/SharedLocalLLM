@@ -15,6 +15,13 @@
   grid-column: 1 / -1;
   justify-self: end;
 }
+.benchmark-actions .benchmark-split {
+  grid-column: 1 / -1;
+  max-width: 420px;
+  margin: 2px 0;
+  color: var(--muted);
+  font: 0.62rem/1.5 var(--mono);
+}
 .benchmark-table-wrap {
   overflow-x: auto;
   border: 1px solid var(--line);

@@ -73,6 +73,25 @@ pub async fn start_cluster(
             Some("Install it from the first-run setup.".into()),
         ));
     }
+    state.log(
+        "INFO",
+        "cluster_start_requested",
+        &format!(
+            "topology={} context={} gpu_layers={}",
+            if peer_id.is_some() {
+                "distributed"
+            } else {
+                "local"
+            },
+            normalized_config.context_size,
+            normalized_config
+                .gpu_layers
+                .iter()
+                .map(|allocation| allocation.layers.to_string())
+                .collect::<Vec<_>>()
+                .join("/")
+        ),
+    );
     let rpc_endpoint = if peer_id.is_some() {
         let client = state.peer_client().await?;
         client.heartbeat().await?;
@@ -116,6 +135,7 @@ pub async fn start_cluster(
         if let Some(forwarder) = state.peer.lock().await.forwarder.take() {
             forwarder.shutdown().await;
         }
+        state.log("ERROR", "cluster_health_failed", &error.to_string());
         return Err(error);
     }
     let session = ClusterSession {
@@ -126,6 +146,11 @@ pub async fn start_cluster(
         error: None,
     };
     state.lock()?.cluster = session.clone();
+    state.log(
+        "INFO",
+        "cluster_ready",
+        "llama-server passed its loopback health check",
+    );
     Ok(session)
 }
 
@@ -163,7 +188,14 @@ pub async fn stop_cluster(state: State<'_, AppState>) -> Result<ClusterSession, 
         .into(),
         ..ClusterSession::default()
     };
-    Ok(inner.cluster.clone())
+    let session = inner.cluster.clone();
+    drop(inner);
+    state.log(
+        "INFO",
+        "cluster_stopped",
+        "Stopped local runtime and encrypted RPC forwarding",
+    );
+    Ok(session)
 }
 
 async fn wait_for_health(port: u16, api_key: &str) -> Result<(), ErrorPayload> {

@@ -9,5 +9,5 @@ mod tunnel;
 pub use client::{BenchmarkResult, PeerClient};
 pub use discovery::{discover, DiscoveryAnnouncement, DiscoveryBroadcaster};
 pub(crate) use discovery::{local_ip_addresses, DISCOVERY_PORT};
-pub use service::{PeerServer, PeerServerConfig, TrustedPeer};
+pub use service::{PeerPairingEvent, PeerServer, PeerServerConfig, TrustedPeer};
 pub use tunnel::RpcForwarder;

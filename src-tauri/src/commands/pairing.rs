@@ -1,30 +1,28 @@
+pub(crate) mod lifecycle;
 mod network;
+pub(crate) mod reset;
 mod session;
 
-use std::{
-    net::{Ipv4Addr, SocketAddr},
-    sync::Arc,
-    time::Duration,
-};
+pub use reset::reset_pairing;
+
+use std::{net::SocketAddr, sync::Arc, time::Duration};
 
 use tauri::{AppHandle, State};
 
 use crate::{
     pairing::{now, PeerRecord},
-    peer::{
-        discover, local_ip_addresses, DiscoveryAnnouncement, DiscoveryBroadcaster, PeerClient,
-        PeerServer, PeerServerConfig,
-    },
-    runtime, secrets,
+    peer::{discover, local_ip_addresses, PeerClient},
+    secrets,
     state::{peer_secret_path, AppState},
     types::{ErrorPayload, NodeCapabilities, PairingCode},
 };
 
+use lifecycle::start_peer_server;
 pub(crate) use network::require_private_network;
 use network::{close_firewall_lease, open_temporary_public_firewall_port, require_pairing_network};
 use session::cleanup_pairing_session;
 
-const PAIRING_PORT: u16 = 49_158;
+pub(super) const PAIRING_PORT: u16 = 49_158;
 
 #[tauri::command]
 pub async fn generate_pairing_code(
@@ -38,19 +36,6 @@ pub async fn generate_pairing_code(
         .lock()
         .map_err(|_| ErrorPayload::new("pairing_state", "Pairing state is unavailable.", None))?
         .generate();
-    let local = state.lock()?.local.clone();
-    let rpc_path = runtime::runtime_root()
-        .join("current")
-        .join("ggml-rpc-server.exe");
-    let rpc_command = rpc_path.is_file().then(|| {
-        vec![
-            rpc_path.to_string_lossy().into_owned(),
-            "--host".into(),
-            "127.0.0.1".into(),
-            "--port".into(),
-            "50052".into(),
-        ]
-    });
     let (previous_discovery, previous_server, previous_lease) = {
         let mut peer = state.peer.lock().await;
         peer.pairing_session_id = None;
@@ -67,18 +52,7 @@ pub async fn generate_pairing_code(
         previous.shutdown().await;
     }
     close_firewall_lease(previous_lease.as_deref());
-    let server = PeerServer::start(PeerServerConfig {
-        bind: SocketAddr::from((Ipv4Addr::UNSPECIFIED, PAIRING_PORT)),
-        device_id: local.id.clone(),
-        device_name: local.name.clone(),
-        capabilities: serde_json::to_value(&local)
-            .map_err(|error| ErrorPayload::new("capabilities_encode", error.to_string(), None))?,
-        pairing_code: Some(code.clone()),
-        trusted_peers: vec![],
-        rpc_target: SocketAddr::from((Ipv4Addr::LOCALHOST, 50052)),
-        rpc_command,
-    })
-    .await?;
+    let (server, broadcaster) = start_peer_server(&state, Some(code.clone())).await?;
     let firewall_lease = if public_override {
         match open_temporary_public_firewall_port(server.address().port()).await {
             Ok(lease) => Some(lease),
@@ -89,21 +63,6 @@ pub async fn generate_pairing_code(
         }
     } else {
         None
-    };
-    let broadcaster = match DiscoveryBroadcaster::start(DiscoveryAnnouncement {
-        protocol_version: 1,
-        device_id: local.id,
-        device_name: local.name,
-        peer_port: server.address().port(),
-    })
-    .await
-    {
-        Ok(broadcaster) => broadcaster,
-        Err(error) => {
-            close_firewall_lease(firewall_lease.as_deref());
-            server.shutdown().await;
-            return Err(error);
-        }
     };
     let mut pairing_completion = server.pairing_completion();
     let session_id = uuid::Uuid::new_v4().to_string();
@@ -116,11 +75,18 @@ pub async fn generate_pairing_code(
     }
     tokio::spawn(async move {
         let completed = tokio::select! {
-            result = pairing_completion.changed() => result.is_ok() && *pairing_completion.borrow(),
-            _ = tokio::time::sleep(Duration::from_secs(300)) => false,
+            result = pairing_completion.changed() => {
+                result.ok().and_then(|_| pairing_completion.borrow().clone())
+            },
+            _ = tokio::time::sleep(Duration::from_secs(300)) => None,
         };
         cleanup_pairing_session(&app, &session_id, completed).await;
     });
+    state.log(
+        "INFO",
+        "pairing_code_ready",
+        "Pairing is available for five minutes",
+    );
     Ok(PairingCode {
         code: format!("{} {}", &code[..3], &code[3..]),
         expires_in_seconds: 300,
@@ -132,6 +98,7 @@ pub async fn pair_with_peer(
     code: String,
     allow_public_network: bool,
     manual_endpoint: Option<String>,
+    app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<NodeCapabilities, ErrorPayload> {
     let public_override = require_pairing_network(allow_public_network)?;
@@ -142,6 +109,9 @@ pub async fn pair_with_peer(
     };
     let result = pair_with_peer_inner(code, manual_endpoint, &state).await;
     close_firewall_lease(firewall_lease.as_deref());
+    if result.is_ok() {
+        lifecycle::start_persistent_peer_service(app).await;
+    }
     result
 }
 
@@ -180,7 +150,9 @@ async fn pair_with_peer_inner(
     }
     let mut last_error = None;
     for endpoint in endpoints {
-        match PeerClient::pair(endpoint, &code, &local.id, &local.name).await {
+        let capabilities = serde_json::to_value(&local)
+            .map_err(|error| ErrorPayload::new("capabilities_encode", error.to_string(), None))?;
+        match PeerClient::pair(endpoint, &code, &local.id, &local.name, capabilities).await {
             Ok(client) => {
                 let capabilities = client.capabilities().await?;
                 let mut node: NodeCapabilities =
@@ -206,21 +178,41 @@ async fn pair_with_peer_inner(
                     trusted_at: now(),
                     capabilities: Some(node.clone()),
                 };
-                {
+                let replaced_peer_ids = {
                     let mut inner = state.lock()?;
-                    inner.peers.retain(|peer| peer.id != record.id);
+                    let ids = inner
+                        .peers
+                        .iter()
+                        .filter(|peer| peer.id != record.id)
+                        .map(|peer| peer.id.clone())
+                        .collect::<Vec<_>>();
+                    inner.peers.clear();
                     inner.peers.push(record);
+                    ids
+                };
+                for replaced_peer_id in replaced_peer_ids {
+                    secrets::remove(&peer_secret_path(&replaced_peer_id))?;
                 }
                 state.persist()?;
+                if let Err(error) = state.refresh_models_shared() {
+                    state.log("WARN", "model_fit_refresh_failed", &error.to_string());
+                }
                 state.peer.lock().await.client = Some(Arc::new(client));
+                state.log(
+                    "INFO",
+                    "pairing_complete",
+                    "Saved the trusted peer and channel key",
+                );
                 return Ok(node);
             }
             Err(error) => last_error = Some(error),
         }
     }
-    Err(last_error.unwrap_or_else(|| {
+    let error = last_error.unwrap_or_else(|| {
         ErrorPayload::new("pairing_failed", "The pairing attempt failed.", None)
-    }))
+    });
+    state.log("WARN", "pairing_failed", &error.to_string());
+    Err(error)
 }
 
 fn parse_manual_endpoint(value: Option<&str>) -> Result<Option<SocketAddr>, ErrorPayload> {

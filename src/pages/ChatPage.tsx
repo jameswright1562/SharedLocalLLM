@@ -29,10 +29,9 @@ export function ChatPage({ snapshot, service, navigate }: PageProps) {
         ? "No model is loaded. Choose and launch a model before chatting."
         : "";
 
-  useEffect(
-    () => bottomRef.current?.scrollIntoView({ behavior: "smooth" }),
-    [messages, generating],
-  );
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, generating]);
 
   async function submit(content = draft) {
     if (!content.trim() || disabledReason || generating) return;

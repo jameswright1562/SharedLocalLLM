@@ -1,15 +1,32 @@
 import { useState } from "react";
+import { describeAppError } from "../services/errors";
 import type { PageProps } from "../types";
 import { StatusPill } from "../components/Telemetry";
 import { formatGb } from "./pageFormat";
 
 export function NodesPage({ snapshot, service, refreshSnapshot }: PageProps) {
   const [refreshing, setRefreshing] = useState(false);
+  const [confirmingReset, setConfirmingReset] = useState(false);
+  const [message, setMessage] = useState("");
   async function refresh() {
     setRefreshing(true);
     try {
       await service.refreshHardware();
       await refreshSnapshot();
+    } finally {
+      setRefreshing(false);
+    }
+  }
+  async function resetPairing() {
+    setRefreshing(true);
+    setMessage("");
+    try {
+      await service.resetPairing();
+      await refreshSnapshot();
+      setConfirmingReset(false);
+      setMessage("Paired node forgotten. Create a new pairing code to reconnect it.");
+    } catch (reason) {
+      setMessage(describeAppError(reason, "The paired node could not be forgotten."));
     } finally {
       setRefreshing(false);
     }
@@ -64,6 +81,43 @@ export function NodesPage({ snapshot, service, refreshSnapshot }: PageProps) {
                 </dd>
               </div>
             </dl>
+            {index > 0 && !confirmingReset && (
+              <button
+                className="text-button danger-text"
+                disabled={refreshing}
+                onClick={() => setConfirmingReset(true)}
+              >
+                Forget {node.name}
+              </button>
+            )}
+            {index > 0 && confirmingReset && (
+              <div className="error-panel" role="alert">
+                <div>
+                  <strong>Forget {node.name}?</strong>
+                  <p>
+                    Trust and connection settings will reset. Model files and folders stay
+                    untouched.
+                  </p>
+                  <div className="button-row">
+                    <button
+                      className="button secondary"
+                      disabled={refreshing}
+                      onClick={() => setConfirmingReset(false)}
+                    >
+                      Keep node
+                    </button>
+                    <button
+                      className="button stop-button"
+                      aria-label={`Confirm forget ${node.name}`}
+                      disabled={refreshing}
+                      onClick={() => void resetPairing()}
+                    >
+                      {refreshing ? "Forgetting…" : `Forget ${node.name}`}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
           </article>
         ))}
         {snapshot.nodes.length < 2 && (
@@ -79,6 +133,11 @@ export function NodesPage({ snapshot, service, refreshSnapshot }: PageProps) {
           </div>
         )}
       </div>
+      {message && (
+        <div className="toast-message" role="status">
+          {message}
+        </div>
+      )}
     </div>
   );
 }

@@ -60,6 +60,23 @@ export default function App({ service = appService }: { service?: AppService }) 
     void refreshSnapshot();
   }, [refreshSnapshot]);
 
+  useEffect(() => {
+    let active = true;
+    let timer = 0;
+    const schedule = () => {
+      timer = window.setTimeout(() => {
+        void refreshSnapshot().finally(() => {
+          if (active) schedule();
+        });
+      }, 8_000);
+    };
+    schedule();
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+    };
+  }, [refreshSnapshot]);
+
   function navigate(nextPage: PageId) {
     setPage(nextPage);
     setSidebarOpen(false);

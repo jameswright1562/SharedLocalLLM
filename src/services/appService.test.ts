@@ -152,6 +152,7 @@ describe("app services", () => {
     await nativeService.runNetworkTest();
     await nativeService.generatePairingCode(true);
     await nativeService.pairWithPeer("481209", true, "192.168.50.2");
+    await nativeService.resetPairing();
     const loadConfig = {
       contextSize: 8192,
       gpuLayers: [
@@ -193,6 +194,7 @@ describe("app services", () => {
         "pair_with_peer",
         { code: "481209", allowPublicNetwork: true, manualEndpoint: "192.168.50.2" },
       ],
+      ["reset_pairing", undefined],
       ["estimate_model_split", { modelId: "model-2", loadConfig }],
       ["start_cluster", { modelId: "model-2", loadConfig }],
       ["stop_cluster", undefined],

@@ -1,3 +1,4 @@
+mod auth;
 mod connection;
 
 use std::{net::SocketAddr, sync::Arc};
@@ -32,9 +33,18 @@ pub struct PeerServerConfig {
     pub rpc_command: Option<Vec<String>>,
 }
 
+#[derive(Clone, Debug)]
+pub struct PeerPairingEvent {
+    pub device_id: String,
+    pub device_name: String,
+    pub channel_key: String,
+    pub capabilities: Value,
+    pub source: SocketAddr,
+}
+
 pub struct PeerServer {
     address: SocketAddr,
-    pairing_completed: watch::Receiver<bool>,
+    pairing_completed: watch::Receiver<Option<PeerPairingEvent>>,
     stop: Option<oneshot::Sender<()>>,
     task: JoinHandle<()>,
 }
@@ -53,7 +63,7 @@ impl PeerServer {
             .map_err(protocol::io_error)?;
         let address = listener.local_addr().map_err(protocol::io_error)?;
         let (stop, mut stopped) = oneshot::channel();
-        let (pairing_completed_tx, pairing_completed) = watch::channel(false);
+        let (pairing_completed_tx, pairing_completed) = watch::channel(None);
         let config = Arc::new(ServerState::new(config, pairing_completed_tx));
         let connections = Arc::new(tokio::sync::Semaphore::new(32));
         let task = tokio::spawn(async move {
@@ -81,7 +91,7 @@ impl PeerServer {
     pub fn address(&self) -> SocketAddr {
         self.address
     }
-    pub fn pairing_completion(&self) -> watch::Receiver<bool> {
+    pub fn pairing_completion(&self) -> watch::Receiver<Option<PeerPairingEvent>> {
         self.pairing_completed.clone()
     }
     pub async fn shutdown(mut self) {

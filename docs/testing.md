@@ -70,6 +70,12 @@ specific products into application logic.
 - Run a valid model requiring coordinator RAM spill and confirm the operating-system reserve.
 - Exercise text and supported vision chat from both computers, including SSE and cancellation.
 - Disconnect during model load and generation; confirm clear failure and complete process cleanup.
+- Close and reopen each app independently; confirm the saved peer returns to Reachable without a
+  new pairing code. Then use **Nodes > Forget**, confirm both peers require a fresh pairing, and
+  verify every configured model path and file remains unchanged.
+- Run a distributed benchmark and record the displayed per-computer GPU layer counts. Confirm both
+  GPUs allocate memory while `llama-bench` runs and the result is labelled `distributed`; a browser
+  demo or command-construction test is not physical acceptance.
 - Exercise Ethernet, Wi-Fi, manual IP, Private/Public profile behavior, firewall repair, occupied API
   port, runtime mismatch, failed runtime update, and rollback.
 - Confirm model directories are unchanged after indexing, benchmarking, chat, and uninstall.

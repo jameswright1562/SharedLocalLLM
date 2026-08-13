@@ -17,6 +17,21 @@ function props(snapshot: AppSnapshot = cloneSnapshot(), serviceOverrides = {}): 
 }
 
 describe("interactive pages", () => {
+  it("does not return the smooth-scroll result as an effect cleanup", async () => {
+    const scrollResult = Promise.resolve();
+    const scrollIntoView = vi
+      .spyOn(HTMLElement.prototype, "scrollIntoView")
+      .mockImplementation(() => scrollResult as unknown as void);
+    const snapshot = cloneSnapshot();
+    snapshot.cluster = { ...snapshot.cluster, status: "running", modelId: "model-text" };
+
+    const view = render(<ChatPage {...props(snapshot)} />);
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalled());
+    expect(() => view.unmount()).not.toThrow();
+
+    scrollIntoView.mockRestore();
+  });
+
   it("sends chat, edits settings, attaches images, and cancels generation", async () => {
     const user = userEvent.setup();
     const snapshot = cloneSnapshot();

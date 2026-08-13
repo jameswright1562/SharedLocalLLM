@@ -5,7 +5,7 @@ use std::{
 };
 
 use serde_json::json;
-use shared_local_llm::peer::{PeerClient, PeerServer, PeerServerConfig};
+use shared_local_llm::peer::{PeerClient, PeerServer, PeerServerConfig, TrustedPeer};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpListener,
@@ -32,20 +32,34 @@ async fn rejects_wrong_pairing_code_and_accepts_correct_code() {
     let peer = start_peer("482916", unavailable_rpc).await;
     let mut pairing_completion = peer.pairing_completion();
 
-    assert!(
-        PeerClient::pair(peer.address(), "000000", "client-id", "Client")
-            .await
-            .is_err()
-    );
-    let client = PeerClient::pair(peer.address(), "482 916", "client-id", "Client")
-        .await
-        .unwrap();
+    assert!(PeerClient::pair(
+        peer.address(),
+        "000000",
+        "client-id",
+        "Client",
+        json!({"id":"client-id","name":"Client"}),
+    )
+    .await
+    .is_err());
+    let client = PeerClient::pair(
+        peer.address(),
+        "482 916",
+        "client-id",
+        "Client",
+        json!({"id":"client-id","name":"Client","gpu":{"name":"Client GPU"}}),
+    )
+    .await
+    .unwrap();
     assert_eq!(client.capabilities().await.unwrap()["gpu"], "test");
     tokio::time::timeout(Duration::from_secs(1), pairing_completion.changed())
         .await
         .unwrap()
         .unwrap();
-    assert!(*pairing_completion.borrow());
+    let paired = pairing_completion.borrow().clone().unwrap();
+    assert_eq!(paired.device_id, "client-id");
+    assert_eq!(paired.device_name, "Client");
+    assert_eq!(paired.capabilities["gpu"]["name"], "Client GPU");
+    assert_eq!(paired.channel_key, client.channel_key());
     assert!(client.heartbeat().await.unwrap());
     peer.shutdown().await;
 }
@@ -53,9 +67,15 @@ async fn rejects_wrong_pairing_code_and_accepts_correct_code() {
 #[tokio::test]
 async fn benchmarks_encrypted_bidirectional_messages() {
     let peer = start_peer("123456", SocketAddr::from((Ipv4Addr::LOCALHOST, 9))).await;
-    let client = PeerClient::pair(peer.address(), "123456", "client-id", "Client")
-        .await
-        .unwrap();
+    let client = PeerClient::pair(
+        peer.address(),
+        "123456",
+        "client-id",
+        "Client",
+        json!({"id":"client-id","name":"Client"}),
+    )
+    .await
+    .unwrap();
 
     let result = client.benchmark(32 * 1024, 4).await.unwrap();
 
@@ -82,9 +102,15 @@ async fn rpc_tunnel_preserves_bytes_and_cleans_up_after_disconnect() {
     });
     let peer = start_peer("654321", echo_address).await;
     let client = Arc::new(
-        PeerClient::pair(peer.address(), "654321", "client-id", "Client")
-            .await
-            .unwrap(),
+        PeerClient::pair(
+            peer.address(),
+            "654321",
+            "client-id",
+            "Client",
+            json!({"id":"client-id","name":"Client"}),
+        )
+        .await
+        .unwrap(),
     );
     let tunnel = client.start_rpc_forwarder().await.unwrap();
     let mut local = tokio::net::TcpStream::connect(tunnel.local_address())
@@ -103,4 +129,41 @@ async fn rpc_tunnel_preserves_bytes_and_cleans_up_after_disconnect() {
         .unwrap()
         .unwrap();
     peer.shutdown().await;
+}
+
+#[tokio::test]
+async fn trusted_peer_reconnects_after_the_worker_listener_restarts() {
+    let first = start_peer("741852", SocketAddr::from((Ipv4Addr::LOCALHOST, 9))).await;
+    let paired = PeerClient::pair(
+        first.address(),
+        "741852",
+        "client-id",
+        "Client",
+        json!({"id":"client-id","name":"Client"}),
+    )
+    .await
+    .unwrap();
+    let channel_key = paired.channel_key().to_owned();
+    first.shutdown().await;
+
+    let restarted = PeerServer::start(PeerServerConfig {
+        bind: SocketAddr::from((Ipv4Addr::LOCALHOST, 0)),
+        device_id: "worker-id".into(),
+        device_name: "Worker".into(),
+        capabilities: json!({"id":"worker-id","name":"Worker"}),
+        pairing_code: None,
+        trusted_peers: vec![TrustedPeer {
+            device_id: "client-id".into(),
+            device_name: "Client".into(),
+            channel_key: channel_key.clone(),
+        }],
+        rpc_target: SocketAddr::from((Ipv4Addr::LOCALHOST, 9)),
+        rpc_command: None,
+    })
+    .await
+    .unwrap();
+    let reconnected = PeerClient::trusted(restarted.address(), channel_key, "client-id".into());
+
+    assert!(reconnected.heartbeat().await.unwrap());
+    restarted.shutdown().await;
 }

@@ -18,6 +18,14 @@ pub fn load(path: &Path) -> Result<Option<Vec<u8>>, ErrorPayload> {
     unprotect(&protected).map(Some)
 }
 
+pub fn remove(path: &Path) -> Result<(), ErrorPayload> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(io_error(error)),
+    }
+}
+
 fn io_error(error: std::io::Error) -> ErrorPayload {
     ErrorPayload::new("secret_store_io", error.to_string(), None)
 }

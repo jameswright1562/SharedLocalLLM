@@ -111,6 +111,42 @@ pub(super) fn build_split_estimate(
     Ok((estimate, normalized))
 }
 
+pub(super) fn distribute_layers_by_vram(
+    total_layers: u32,
+    nodes: &[NodeCapabilities],
+) -> Vec<GpuLayerAllocation> {
+    if nodes.is_empty() {
+        return Vec::new();
+    }
+    let reserved_per_node = u32::from(total_layers >= nodes.len() as u32);
+    let distributable = total_layers.saturating_sub(reserved_per_node * nodes.len() as u32);
+    let total_vram = nodes
+        .iter()
+        .map(|node| node.gpu.vram_available_gb.max(0.0))
+        .sum::<f64>();
+    let mut assigned = 0;
+    nodes
+        .iter()
+        .enumerate()
+        .map(|(index, node)| {
+            let layers = if index == nodes.len().saturating_sub(1) {
+                total_layers.saturating_sub(assigned)
+            } else if total_vram > 0.0 {
+                reserved_per_node
+                    + ((distributable as f64 * node.gpu.vram_available_gb.max(0.0)) / total_vram)
+                        .floor() as u32
+            } else {
+                reserved_per_node + distributable / nodes.len() as u32
+            };
+            assigned += layers;
+            GpuLayerAllocation {
+                node_id: node.id.clone(),
+                layers,
+            }
+        })
+        .collect()
+}
+
 fn model_not_found() -> ErrorPayload {
     ErrorPayload::new(
         "model_not_found",
@@ -125,4 +161,37 @@ fn invalid_split(message: &str) -> ErrorPayload {
         message,
         Some("Adjust the per-computer GPU layer counts.".into()),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::distribute_layers_by_vram;
+    use crate::types::{GpuInfo, NodeCapabilities};
+
+    #[test]
+    fn automatic_distribution_uses_both_gpus_and_preserves_every_layer() {
+        let nodes = [
+            NodeCapabilities {
+                id: "local".into(),
+                gpu: GpuInfo {
+                    vram_available_gb: 14.0,
+                    ..GpuInfo::default()
+                },
+                ..NodeCapabilities::default()
+            },
+            NodeCapabilities {
+                id: "remote".into(),
+                gpu: GpuInfo {
+                    vram_available_gb: 8.0,
+                    ..GpuInfo::default()
+                },
+                ..NodeCapabilities::default()
+            },
+        ];
+
+        let split = distribute_layers_by_vram(40, &nodes);
+        assert_eq!(split[0].layers, 25);
+        assert_eq!(split[1].layers, 15);
+        assert_eq!(split.iter().map(|item| item.layers).sum::<u32>(), 40);
+    }
 }

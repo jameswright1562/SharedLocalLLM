@@ -102,6 +102,12 @@ The intended installed flow is the same on both computers:
 8. Use **Chat** from either computer, or copy the localhost API details from **API**. Stop the cluster
    from the app when finished so its managed processes are cleaned up.
 
+Version 0.1.2 replaces the old shared `local-node` placeholder with a unique per-install identity.
+After upgrading from 0.1.1, open **Nodes**, choose **Forget** for the old peer if it is still listed,
+then pair once more. This removes only peer trust and its protected channel key; model directories
+and model files are unchanged. After re-pairing, each app keeps an authenticated listener available
+and refreshes peer health periodically so a trusted computer can reconnect after reopening.
+
 For a cable connected directly between two computers, Windows may assign `169.254.x.x` link-local
 addresses when there is no router or DHCP server. That is valid: enter the code-showing computer's
 `169.254.x.x` Ethernet address manually. Both computers still need to run this same app version, and

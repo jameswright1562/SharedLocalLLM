@@ -1,3 +1,4 @@
+mod diagnostics;
 mod persistence;
 mod placement;
 
@@ -20,6 +21,10 @@ use crate::{
     secrets,
     types::*,
 };
+
+pub fn redact_diagnostic(value: &str) -> String {
+    diagnostics::redact(value)
+}
 
 pub struct AppState {
     pub inner: Mutex<InnerState>,
@@ -57,8 +62,16 @@ pub struct InnerState {
 
 impl AppState {
     pub fn new() -> Self {
-        let persisted = read_settings();
+        let mut persisted = read_settings();
+        let previous_install_id = persisted.install_id.clone();
+        let legacy_identity = previous_install_id.as_deref() == Some("local-node")
+            || (previous_install_id.is_none()
+                && persisted.peers.iter().any(|peer| peer.id == "local-node"));
+        let install_id = persistence::resolve_install_id(previous_install_id.as_deref());
+        persisted.install_id = Some(install_id.clone());
+        let identity_log = save_settings(&persisted).err();
         let mut local = hardware::probe_local();
+        local.id = install_id;
         if let Some(device_name) = &persisted.device_name {
             local.name = device_name.clone();
         }
@@ -92,6 +105,16 @@ impl AppState {
             ),
         };
         let mut logs = vec!["READY Backend initialized; raw RPC will bind loopback only".into()];
+        if legacy_identity {
+            logs.push(
+                "WARN Legacy shared node identity replaced; reset and re-pair the computers".into(),
+            );
+        }
+        if let Some(error) = identity_log {
+            logs.push(format!(
+                "ERROR Stable install identity could not be saved: {error}"
+            ));
+        }
         if let Some(error) = secret_log {
             logs.push(error);
         }
@@ -184,6 +207,7 @@ impl AppState {
     pub fn persist(&self) -> Result<(), ErrorPayload> {
         let inner = self.lock()?;
         let settings = PersistedSettings {
+            install_id: Some(inner.local.id.clone()),
             custom_model_directories: inner
                 .directories
                 .iter()
@@ -241,6 +265,12 @@ impl AppState {
         let client = std::sync::Arc::new(PeerClient::trusted(endpoint, channel_key, local_id));
         self.peer.lock().await.client = Some(client.clone());
         Ok(client)
+    }
+
+    pub fn log(&self, level: &str, event: &str, detail: &str) {
+        if let Ok(mut inner) = self.lock() {
+            diagnostics::append(&mut inner.logs, level, event, detail);
+        }
     }
 }
 

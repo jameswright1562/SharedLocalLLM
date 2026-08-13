@@ -13,7 +13,8 @@ use tokio::{
     sync::{watch, Mutex},
 };
 
-use super::PeerServerConfig;
+use super::auth::{credential_for, ensure_trusted};
+use super::{PeerPairingEvent, PeerServerConfig};
 use crate::{
     peer::{
         channel::{receive_encrypted, send_encrypted},
@@ -28,18 +29,21 @@ pub(super) struct ServerState {
     device_id: String,
     device_name: String,
     capabilities: Value,
-    pairing_code: Mutex<Option<String>>,
-    pairing_expires_at: Instant,
-    pairing_completed: watch::Sender<bool>,
-    pairing_completed_device: Mutex<Option<String>>,
-    trusted: Mutex<HashMap<String, String>>,
+    pub(super) pairing_code: Mutex<Option<String>>,
+    pub(super) pairing_expires_at: Instant,
+    pairing_completed: watch::Sender<Option<PeerPairingEvent>>,
+    pending_pairing: Mutex<Option<PeerPairingEvent>>,
+    pub(super) trusted: Mutex<HashMap<String, String>>,
     rpc_target: SocketAddr,
     rpc_command: Option<Vec<String>>,
     worker: Mutex<Option<ManagedChild>>,
 }
 
 impl ServerState {
-    pub(super) fn new(config: PeerServerConfig, pairing_completed: watch::Sender<bool>) -> Self {
+    pub(super) fn new(
+        config: PeerServerConfig,
+        pairing_completed: watch::Sender<Option<PeerPairingEvent>>,
+    ) -> Self {
         Self {
             device_id: config.device_id,
             device_name: config.device_name,
@@ -47,7 +51,7 @@ impl ServerState {
             pairing_code: Mutex::new(config.pairing_code),
             pairing_expires_at: Instant::now() + Duration::from_secs(300),
             pairing_completed,
-            pairing_completed_device: Mutex::new(None),
+            pending_pairing: Mutex::new(None),
             trusted: Mutex::new(
                 config
                     .trusted_peers
@@ -80,6 +84,7 @@ pub(super) async fn handle_connection(
             .map_err(|_| {
                 ErrorPayload::new("peer_timeout", "The peer handshake timed out.", None)
             })??;
+    let source = socket.peer_addr().map_err(protocol::io_error)?;
     let credential = credential_for(&state, &hello).await?;
     let mut handshake = crypto::responder(&credential)?;
     let incoming: Vec<u8> = protocol::read_plain(&mut socket).await?;
@@ -97,8 +102,24 @@ pub(super) async fn handle_connection(
         Request::Pair {
             version,
             device_id,
-            device_name: _,
-        } => pair(&mut socket, &mut noise, state, hello, version, device_id).await,
+            device_name,
+            capabilities,
+        } => {
+            pair(
+                &mut socket,
+                &mut noise,
+                state,
+                PairAttempt {
+                    hello,
+                    version,
+                    device_id,
+                    device_name,
+                    capabilities,
+                    source,
+                },
+            )
+            .await
+        }
         Request::Heartbeat { version, device_id } => {
             protocol::check_version(version)?;
             ensure_trusted(&state, &device_id).await?;
@@ -113,43 +134,23 @@ pub(super) async fn handle_connection(
     }
 }
 
-async fn credential_for(state: &ServerState, hello: &ClientHello) -> Result<String, ErrorPayload> {
-    if hello.pairing {
-        if Instant::now() > state.pairing_expires_at {
-            return Err(ErrorPayload::new(
-                "pairing_code_expired",
-                "The pairing code expired.",
-                Some("Generate a new code.".into()),
-            ));
-        }
-        state.pairing_code.lock().await.clone().ok_or_else(|| {
-            ErrorPayload::new(
-                "pairing_unavailable",
-                "This peer is not currently showing a pairing code.",
-                None,
-            )
-        })
-    } else {
-        state
-            .trusted
-            .lock()
-            .await
-            .get(&hello.device_id)
-            .cloned()
-            .ok_or_else(untrusted_error)
-    }
+struct PairAttempt {
+    hello: ClientHello,
+    version: u16,
+    device_id: String,
+    device_name: String,
+    capabilities: Value,
+    source: SocketAddr,
 }
 
 async fn pair(
     socket: &mut TcpStream,
     noise: &mut snow::TransportState,
     state: Arc<ServerState>,
-    hello: ClientHello,
-    version: u16,
-    device_id: String,
+    attempt: PairAttempt,
 ) -> Result<(), ErrorPayload> {
-    protocol::check_version(version)?;
-    if !hello.pairing || hello.device_id != device_id {
+    protocol::check_version(attempt.version)?;
+    if !attempt.hello.pairing || attempt.hello.device_id != attempt.device_id {
         return Err(ErrorPayload::new(
             "pairing_identity_mismatch",
             "The pairing identity changed during authentication.",
@@ -165,7 +166,7 @@ async fn pair(
         .trusted
         .lock()
         .await
-        .insert(device_id.clone(), channel_key.clone());
+        .insert(attempt.device_id.clone(), channel_key.clone());
     *state.pairing_code.lock().await = None;
     send_encrypted(
         socket,
@@ -173,11 +174,17 @@ async fn pair(
         &Response::Paired {
             device_id: state.device_id.clone(),
             device_name: state.device_name.clone(),
-            channel_key,
+            channel_key: channel_key.clone(),
         },
     )
     .await?;
-    *state.pairing_completed_device.lock().await = Some(device_id);
+    *state.pending_pairing.lock().await = Some(PeerPairingEvent {
+        device_id: attempt.device_id,
+        device_name: attempt.device_name,
+        channel_key,
+        capabilities: attempt.capabilities,
+        source: attempt.source,
+    });
     Ok(())
 }
 
@@ -196,10 +203,12 @@ async fn capabilities(
         },
     )
     .await?;
-    let mut completed_device = state.pairing_completed_device.lock().await;
-    if completed_device.as_deref() == Some(hello.device_id.as_str()) {
-        completed_device.take();
-        let _ = state.pairing_completed.send(true);
+    let mut pending = state.pending_pairing.lock().await;
+    if pending
+        .as_ref()
+        .is_some_and(|event| event.device_id == hello.device_id)
+    {
+        let _ = state.pairing_completed.send(pending.take());
     }
     Ok(())
 }
@@ -254,20 +263,4 @@ async fn connect_rpc(target: SocketAddr) -> Result<TcpStream, ErrorPayload> {
             Err(error) => return Err(protocol::io_error(error)),
         }
     }
-}
-
-async fn ensure_trusted(state: &ServerState, id: &str) -> Result<(), ErrorPayload> {
-    if state.trusted.lock().await.contains_key(id) {
-        Ok(())
-    } else {
-        Err(untrusted_error())
-    }
-}
-
-fn untrusted_error() -> ErrorPayload {
-    ErrorPayload::new(
-        "peer_untrusted",
-        "The peer identity is not trusted.",
-        Some("Pair the computers again.".into()),
-    )
 }

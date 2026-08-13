@@ -37,6 +37,7 @@ export const nativeService: AppService = {
     invoke("generate_pairing_code", { allowPublicNetwork }),
   pairWithPeer: (code, allowPublicNetwork = false, manualEndpoint) =>
     invoke("pair_with_peer", { code, allowPublicNetwork, manualEndpoint }),
+  resetPairing: () => invoke("reset_pairing"),
   estimateModelSplit: (modelId, loadConfig) =>
     invoke("estimate_model_split", { modelId, loadConfig }),
   startCluster: (modelId, loadConfig) => invoke("start_cluster", { modelId, loadConfig }),
