@@ -21,6 +21,7 @@ tauri-build = { version = "2", features = [] }
 base64 = "0.22"
 dirs = "6"
 futures-util = "0.3"
+get_if_addrs = "0.5"
 glob = "0.3"
 hex = "0.4"
 rand = "0.8"

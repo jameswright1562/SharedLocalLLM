@@ -12,8 +12,8 @@ use tauri::{AppHandle, State};
 use crate::{
     pairing::{now, PeerRecord},
     peer::{
-        discover, DiscoveryAnnouncement, DiscoveryBroadcaster, PeerClient, PeerServer,
-        PeerServerConfig,
+        discover, local_ip_addresses, DiscoveryAnnouncement, DiscoveryBroadcaster, PeerClient,
+        PeerServer, PeerServerConfig,
     },
     runtime, secrets,
     state::{peer_secret_path, AppState},
@@ -139,7 +139,7 @@ pub async fn pair_with_peer(
     let mut endpoints = Vec::new();
     let manual_endpoint = parse_manual_endpoint(manual_endpoint.as_deref())?;
     if let Some(endpoint) = manual_endpoint {
-        endpoints.push(endpoint);
+        endpoints.push(reject_local_endpoint(endpoint, &local_ip_addresses()?)?);
     } else {
         if let Ok(endpoint) = std::env::var("SHARED_LOCAL_LLM_PEER_ENDPOINT") {
             if let Some(endpoint) = parse_manual_endpoint(Some(&endpoint))? {
@@ -225,6 +225,20 @@ fn parse_manual_endpoint(value: Option<&str>) -> Result<Option<SocketAddr>, Erro
             "Enter the other computer's IPv4 address, for example 192.168.50.2. Port {PAIRING_PORT} is used automatically."
         )),
     ))
+}
+
+fn reject_local_endpoint(
+    endpoint: SocketAddr,
+    local_addresses: &[std::net::IpAddr],
+) -> Result<SocketAddr, ErrorPayload> {
+    if local_addresses.contains(&endpoint.ip()) {
+        return Err(ErrorPayload::new(
+            "manual_peer_endpoint_is_local",
+            format!("{} belongs to this computer, not the other computer.", endpoint.ip()),
+            Some("Run ipconfig on the computer displaying the code and enter that computer's Ethernet IPv4 address.".into()),
+        ));
+    }
+    Ok(endpoint)
 }
 
 #[cfg(test)]
