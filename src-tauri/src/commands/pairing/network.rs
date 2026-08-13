@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 
+use crate::peer::DISCOVERY_PORT;
 use crate::types::ErrorPayload;
 
 pub(crate) fn require_private_network() -> Result<(), ErrorPayload> {
@@ -66,10 +67,13 @@ pub(super) async fn open_temporary_public_firewall_port(
         ErrorPayload::new("public_firewall_executable", error.to_string(), None)
     })?;
     let rule_name = format!("SharedLocalLLM temporary pairing {id}");
-    let script = format!(
-        "$ErrorActionPreference='Stop'; New-NetFirewallRule -DisplayName {} -Direction Inbound -Action Allow -Program {} -Protocol TCP -LocalPort {} -Profile Public | Out-Null; Set-Content -LiteralPath {} -Value 'ready'; try {{ $deadline=(Get-Date).AddSeconds(300); while ((Test-Path -LiteralPath {}) -and ((Get-Date) -lt $deadline)) {{ Start-Sleep -Seconds 1 }} }} finally {{ Remove-NetFirewallRule -DisplayName {} -ErrorAction SilentlyContinue }}",
-        powershell_literal(&rule_name), powershell_literal(&executable.to_string_lossy()), port,
-        powershell_literal(&ready.to_string_lossy()), powershell_literal(&lease.to_string_lossy()), powershell_literal(&rule_name),
+    let script = temporary_firewall_script(
+        &rule_name,
+        &executable,
+        port,
+        DISCOVERY_PORT,
+        &ready,
+        &lease,
     );
     let encoded_bytes: Vec<u8> = script.encode_utf16().flat_map(u16::to_le_bytes).collect();
     let encoded = base64::engine::general_purpose::STANDARD.encode(encoded_bytes);
@@ -100,6 +104,32 @@ pub(super) async fn open_temporary_public_firewall_port(
         "The temporary Public-network pairing rule was not created in time.",
         Some("Try again or change this network to Private.".into()),
     ))
+}
+
+#[cfg(windows)]
+fn temporary_firewall_script(
+    rule_name: &str,
+    executable: &Path,
+    pairing_port: u16,
+    discovery_port: u16,
+    ready: &Path,
+    lease: &Path,
+) -> String {
+    let tcp_rule = format!("{rule_name} TCP");
+    let udp_rule = format!("{rule_name} UDP");
+    format!(
+        "$ErrorActionPreference='Stop'; try {{ New-NetFirewallRule -DisplayName {} -Direction Inbound -Action Allow -Program {} -Protocol TCP -LocalPort {} -Profile Public | Out-Null; New-NetFirewallRule -DisplayName {} -Direction Inbound -Action Allow -Program {} -Protocol UDP -LocalPort {} -Profile Public | Out-Null; Set-Content -LiteralPath {} -Value 'ready'; $deadline=(Get-Date).AddSeconds(300); while ((Test-Path -LiteralPath {}) -and ((Get-Date) -lt $deadline)) {{ Start-Sleep -Seconds 1 }} }} finally {{ Remove-NetFirewallRule -DisplayName {} -ErrorAction SilentlyContinue; Remove-NetFirewallRule -DisplayName {} -ErrorAction SilentlyContinue }}",
+        powershell_literal(&tcp_rule),
+        powershell_literal(&executable.to_string_lossy()),
+        pairing_port,
+        powershell_literal(&udp_rule),
+        powershell_literal(&executable.to_string_lossy()),
+        discovery_port,
+        powershell_literal(&ready.to_string_lossy()),
+        powershell_literal(&lease.to_string_lossy()),
+        powershell_literal(&tcp_rule),
+        powershell_literal(&udp_rule),
+    )
 }
 
 #[cfg(not(windows))]

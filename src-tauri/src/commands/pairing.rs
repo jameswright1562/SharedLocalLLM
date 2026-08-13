@@ -134,7 +134,22 @@ pub async fn pair_with_peer(
     manual_endpoint: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<NodeCapabilities, ErrorPayload> {
-    let _ = require_pairing_network(allow_public_network)?;
+    let public_override = require_pairing_network(allow_public_network)?;
+    let firewall_lease = if public_override {
+        Some(open_temporary_public_firewall_port(PAIRING_PORT).await?)
+    } else {
+        None
+    };
+    let result = pair_with_peer_inner(code, manual_endpoint, &state).await;
+    close_firewall_lease(firewall_lease.as_deref());
+    result
+}
+
+async fn pair_with_peer_inner(
+    code: String,
+    manual_endpoint: Option<String>,
+    state: &AppState,
+) -> Result<NodeCapabilities, ErrorPayload> {
     let local = state.lock()?.local.clone();
     let mut endpoints = Vec::new();
     let manual_endpoint = parse_manual_endpoint(manual_endpoint.as_deref())?;

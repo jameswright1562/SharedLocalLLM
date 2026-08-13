@@ -10,7 +10,7 @@ use get_if_addrs::{get_if_addrs, IfAddr};
 
 use crate::types::ErrorPayload;
 
-const DISCOVERY_PORT: u16 = 49_157;
+pub(crate) const DISCOVERY_PORT: u16 = 49_157;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
