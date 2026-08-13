@@ -45,12 +45,12 @@ revert or rewrite them. Send the owner or root a precise finding instead.
 Only the root integrator updates this table after this initial seed. This single-writer rule avoids
 conflicts and stale competing status reports.
 
-| Workstream         | State    | Current evidence / next action                                                                                                               |
-| ------------------ | -------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| `rust_core`        | Complete | Native implementation is green with 14/14 tests, formatting, Clippy warnings-as-errors, Cargo build, and the direct-Ethernet release bundle. |
-| `desktop_ui`       | Complete | Frontend is green with 37/37 tests, coverage above 86% in every dimension, production build, and 4/4 browser workflows.                      |
-| `tooling_docs`     | Complete | Junior-friendly README, developer docs, pinned runtime manifest, CI, release packaging, and checksum workflow are in place.                  |
-| `root` integration | Active   | Automatic link-local discovery and LM Studio hub storage resolution are green in focused tests; run full gates and package version 0.1.1.    |
+| Workstream         | State    | Current evidence / next action                                                                                                             |
+| ------------------ | -------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `rust_core`        | Complete | Native implementation is green with 18/18 tests, formatting, Clippy warnings-as-errors, Cargo build, and the version 0.1.1 release bundle. |
+| `desktop_ui`       | Complete | Frontend is green with 37/37 tests, coverage above 86% in every dimension, production build, and 4/4 browser workflows.                    |
+| `tooling_docs`     | Complete | Junior-friendly README, developer docs, pinned runtime manifest, CI, release packaging, and checksum workflow are in place.                |
+| `root` integration | Active   | Version 0.1.1 full gates and packaging are green; install it on both computers and complete physical pairing/model acceptance.             |
 
 ## Validation checklist
 
@@ -63,8 +63,8 @@ acceptance.
 - [x] `pnpm typecheck` — strict TypeScript project build passes.
 - [x] `pnpm lint` — ESLint passes with zero warnings.
 - [x] `pnpm test` — 37/37 frontend tests pass.
-- [x] `pnpm test:coverage` — 37/37 tests passed with 93.21% statements, 86.93% branches,
-      93.53% functions, and 94.88% lines.
+- [x] `pnpm test:coverage` — 37/37 tests passed with 93.26% statements, 87.03% branches,
+      93.56% functions, and 94.91% lines.
 - [x] `pnpm build` — production Vite build succeeds.
 - [x] `pnpm e2e` — four of four Chromium browser-demo workflows pass.
 - [x] `cargo fmt --manifest-path src-tauri/Cargo.toml --all --check` — passes.
@@ -73,8 +73,8 @@ acceptance.
 - [x] `cargo build --manifest-path src-tauri/Cargo.toml` — development build succeeds.
 - [x] Production readability audit — every production TypeScript, TSX, CSS, and Rust file is under
       300 lines; the largest is `src-tauri/src/runtime/installer.rs` at 299 lines.
-- [ ] `pnpm tauri build --bundles nsis` — rebuild version 0.1.1 with automatic Ethernet discovery
-      and LM Studio hub storage resolution.
+- [x] `pnpm tauri build --bundles nsis` — version 0.1.1 built with automatic Ethernet discovery and
+      LM Studio hub storage resolution; SHA-256 `5dc0b173960137cd05cc8385807a7a12f3ed058655cc6e9d56f4c219e9d808b8`.
 - [ ] Physical two-computer acceptance in `docs/testing.md`; automated loopback/demo tests do not
       satisfy this item.
 
