@@ -85,8 +85,11 @@ The intended installed flow is the same on both computers:
 2. Install the pinned `llama.cpp` runtime from the first-run wizard. The runtime manager checks the
    official origin, archive size, SHA-256 digest, archive contents, and required executables.
 3. Give each computer a friendly name.
-4. Start pairing on one computer. Select the discovered peer—or enter its private IPv4 address—and
-   confirm the six-digit code shown by both apps. If Windows classifies a trusted LAN as Public, the
+4. Start pairing on one computer. If discovery does not find a direct Ethernet peer, run `ipconfig`
+   on the computer showing the code and enter its Ethernet IPv4 address in the other computer's
+   **Ethernet IPv4 address** field. SharedLocalLLM uses TCP port `49158` automatically; you may also
+   enter `address:port` when testing a non-default development build. Confirm the six-digit code. If
+   Windows classifies a trusted LAN as Public, the
    wizard can permit a temporary five-minute pairing session after a native warning. Showing a code
    also requires approval for an app-and-port-specific Public firewall rule, which is removed after
    pairing or timeout. The app still will not launch a cluster until the profile is Private or
@@ -98,6 +101,11 @@ The intended installed flow is the same on both computers:
    its fit/recommendation before launching it.
 8. Use **Chat** from either computer, or copy the localhost API details from **API**. Stop the cluster
    from the app when finished so its managed processes are cleaned up.
+
+For a cable connected directly between two computers, Windows may assign `169.254.x.x` link-local
+addresses when there is no router or DHCP server. That is valid: enter the code-showing computer's
+`169.254.x.x` Ethernet address manually. Both computers still need to run this same app version, and
+the Ethernet network profile must be **Private** before a distributed cluster can launch.
 
 There is not yet a published, physically validated installer release. Contributors can build the
 current preview from source using the steps below. If pairing or launch fails, use the

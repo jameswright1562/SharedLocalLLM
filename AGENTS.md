@@ -47,10 +47,10 @@ conflicts and stale competing status reports.
 
 | Workstream         | State    | Current evidence / next action                                                                                                                             |
 | ------------------ | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `rust_core`        | Complete | Native implementation is green with 12/12 tests, formatting, Clippy warnings-as-errors, Cargo build, and a successful release bundle.                      |
+| `rust_core`        | Complete | Native implementation is green with 14/14 tests, formatting, Clippy warnings-as-errors, and Cargo build; the direct-Ethernet release bundle is rebuilding. |
 | `desktop_ui`       | Complete | Frontend is green with 37/37 tests, coverage above 86% in every dimension, production build, and 4/4 browser workflows.                                    |
 | `tooling_docs`     | Complete | Junior-friendly README, developer docs, pinned runtime manifest, CI, release packaging, and checksum workflow are in place.                                |
-| `root` integration | Complete | Final Tauri command-path regression fixed; direct full gates, production readability audit, NSIS rebuild, and SHA-256 verification completed successfully. |
+| `root` integration | Active   | Manual Ethernet IP fallback is implemented and automated gates are green; rebuild the NSIS installer, then retry on two physical computers.                |
 
 ## Validation checklist
 
@@ -68,13 +68,13 @@ acceptance.
 - [x] `pnpm build` — production Vite build succeeds.
 - [x] `pnpm e2e` — four of four Chromium browser-demo workflows pass.
 - [x] `cargo fmt --manifest-path src-tauri/Cargo.toml --all --check` — passes.
-- [x] `cargo test --manifest-path src-tauri/Cargo.toml --all-targets` — 12/12 tests pass.
+- [x] `cargo test --manifest-path src-tauri/Cargo.toml --all-targets` — 14/14 tests pass.
 - [x] `cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings` — passes.
 - [x] `cargo build --manifest-path src-tauri/Cargo.toml` — development build succeeds.
 - [x] Production readability audit — every production TypeScript, TSX, CSS, and Rust file is under
       300 lines; the largest is `src-tauri/src/runtime/installer.rs` at 299 lines.
-- [x] `pnpm tauri build --bundles nsis` — unsigned x64 installer and matching
-      `SHA256SUMS.txt` generated under `src-tauri/target/release/bundle/nsis/`.
+- [ ] `pnpm tauri build --bundles nsis` — rebuilding the unsigned x64 installer with manual
+      Ethernet pairing support.
 - [ ] Physical two-computer acceptance in `docs/testing.md`; automated loopback/demo tests do not
       satisfy this item.
 
@@ -98,7 +98,8 @@ acceptance.
 
 ## Current blockers
 
-- No remaining automated code, readability, or packaging blocker is known.
+- No remaining automated code blocker is known. Packaging the manual Ethernet pairing build is in
+  progress.
 - Physical two-computer GPU acceptance remains pending and must follow `docs/testing.md`; loopback and
   browser-demo tests are not a substitute for that hardware check.
 - Stronger production-grade peer authentication is explicitly deferred to `ideas.md`; v1 remains a

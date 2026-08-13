@@ -32,11 +32,12 @@ If the active trusted connection says `Public`, change it in Windows **Settings 
 > Properties > Network profile type > Private**. SharedLocalLLM deliberately refuses a distributed
 > session on a Public profile. The setup wizard's **Use this public network** option permits a
 > confirmed five-minute pairing session only. When showing a code, approve the temporary Windows
-> firewall rule; it is restricted to the app and random pairing port, then removed after pairing or
+> firewall rule; it is restricted to the app and TCP port `49158`, then removed after pairing or
 > timeout. The override does not permit cluster launch or raw RPC exposure.
 
-4. Use **Nodes > Pair with IP** and enter the peer's IPv4 address shown in its diagnostics. Never
-   forward the peer port on the router.
+4. On the computer entering the six-digit code, fill in **Ethernet IPv4 address (optional)** with the
+   address of the computer showing the code. The normal port is `49158`, so an address such as
+   `192.168.1.20` or `169.254.20.8` is enough. Never forward this port on the router.
 5. Confirm both installations run the same application and peer-protocol version.
 
 To inspect IPv4 addresses:
@@ -45,7 +46,6 @@ To inspect IPv4 addresses:
 
 ```powershell
 Get-NetIPAddress -AddressFamily IPv4 |
-  Where-Object { $_.IPAddress -notlike '169.254.*' } |
   Format-Table InterfaceAlias, IPAddress, PrefixLength
 ```
 
@@ -53,9 +53,12 @@ Get-NetIPAddress -AddressFamily IPv4 |
 
 ```powershell
 Get-NetIPAddress -AddressFamily IPv4 |
-  Where-Object { $_.IPAddress -notlike '169.254.*' } |
   Format-Table InterfaceAlias, IPAddress, PrefixLength
 ```
+
+On a direct cable with no router, a `169.254.x.x` address is expected. Use the address attached to
+the Ethernet interface, not a Wi-Fi, VPN, loopback, or virtual-machine adapter. Manual entry skips
+UDP discovery and connects directly to TCP port `49158`.
 
 ## Pairing codes do not match
 
