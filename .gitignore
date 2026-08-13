@@ -6,6 +6,7 @@ coverage/
 
 # Rust and Tauri
 src-tauri/target/
+src-tauri/target-package/
 src-tauri/gen/
 
 # Tests

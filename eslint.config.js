@@ -12,6 +12,7 @@ export default defineConfig([
     "node_modules/**",
     "playwright-report/**",
     "src-tauri/target/**",
+    "src-tauri/target-package/**",
     "test-results/**",
   ]),
   eslint.configs.recommended,

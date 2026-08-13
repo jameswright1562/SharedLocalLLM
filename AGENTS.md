@@ -47,10 +47,10 @@ conflicts and stale competing status reports.
 
 | Workstream         | State    | Current evidence / next action                                                                                                             |
 | ------------------ | -------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| `rust_core`        | Complete | Native implementation is green with 18/18 tests, formatting, Clippy warnings-as-errors, Cargo build, and the version 0.1.1 release bundle. |
-| `desktop_ui`       | Complete | Frontend is green with 37/37 tests, coverage above 86% in every dimension, production build, and 4/4 browser workflows.                    |
+| `rust_core`        | Complete | Native implementation is green with 24/24 tests, formatting, Clippy warnings-as-errors, Cargo build, and the version 0.1.2 release bundle. |
+| `desktop_ui`       | Complete | Frontend is green with 39/39 tests, coverage above 86% in every dimension, production build, and 4/4 browser workflows.                    |
 | `tooling_docs`     | Complete | Junior-friendly README, developer docs, pinned runtime manifest, CI, release packaging, and checksum workflow are in place.                |
-| `root` integration | Active   | Version 0.1.1 full gates and packaging are green; install it on both computers and complete physical pairing/model acceptance.             |
+| `root` integration | Active   | Version 0.1.2 full gates and packaging are green; install it on both computers and complete physical pairing/model acceptance.             |
 
 ## Validation checklist
 
@@ -62,19 +62,21 @@ acceptance.
 - [x] `pnpm format:check` — all matched repository files use Prettier formatting.
 - [x] `pnpm typecheck` — strict TypeScript project build passes.
 - [x] `pnpm lint` — ESLint passes with zero warnings.
-- [x] `pnpm test` — 37/37 frontend tests pass.
-- [x] `pnpm test:coverage` — 37/37 tests passed with 93.26% statements, 87.03% branches,
-      93.56% functions, and 94.91% lines.
+- [x] `pnpm test` — 39/39 frontend tests pass.
+- [x] `pnpm test:coverage` — 39/39 tests passed with 92.04% statements, 86.52% branches,
+      92.03% functions, and 93.54% lines.
 - [x] `pnpm build` — production Vite build succeeds.
 - [x] `pnpm e2e` — four of four Chromium browser-demo workflows pass.
 - [x] `cargo fmt --manifest-path src-tauri/Cargo.toml --all --check` — passes.
-- [x] `cargo test --manifest-path src-tauri/Cargo.toml --all-targets` — 18/18 tests pass.
+- [x] `cargo test --manifest-path src-tauri/Cargo.toml --all-targets` — 24/24 tests pass.
 - [x] `cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings` — passes.
 - [x] `cargo build --manifest-path src-tauri/Cargo.toml` — development build succeeds.
-- [x] Production readability audit — every production TypeScript, TSX, CSS, and Rust file is under
-      300 lines; the largest is `src-tauri/src/runtime/installer.rs` at 299 lines.
-- [x] `pnpm tauri build --bundles nsis` — version 0.1.1 built with automatic Ethernet discovery and
-      LM Studio hub storage resolution; SHA-256 `5dc0b173960137cd05cc8385807a7a12f3ed058655cc6e9d56f4c219e9d808b8`.
+- [x] Production readability audit — every production file changed for version 0.1.2 is under 300
+      lines; the largest changed file is `src-tauri/src/commands/pairing.rs` at 284 lines. The
+      pre-existing `src/components/SetupStepContent.tsx` remains 306 lines.
+- [x] `pnpm tauri build --bundles nsis` — version 0.1.2 built in the isolated
+      `src-tauri/target-package` target while preserving the running development app; SHA-256
+      `28444fe5fd7822aa92114a8080c22fff9959246841b24ce587eaae387d2f9abd`.
 - [ ] Physical two-computer acceptance in `docs/testing.md`; automated loopback/demo tests do not
       satisfy this item.
 
