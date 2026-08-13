@@ -64,6 +64,38 @@ fn collect_paths(value: &Value, output: &mut Vec<String>) {
     }
 }
 
+#[cfg(test)]
+mod default_root_tests {
+    use super::{discover_gguf_models, expand_lm_studio_roots, lm_studio_roots_for_home};
+
+    #[test]
+    fn resolves_hub_metadata_to_the_configured_lm_studio_download_folder() {
+        let home = tempfile::tempdir().unwrap();
+        let legacy = home.path().join(".lmstudio").join("models");
+        let hub = home.path().join(".lmstudio").join("hub").join("models");
+        let downloads = home.path().join("download-cache");
+        std::fs::create_dir_all(&legacy).unwrap();
+        std::fs::create_dir_all(&hub).unwrap();
+        let model_folder = downloads.join("publisher").join("model");
+        std::fs::create_dir_all(&model_folder).unwrap();
+        std::fs::write(model_folder.join("model-Q4_K_M.gguf"), b"GGUF").unwrap();
+        std::fs::write(
+            home.path().join(".lmstudio").join("settings.json"),
+            serde_json::json!({ "downloadsFolder": downloads }).to_string(),
+        )
+        .unwrap();
+
+        let defaults = lm_studio_roots_for_home(home.path());
+        assert!(defaults.contains(&legacy));
+        assert!(defaults.contains(&hub));
+        assert!(defaults.contains(&downloads));
+
+        let manual_roots = expand_lm_studio_roots(&[hub]);
+        assert!(manual_roots.contains(&downloads));
+        assert_eq!(discover_gguf_models(&manual_roots).unwrap().len(), 1);
+    }
+}
+
 pub fn discover_gguf_models(roots: &[PathBuf]) -> Result<Vec<ModelRecord>, ErrorPayload> {
     let split = Regex::new(r"(?i)^(.*)-(\d{5})-of-(\d{5})\.gguf$").expect("valid split regex");
     let quant = Regex::new(r"(?i)(Q\d(?:_[A-Z0-9]+)+|F16|F32|BF16)").expect("valid quant regex");
