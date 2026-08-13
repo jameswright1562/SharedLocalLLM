@@ -30,7 +30,10 @@ Get-NetConnectionProfile | Format-Table Name, InterfaceAlias, NetworkCategory, I
 If the active trusted connection says `Public`, change it in Windows **Settings > Network & internet
 
 > Properties > Network profile type > Private**. SharedLocalLLM deliberately refuses a distributed
-> session on a Public profile.
+> session on a Public profile. The setup wizard's **Use this public network** option permits a
+> confirmed five-minute pairing session only. When showing a code, approve the temporary Windows
+> firewall rule; it is restricted to the app and random pairing port, then removed after pairing or
+> timeout. The override does not permit cluster launch or raw RPC exposure.
 
 4. Use **Nodes > Pair with IP** and enter the peer's IPv4 address shown in its diagnostics. Never
    forward the peer port on the router.

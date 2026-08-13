@@ -141,11 +141,44 @@ describe("dashboard pages", () => {
 
     await user.selectOptions(screen.getByLabelText(/requested context/i), "16384");
     await user.click(screen.getByRole("button", { name: /launch orchid/i }));
-    expect(startCluster).toHaveBeenCalledWith("model-text", 16384);
+    expect(startCluster).toHaveBeenCalledWith("model-text", {
+      contextSize: 16384,
+      gpuLayers: [],
+    });
 
     await user.click(screen.getByRole("button", { name: /^add folder$/i }));
     expect(await screen.findByRole("status")).toHaveTextContent(/no folder selected/i);
     expect(pageProps.refreshSnapshot).toHaveBeenCalledTimes(1);
+  });
+
+  it("configures GPU layers per computer and previews estimated VRAM before launch", async () => {
+    const user = userEvent.setup();
+    const snapshot = cloneSnapshot();
+    Object.assign(snapshot.models[0]!, { layerCount: 40 });
+    const startCluster = vi.fn().mockResolvedValue({ status: "running", modelId: "model-text" });
+    render(<ModelsPage {...props(snapshot, { startCluster })} />);
+
+    await user.click(screen.getByRole("button", { name: /manual gpu split/i }));
+
+    expect(screen.getByRole("heading", { name: /gpu layer allocation/i })).toBeInTheDocument();
+    const localLayers = screen.getByLabelText(/gpu layers on studio host/i);
+    const remoteLayers = screen.getByLabelText(/gpu layers on remote node/i);
+    await user.clear(localLayers);
+    await user.type(localLayers, "24");
+    await user.clear(remoteLayers);
+    await user.type(remoteLayers, "16");
+
+    expect(screen.getByText(/40 of 40 layers on gpu/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/estimated vram/i)).toHaveLength(2);
+
+    await user.click(screen.getByRole("button", { name: /launch orchid/i }));
+    expect(startCluster).toHaveBeenCalledWith("model-text", {
+      contextSize: 8192,
+      gpuLayers: [
+        { nodeId: "node-a", layers: 24 },
+        { nodeId: "node-b", layers: 16 },
+      ],
+    });
   });
 
   it("renders benchmark results and routes an empty benchmark action", async () => {

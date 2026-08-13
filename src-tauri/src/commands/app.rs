@@ -99,3 +99,27 @@ pub fn open_logs_folder() -> Result<(), ErrorPayload> {
         .map_err(|error| ErrorPayload::new("logs_folder", error.to_string(), None))?;
     Ok(())
 }
+
+#[tauri::command]
+pub fn open_network_settings() -> Result<(), ErrorPayload> {
+    #[cfg(windows)]
+    {
+        std::process::Command::new("explorer.exe")
+            .arg("ms-settings:network-status")
+            .spawn()
+            .map_err(|error| {
+                ErrorPayload::new(
+                    "network_settings",
+                    error.to_string(),
+                    Some("Open Settings > Network & internet manually.".into()),
+                )
+            })?;
+        Ok(())
+    }
+    #[cfg(not(windows))]
+    Err(ErrorPayload::new(
+        "network_settings_unsupported",
+        "Windows network settings are unavailable on this operating system.",
+        None,
+    ))
+}

@@ -1,5 +1,6 @@
 pub mod capacity;
 pub mod commands;
+pub mod gguf;
 pub mod hardware;
 pub mod models;
 pub mod network;
@@ -27,14 +28,16 @@ pub fn run() {
             commands::network::run_network_test,
             commands::pairing::generate_pairing_code,
             commands::pairing::pair_with_peer,
+            commands::cluster::split::estimate_model_split,
             commands::cluster::start_cluster,
             commands::cluster::stop_cluster,
-            commands::cluster::run_inference_benchmark,
-            commands::cluster::cancel_inference_benchmark,
+            commands::cluster::benchmark::run_inference_benchmark,
+            commands::cluster::benchmark::cancel_inference_benchmark,
             commands::chat::send_chat_message,
             commands::chat::cancel_generation,
             commands::api::get_api_config,
             commands::api::regenerate_api_key,
+            commands::app::open_network_settings,
             commands::app::open_logs_folder
         ])
         .run(tauri::generate_context!())

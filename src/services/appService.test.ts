@@ -73,10 +73,23 @@ describe("app services", () => {
     );
 
     expect((await settle(demoService.runNetworkTest())).classification).toBe("good");
-    expect((await settle(demoService.generatePairingCode())).code).toMatch(/\d{3} \d{3}/);
-    expect((await settle(demoService.pairWithPeer("123456"))).role).toBe("worker");
+    expect((await settle(demoService.generatePairingCode(true))).code).toMatch(/\d{3} \d{3}/);
+    expect((await settle(demoService.pairWithPeer("123456", true))).role).toBe("worker");
 
-    expect(await settle(demoService.startCluster("meridian-12b", 4096))).toMatchObject({
+    expect(
+      await settle(
+        demoService.estimateModelSplit("meridian-12b", {
+          contextSize: 4096,
+          gpuLayers: [
+            { nodeId: "local-node", layers: 24 },
+            { nodeId: "peer-node", layers: 16 },
+          ],
+        }),
+      ),
+    ).toMatchObject({ totalLayers: 40, gpuLayers: 40, cpuLayers: 0 });
+
+    const demoLoadConfig = { contextSize: 4096, gpuLayers: [] };
+    expect(await settle(demoService.startCluster("meridian-12b", demoLoadConfig))).toMatchObject({
       status: "running",
       modelId: "meridian-12b",
     });
@@ -137,9 +150,17 @@ describe("app services", () => {
     await nativeService.addModelDirectory();
     await nativeService.removeModelDirectory("dir-7");
     await nativeService.runNetworkTest();
-    await nativeService.generatePairingCode();
-    await nativeService.pairWithPeer("481209");
-    await nativeService.startCluster("model-2", 8192);
+    await nativeService.generatePairingCode(true);
+    await nativeService.pairWithPeer("481209", true);
+    const loadConfig = {
+      contextSize: 8192,
+      gpuLayers: [
+        { nodeId: "node-a", layers: 24 },
+        { nodeId: "node-b", layers: 16 },
+      ],
+    };
+    await nativeService.estimateModelSplit("model-2", loadConfig);
+    await nativeService.startCluster("model-2", loadConfig);
     await nativeService.stopCluster();
     await nativeService.runInferenceBenchmark("model-2");
     await nativeService.cancelInferenceBenchmark();
@@ -167,9 +188,10 @@ describe("app services", () => {
       ["add_model_directory", undefined],
       ["remove_model_directory", { id: "dir-7" }],
       ["run_network_test", undefined],
-      ["generate_pairing_code", undefined],
-      ["pair_with_peer", { code: "481209" }],
-      ["start_cluster", { modelId: "model-2", contextSize: 8192 }],
+      ["generate_pairing_code", { allowPublicNetwork: true }],
+      ["pair_with_peer", { code: "481209", allowPublicNetwork: true }],
+      ["estimate_model_split", { modelId: "model-2", loadConfig }],
+      ["start_cluster", { modelId: "model-2", loadConfig }],
       ["stop_cluster", undefined],
       ["run_inference_benchmark", { modelId: "model-2" }],
       ["cancel_inference_benchmark", undefined],

@@ -9,7 +9,10 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use walkdir::WalkDir;
 
-use crate::types::{ErrorPayload, ModelLocation, ModelRecord};
+use crate::{
+    gguf::read_model_metadata,
+    types::{ErrorPayload, ModelLocation, ModelRecord},
+};
 
 pub fn default_lm_studio_root() -> Option<PathBuf> {
     dirs::home_dir().map(|home| home.join(".lmstudio").join("models"))
@@ -155,6 +158,7 @@ pub fn discover_gguf_models(roots: &[PathBuf]) -> Result<Vec<ModelRecord>, Error
             }
         }
         let first = &shards[0];
+        let metadata = read_model_metadata(first).unwrap_or_default();
         let base = key.rsplit('|').next().unwrap_or("model");
         let projector = projectors
             .iter()
@@ -202,10 +206,17 @@ pub fn discover_gguf_models(roots: &[PathBuf]) -> Result<Vec<ModelRecord>, Error
         records.push(ModelRecord {
             id: hex::encode(hasher.finalize())[..16].to_owned(),
             name: title_case(&display_name),
-            architecture: infer_architecture(&lowered),
+            architecture: metadata
+                .architecture
+                .clone()
+                .unwrap_or_else(|| infer_architecture(&lowered)),
             quantization,
             size_bytes,
-            context_length: 8192,
+            context_length: metadata.context_length.unwrap_or(8192),
+            layer_count: metadata.block_count,
+            embedding_length: metadata.embedding_length,
+            attention_head_count: metadata.attention_head_count,
+            attention_head_count_kv: metadata.attention_head_count_kv,
             capability: if vision_capable {
                 "vision".into()
             } else {

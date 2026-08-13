@@ -1,5 +1,6 @@
 import type { AppService, ModelDirectory, NetworkBenchmark } from "../types";
 import { demoApi, demoNodes, demoSnapshot } from "./demoData";
+import { estimateModelSplitLocally } from "./splitEstimate";
 
 const delay = (ms = 180) => new Promise((resolve) => window.setTimeout(resolve, ms));
 
@@ -77,6 +78,12 @@ export const demoService: AppService = {
       demoSnapshot.nodes.push(peerNode);
     return structuredClone(peerNode);
   },
+  async estimateModelSplit(modelId, loadConfig) {
+    await delay(80);
+    const model = demoSnapshot.models.find((item) => item.id === modelId);
+    if (!model) throw new Error("The model is unavailable.");
+    return estimateModelSplitLocally(model, demoSnapshot.nodes, loadConfig);
+  },
   async startCluster(modelId) {
     await delay(900);
     demoSnapshot.cluster = {
@@ -131,6 +138,9 @@ export const demoService: AppService = {
     await delay(200);
     demoApi.apiKey = `sk-local-${crypto.randomUUID().replaceAll("-", "").slice(0, 16)}`;
     return structuredClone(demoApi);
+  },
+  async openNetworkSettings() {
+    await delay(80);
   },
   async openLogsFolder() {
     await delay(80);

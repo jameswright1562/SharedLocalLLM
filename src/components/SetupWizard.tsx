@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 
-import { describeAppError } from "../services/errors";
+import { decodeAppError, describeAppError } from "../services/errors";
 import type { AppService, AppSnapshot, NetworkBenchmark, NodeCapabilities } from "../types";
 import { SetupStepContent } from "./SetupStepContent";
 
@@ -9,6 +9,8 @@ interface SetupWizardProps {
   service: AppService;
   onComplete: (snapshot: AppSnapshot) => void;
 }
+
+type PublicNetworkRetry = "create-code" | "pair";
 
 const steps = ["Runtime", "Device", "Pair", "Models", "Network", "Ready"];
 
@@ -26,17 +28,33 @@ export function SetupWizard({ snapshot, service, onComplete }: SetupWizardProps)
     status: "Ready to download",
   });
   const [error, setError] = useState("");
+  const [errorCode, setErrorCode] = useState<string>();
+  const [publicNetworkRetry, setPublicNetworkRetry] = useState<PublicNetworkRetry>();
 
   const progress = useMemo(() => ((step + 1) / steps.length) * 100, [step]);
 
-  async function createCode() {
-    setBusy(true);
+  function clearError() {
     setError("");
+    setErrorCode(undefined);
+    setPublicNetworkRetry(undefined);
+  }
+
+  function reportError(reason: unknown, fallback: string) {
+    setError(describeAppError(reason, fallback));
+    setErrorCode(decodeAppError(reason).code);
+  }
+
+  async function createCode(allowPublicNetwork = false) {
+    setBusy(true);
+    clearError();
     try {
-      const result = await service.generatePairingCode();
+      const result = await service.generatePairingCode(allowPublicNetwork);
       setGeneratedCode(result.code);
     } catch (reason) {
-      setError(describeAppError(reason, "Could not create a pairing code."));
+      reportError(reason, "Could not create a pairing code.");
+      if (decodeAppError(reason).code === "private_network_required") {
+        setPublicNetworkRetry("create-code");
+      }
     } finally {
       setBusy(false);
     }
@@ -44,28 +62,31 @@ export function SetupWizard({ snapshot, service, onComplete }: SetupWizardProps)
 
   async function installRuntime() {
     setBusy(true);
-    setError("");
+    clearError();
     try {
       await service.installRuntime((percent, status) => setRuntimeProgress({ percent, status }));
       setRuntimeProgress({ percent: 100, status: "Runtime ready" });
       setStep(1);
     } catch (reason) {
-      setError(describeAppError(reason, "The runtime could not be installed."));
+      reportError(reason, "The runtime could not be installed.");
     } finally {
       setBusy(false);
     }
   }
 
-  async function pair() {
+  async function pair(allowPublicNetwork = false) {
     if (!pairCode.trim()) return;
     setBusy(true);
-    setError("");
+    clearError();
     try {
-      const node = await service.pairWithPeer(pairCode.replace(/\s/g, ""));
+      const node = await service.pairWithPeer(pairCode.replace(/\s/g, ""), allowPublicNetwork);
       setPairedNode(node);
       setStep(3);
     } catch (reason) {
-      setError(describeAppError(reason, "Pairing failed. Check the code and private network."));
+      reportError(reason, "Pairing failed. Check the code and private network.");
+      if (decodeAppError(reason).code === "private_network_required") {
+        setPublicNetworkRetry("pair");
+      }
     } finally {
       setBusy(false);
     }
@@ -73,7 +94,7 @@ export function SetupWizard({ snapshot, service, onComplete }: SetupWizardProps)
 
   async function addFolder() {
     setBusy(true);
-    setError("");
+    clearError();
     try {
       const directory = await service.addModelDirectory();
       if (!directory) {
@@ -82,7 +103,7 @@ export function SetupWizard({ snapshot, service, onComplete }: SetupWizardProps)
       }
       setStep(4);
     } catch (reason) {
-      setError(describeAppError(reason, "The model folder could not be added."));
+      reportError(reason, "The model folder could not be added.");
     } finally {
       setBusy(false);
     }
@@ -90,13 +111,13 @@ export function SetupWizard({ snapshot, service, onComplete }: SetupWizardProps)
 
   async function testNetwork() {
     setBusy(true);
-    setError("");
+    clearError();
     try {
       const result = await service.runNetworkTest();
       setNetwork(result);
       setStep(5);
     } catch (reason) {
-      setError(describeAppError(reason, "The network test could not finish."));
+      reportError(reason, "The network test could not finish.");
     } finally {
       setBusy(false);
     }
@@ -104,13 +125,29 @@ export function SetupWizard({ snapshot, service, onComplete }: SetupWizardProps)
 
   async function finish() {
     setBusy(true);
-    setError("");
+    clearError();
     try {
       onComplete(await service.completeSetup(deviceName.trim()));
     } catch (reason) {
-      setError(describeAppError(reason, "Setup could not be completed."));
+      reportError(reason, "Setup could not be completed.");
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function openNetworkSettings() {
+    try {
+      await service.openNetworkSettings();
+    } catch (reason) {
+      reportError(reason, "Windows network settings could not be opened.");
+    }
+  }
+
+  function retryOnPublicNetwork() {
+    if (publicNetworkRetry === "create-code") {
+      void createCode(true);
+    } else if (publicNetworkRetry === "pair") {
+      void pair(true);
     }
   }
 
@@ -165,9 +202,31 @@ export function SetupWizard({ snapshot, service, onComplete }: SetupWizardProps)
           finish={finish}
         />
         {error && (
-          <p className="form-error" role="alert">
-            {error}
-          </p>
+          <div className="form-error" role="alert">
+            <p>{error}</p>
+            {step === 2 && errorCode === "private_network_required" && (
+              <div className="network-profile-help">
+                <p>
+                  Private means a home or work network you trust—not a private internet connection.
+                  Public networks can contain devices you do not trust, so pairing is blocked by
+                  default. The override permits a temporary five-minute pairing session; cluster
+                  launch remains blocked on a Public profile. Showing a code may require Windows
+                  approval for a temporary firewall rule.
+                </p>
+                <div className="network-profile-actions">
+                  <button
+                    className="button secondary compact-button"
+                    onClick={() => void openNetworkSettings()}
+                  >
+                    Open Windows network settings
+                  </button>
+                  <button className="text-button" onClick={retryOnPublicNetwork}>
+                    Use this public network
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
         )}
       </main>
     </div>

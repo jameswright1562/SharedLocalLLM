@@ -1,11 +1,13 @@
+mod persistence;
+mod placement;
+
 use std::{
-    fs,
     path::PathBuf,
     sync::{Mutex, MutexGuard},
 };
 
-use rand::{distributions::Alphanumeric, Rng};
-use serde::{Deserialize, Serialize};
+pub use persistence::{data_root, directory_for, logs_root, peer_secret_path, regenerate_key};
+use persistence::{new_api_key, read_settings, save_settings, secrets_path, PersistedSettings};
 
 use crate::{
     hardware,
@@ -16,19 +18,6 @@ use crate::{
     secrets,
     types::*,
 };
-
-#[derive(Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-#[serde(default)]
-struct PersistedSettings {
-    custom_model_directories: Vec<String>,
-    peers: Vec<PeerRecord>,
-    device_name: Option<String>,
-    setup_complete: bool,
-    api_port: Option<u16>,
-    autostart: bool,
-    benchmarks: Vec<InferenceBenchmark>,
-}
 
 pub struct AppState {
     pub inner: Mutex<InnerState>,
@@ -43,6 +32,8 @@ pub struct AppState {
 pub struct PeerRuntime {
     pub server: Option<PeerServer>,
     pub discovery: Option<DiscoveryBroadcaster>,
+    pub pairing_session_id: Option<String>,
+    pub public_firewall_lease: Option<PathBuf>,
     pub client: Option<std::sync::Arc<PeerClient>>,
     pub forwarder: Option<RpcForwarder>,
 }
@@ -152,7 +143,7 @@ impl AppState {
         roots.extend(lms_catalog_roots());
         let mut models = discover_gguf_models(&roots)?;
         let peers = self.lock()?.peers.clone();
-        apply_fit(&mut models, &local, &peers);
+        placement::apply_fit(&mut models, &local, &peers);
         self.lock()?.models = models.clone();
         Ok(models)
     }
@@ -203,16 +194,7 @@ impl AppState {
             autostart: inner.autostart,
             benchmarks: inner.benchmarks.clone(),
         };
-        let path = settings_path();
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).map_err(state_io)?;
-        }
-        fs::write(
-            path,
-            serde_json::to_vec_pretty(&settings)
-                .map_err(|e| ErrorPayload::new("settings_encode", e.to_string(), None))?,
-        )
-        .map_err(state_io)
+        save_settings(&settings)
     }
 
     pub async fn peer_client(&self) -> Result<std::sync::Arc<PeerClient>, ErrorPayload> {
@@ -259,102 +241,8 @@ impl AppState {
     }
 }
 
-fn apply_fit(models: &mut [ModelRecord], local: &NodeCapabilities, peers: &[PeerRecord]) {
-    use crate::capacity::{recommend_topology, CapacityOutcome, CapacityRequest};
-    let mut gpu_mib = vec![(local.gpu.vram_available_gb.max(0.0) * 1024.0) as u64];
-    gpu_mib.extend(
-        peers
-            .iter()
-            .filter_map(|peer| peer.capabilities.as_ref())
-            .map(|node| (node.gpu.vram_available_gb.max(0.0) * 1024.0) as u64),
-    );
-    let ram_mib = (local.ram_available_gb.max(0.0) * 1024.0) as u64;
-    for model in models {
-        let projector_mib = model
-            .projector
-            .as_ref()
-            .and_then(|path| std::fs::metadata(path).ok())
-            .map(|metadata| metadata.len().div_ceil(1_048_576))
-            .unwrap_or_default();
-        let context_mib = (model.context_length as u64 / 4096).max(1) * 512;
-        let model_mib = model.size_bytes.div_ceil(1_048_576) + projector_mib + context_mib;
-        model.fit =
-            match recommend_topology(CapacityRequest::new(model_mib, gpu_mib.clone(), ram_mib))
-                .outcome
-            {
-                CapacityOutcome::SingleNode { .. } => "single-node",
-                CapacityOutcome::Distributed { .. } => "combined-gpu",
-                CapacityOutcome::RamSpill { .. } => "gpu-ram",
-                CapacityOutcome::Insufficient => "does-not-fit",
-            }
-            .into();
-    }
-}
-
-pub fn directory_for(path: &std::path::Path, source: &str, node_id: &str) -> ModelDirectory {
-    let mut digest = sha2::Sha256::new();
-    use sha2::Digest;
-    digest.update(path.to_string_lossy().as_bytes());
-    ModelDirectory {
-        id: hex::encode(digest.finalize())[..12].into(),
-        node_id: node_id.into(),
-        path: path.to_string_lossy().into_owned(),
-        source: source.into(),
-    }
-}
-
-pub fn data_root() -> PathBuf {
-    dirs::data_local_dir()
-        .unwrap_or_else(std::env::temp_dir)
-        .join("SharedLocalLLM")
-}
-pub fn logs_root() -> PathBuf {
-    data_root().join("logs")
-}
-fn settings_path() -> PathBuf {
-    data_root().join("settings.json")
-}
-fn secrets_path() -> PathBuf {
-    data_root().join("secrets.dat")
-}
-pub fn peer_secret_path(peer_id: &str) -> PathBuf {
-    let safe_id: String = peer_id
-        .chars()
-        .filter(|character| character.is_ascii_alphanumeric() || *character == '-')
-        .take(80)
-        .collect();
-    data_root().join("peers").join(format!("{safe_id}.dat"))
-}
-fn read_settings() -> PersistedSettings {
-    fs::read(settings_path())
-        .ok()
-        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
-        .unwrap_or_default()
-}
-fn new_api_key() -> String {
-    format!(
-        "sk-local-{}",
-        rand::thread_rng()
-            .sample_iter(&Alphanumeric)
-            .take(32)
-            .map(char::from)
-            .collect::<String>()
-    )
-}
-fn state_io(error: std::io::Error) -> ErrorPayload {
-    ErrorPayload::new(
-        "settings_io",
-        error.to_string(),
-        Some("Check the application data folder permissions.".into()),
-    )
-}
-
 impl Default for AppState {
     fn default() -> Self {
         Self::new()
     }
-}
-
-pub fn regenerate_key() -> String {
-    new_api_key()
 }

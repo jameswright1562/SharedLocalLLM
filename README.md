@@ -24,7 +24,8 @@ the network is fast enough, and keeping the RPC service off the open LAN are all
 
 SharedLocalLLM puts that setup behind one desktop interface:
 
-- Pair exactly two computers on a trusted Windows Private network.
+- Pair exactly two computers on a trusted Windows Private network by default, with an explicit
+  temporary pairing override for a Public profile.
 - Discover hardware and current free VRAM/RAM instead of relying on hardcoded specifications.
 - Find LM Studio models automatically or index user-selected read-only folders.
 - Recognize normal GGUF files, split GGUF models, and nearby `mmproj` vision projectors.
@@ -67,7 +68,8 @@ full security model.
 
 ## What you need
 
-- Two Windows 10/11 x64 computers on the same trusted private network.
+- Two Windows 10/11 x64 computers on the same trusted network. A Private profile is required to
+  launch a cluster.
 - An NVIDIA GPU and compatible driver on each computer for the pinned CUDA 12 runtime.
 - A GGUF model stored on at least one computer.
 - Enough combined VRAM and RAM for the chosen model and context.
@@ -84,7 +86,11 @@ The intended installed flow is the same on both computers:
    official origin, archive size, SHA-256 digest, archive contents, and required executables.
 3. Give each computer a friendly name.
 4. Start pairing on one computer. Select the discovered peer—or enter its private IPv4 address—and
-   confirm the six-digit code shown by both apps.
+   confirm the six-digit code shown by both apps. If Windows classifies a trusted LAN as Public, the
+   wizard can permit a temporary five-minute pairing session after a native warning. Showing a code
+   also requires approval for an app-and-port-specific Public firewall rule, which is removed after
+   pairing or timeout. The app still will not launch a cluster until the profile is Private or
+   domain-authenticated.
 5. Allow SharedLocalLLM through Windows Firewall for **Private networks only**.
 6. Open **Models**. Use the detected LM Studio catalogue or choose **Add folder** for any other GGUF
    directory on either computer.
@@ -121,6 +127,13 @@ The first candidate split is based on currently usable VRAM, with safety space l
 other applications. The app can then compare valid nearby layer splits, single-computer placement,
 and coordinator RAM spill. Results are tied to the exact model, context, hardware, drivers, runtime,
 and active network adapter so a changed setup does not reuse a stale recommendation.
+
+Automatic allocation is the default. In **Models**, switch to **Manual GPU split** to set a target
+GPU-layer count for each connected computer. The live estimate combines proportional GGUF weights,
+the selected context's F16 KV cache, and a runtime allowance, shows the current available VRAM on
+each computer, and blocks a manual launch when the estimate exceeds it. `llama.cpp` may round the
+requested proportions at tensor boundaries, so the displayed figures are estimates rather than a
+guarantee of exact allocation.
 
 The network rating is guidance, not a promise of token speed:
 

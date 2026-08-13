@@ -1,9 +1,9 @@
 import { useMemo, useState } from "react";
+import { ModelCatalogue, type CapabilityFilter } from "../components/ModelCatalogue";
+import { ModelInspector } from "../components/ModelInspector";
 import { describeAppError } from "../services/errors";
-import type { PageProps } from "../types";
-import { fitLabels, formatBytes, formatContext } from "./pageFormat";
-
-type CapabilityFilter = "all" | "text" | "vision" | "split";
+import { distributeLayersByVram, estimateModelSplitLocally } from "../services/splitEstimate";
+import type { GpuLayerAllocation, PageProps } from "../types";
 
 export function ModelsPage({ snapshot, service, refreshSnapshot }: PageProps) {
   const [query, setQuery] = useState("");
@@ -13,10 +13,10 @@ export function ModelsPage({ snapshot, service, refreshSnapshot }: PageProps) {
   const [busy, setBusy] = useState<"refresh" | "add" | "launch" | "">("");
   const [message, setMessage] = useState("");
   const [contextByModel, setContextByModel] = useState<Record<string, number>>({});
+  const [manualByModel, setManualByModel] = useState<Record<string, boolean>>({});
+  const [layersByModel, setLayersByModel] = useState<Record<string, GpuLayerAllocation[]>>({});
   const nodeLookup = new Map(snapshot.nodes.map((node) => [node.id, node.name]));
-
   const models = discoveredModels ?? snapshot.models;
-
   const visibleModels = useMemo(
     () =>
       models.filter((model) => {
@@ -33,6 +33,31 @@ export function ModelsPage({ snapshot, service, refreshSnapshot }: PageProps) {
   const contextSize = selected
     ? (contextByModel[selected.id] ?? Math.min(selected.contextLength, 8192))
     : 8192;
+  const gpuNodes = useMemo(
+    () => snapshot.nodes.filter((node) => node.online && node.gpu.vramTotalGb > 0),
+    [snapshot.nodes],
+  );
+  const manualSplit = selected ? Boolean(manualByModel[selected.id]) : false;
+  const gpuLayers = useMemo(
+    () =>
+      selected
+        ? (layersByModel[selected.id] ?? distributeLayersByVram(selected.layerCount ?? 0, gpuNodes))
+        : [],
+    [gpuNodes, layersByModel, selected],
+  );
+  const splitEstimate = useMemo(() => {
+    if (!selected?.layerCount || !manualSplit) return undefined;
+    try {
+      return estimateModelSplitLocally(selected, gpuNodes, { contextSize, gpuLayers });
+    } catch {
+      return undefined;
+    }
+  }, [contextSize, gpuLayers, gpuNodes, manualSplit, selected]);
+  const splitInvalid =
+    manualSplit &&
+    (!splitEstimate ||
+      splitEstimate.gpuLayers === 0 ||
+      splitEstimate.devices.some((device) => !device.fits));
 
   async function refreshModels() {
     setBusy("refresh");
@@ -66,17 +91,33 @@ export function ModelsPage({ snapshot, service, refreshSnapshot }: PageProps) {
   }
 
   async function launch() {
-    if (!selected || selected.fit === "does-not-fit") return;
+    if (!selected || selected.fit === "does-not-fit" || splitInvalid) return;
     setBusy("launch");
     setMessage("");
     try {
-      await service.startCluster(selected.id, contextSize);
-      setMessage(`${selected.name} is loading on the recommended topology.`);
+      await service.startCluster(selected.id, {
+        contextSize,
+        gpuLayers: manualSplit ? gpuLayers : [],
+      });
+      setMessage(
+        `${selected.name} is loading with ${manualSplit ? "the selected GPU layer split" : "automatic allocation"}.`,
+      );
       await refreshSnapshot();
     } catch (reason) {
       setMessage(describeAppError(reason, "The model could not be launched."));
     } finally {
       setBusy("");
+    }
+  }
+
+  function setManualSplit(manual: boolean) {
+    if (!selected) return;
+    setManualByModel({ ...manualByModel, [selected.id]: manual });
+    if (manual && !layersByModel[selected.id]) {
+      setLayersByModel({
+        ...layersByModel,
+        [selected.id]: distributeLayersByVram(selected.layerCount ?? 0, gpuNodes),
+      });
     }
   }
 
@@ -126,140 +167,32 @@ export function ModelsPage({ snapshot, service, refreshSnapshot }: PageProps) {
         </div>
       </div>
       <div className="model-layout">
-        <div className="model-list" data-testid="model-list">
-          {visibleModels.map((model) => (
-            <button
-              className={`model-row ${selectedId === model.id ? "selected" : ""}`}
-              key={model.id}
-              onClick={() => setSelectedId(model.id)}
-              aria-pressed={selectedId === model.id}
-            >
-              <span className={`model-kind kind-${model.capability}`}>
-                {model.capability === "vision" ? "◉" : "T"}
-              </span>
-              <span className="model-main">
-                <strong>{model.name}</strong>
-                <small>
-                  {model.architecture} · {model.quantization} · {formatBytes(model.sizeBytes)}
-                </small>
-              </span>
-              <span className="model-tags">
-                <i>{model.capability}</i>
-                {model.shards > 1 && <i>{model.shards} shards</i>}
-                <i>{model.locations[0]?.source === "lm-studio" ? "LM Studio" : "Custom"}</i>
-              </span>
-              <span className={`fit-badge fit-${model.fit}`}>{fitLabels[model.fit]}</span>
-              <span className="row-arrow" aria-hidden="true">
-                ›
-              </span>
-            </button>
-          ))}
-          {visibleModels.length === 0 && (
-            <div className="empty-state model-empty">
-              <span>GG</span>
-              <div>
-                <h2>{models.length ? "No models match" : "No models indexed"}</h2>
-                <p>
-                  {models.length
-                    ? "Clear the search or choose another filter."
-                    : "Add an LM Studio or custom folder containing GGUF files."}
-                </p>
-                <button className="button secondary" onClick={() => void addFolder()}>
-                  Add folder
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
-        <aside className="model-inspector" aria-label="Selected model details">
-          {selected ? (
-            <>
-              <p className="section-kicker">Selected model</p>
-              <h2>{selected.name}</h2>
-              <dl>
-                <div>
-                  <dt>Fit</dt>
-                  <dd>
-                    <span className={`fit-badge fit-${selected.fit}`}>
-                      {fitLabels[selected.fit]}
-                    </span>
-                  </dd>
-                </div>
-                <div>
-                  <dt>Context</dt>
-                  <dd>{formatContext(selected.contextLength)} tokens</dd>
-                </div>
-                <div>
-                  <dt>Format</dt>
-                  <dd>{selected.quantization}</dd>
-                </div>
-                <div>
-                  <dt>Files</dt>
-                  <dd>
-                    {selected.shards} GGUF{selected.capability === "vision" ? " + projector" : ""}
-                  </dd>
-                </div>
-                <div>
-                  <dt>Location</dt>
-                  <dd>
-                    {selected.locations[0]
-                      ? (nodeLookup.get(selected.locations[0].nodeId) ?? "Unknown node")
-                      : "Unknown node"}
-                  </dd>
-                </div>
-              </dl>
-              <div className="fit-explanation">
-                <strong>
-                  {selected.fit === "single-node"
-                    ? "Fast local placement"
-                    : selected.fit === "combined-gpu"
-                      ? "Both GPUs required"
-                      : selected.fit === "gpu-ram"
-                        ? "System memory assists"
-                        : "Insufficient safe memory"}
-                </strong>
-                <p>
-                  {selected.fit === "single-node"
-                    ? "This model fits on at least one GPU. Benchmarks decide whether distribution is worthwhile."
-                    : selected.fit === "combined-gpu"
-                      ? "The model will be layer-split across the private link."
-                      : selected.fit === "gpu-ram"
-                        ? "Some layers will use coordinator RAM, which can reduce speed."
-                        : "Free memory or choose a smaller quantization."}
-                </p>
-              </div>
-              <label className="field-label" htmlFor="context-select">
-                Requested context
-              </label>
-              <select
-                id="context-select"
-                value={String(contextSize)}
-                onChange={(event) =>
-                  setContextByModel({
-                    ...contextByModel,
-                    [selected.id]: Number(event.target.value),
-                  })
-                }
-              >
-                <option value="4096">4,096 tokens</option>
-                <option value="8192">8,192 tokens</option>
-                {selected.contextLength >= 16384 && <option value="16384">16,384 tokens</option>}
-              </select>
-              <button
-                className="button primary full"
-                disabled={busy === "launch" || selected.fit === "does-not-fit"}
-                onClick={() => void launch()}
-                aria-label={`Launch ${selected.name}`}
-              >
-                {busy === "launch" ? "Starting cluster…" : `Launch ${selected.name}`}
-              </button>
-            </>
-          ) : (
-            <div className="inspector-empty">
-              Select a model to inspect fit and launch settings.
-            </div>
-          )}
-        </aside>
+        <ModelCatalogue
+          models={models}
+          visibleModels={visibleModels}
+          selectedId={selectedId}
+          select={setSelectedId}
+          addFolder={() => void addFolder()}
+        />
+        <ModelInspector
+          selected={selected}
+          nodeLookup={nodeLookup}
+          contextSize={contextSize}
+          setContextSize={(value) =>
+            selected && setContextByModel({ ...contextByModel, [selected.id]: value })
+          }
+          manualSplit={manualSplit}
+          setManualSplit={setManualSplit}
+          gpuNodes={gpuNodes}
+          gpuLayers={gpuLayers}
+          splitEstimate={splitEstimate}
+          setGpuLayers={(layers) =>
+            selected && setLayersByModel({ ...layersByModel, [selected.id]: layers })
+          }
+          busy={busy === "launch"}
+          splitInvalid={splitInvalid}
+          launch={() => void launch()}
+        />
       </div>
       {message && (
         <div className="toast-message" role="status">

@@ -1,10 +1,13 @@
+mod network;
+mod session;
+
 use std::{
     net::{Ipv4Addr, SocketAddr},
     sync::Arc,
     time::Duration,
 };
 
-use tauri::State;
+use tauri::{AppHandle, State};
 
 use crate::{
     pairing::{now, PeerRecord},
@@ -17,11 +20,17 @@ use crate::{
     types::{ErrorPayload, NodeCapabilities, PairingCode},
 };
 
+pub(crate) use network::require_private_network;
+use network::{close_firewall_lease, open_temporary_public_firewall_port, require_pairing_network};
+use session::cleanup_pairing_session;
+
 #[tauri::command]
 pub async fn generate_pairing_code(
+    allow_public_network: bool,
+    app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<PairingCode, ErrorPayload> {
-    require_private_network()?;
+    let public_override = require_pairing_network(allow_public_network)?;
     let code = state
         .pairing
         .lock()
@@ -52,22 +61,61 @@ pub async fn generate_pairing_code(
         rpc_command,
     })
     .await?;
-    let broadcaster = DiscoveryBroadcaster::start(DiscoveryAnnouncement {
+    let firewall_lease = if public_override {
+        match open_temporary_public_firewall_port(server.address().port()).await {
+            Ok(lease) => Some(lease),
+            Err(error) => {
+                server.shutdown().await;
+                return Err(error);
+            }
+        }
+    } else {
+        None
+    };
+    let broadcaster = match DiscoveryBroadcaster::start(DiscoveryAnnouncement {
         protocol_version: 1,
         device_id: local.id,
         device_name: local.name,
         peer_port: server.address().port(),
     })
-    .await?;
-    let mut peer = state.peer.lock().await;
-    if let Some(previous) = peer.discovery.take() {
+    .await
+    {
+        Ok(broadcaster) => broadcaster,
+        Err(error) => {
+            close_firewall_lease(firewall_lease.as_deref());
+            server.shutdown().await;
+            return Err(error);
+        }
+    };
+    let mut pairing_completion = server.pairing_completion();
+    let session_id = uuid::Uuid::new_v4().to_string();
+    let (previous_discovery, previous_server, previous_lease) = {
+        let mut peer = state.peer.lock().await;
+        let previous = (
+            peer.discovery.take(),
+            peer.server.take(),
+            peer.public_firewall_lease.take(),
+        );
+        peer.pairing_session_id = Some(session_id.clone());
+        peer.server = Some(server);
+        peer.discovery = Some(broadcaster);
+        peer.public_firewall_lease = firewall_lease;
+        previous
+    };
+    if let Some(previous) = previous_discovery {
         previous.shutdown().await;
     }
-    if let Some(previous) = peer.server.take() {
+    if let Some(previous) = previous_server {
         previous.shutdown().await;
     }
-    peer.server = Some(server);
-    peer.discovery = Some(broadcaster);
+    close_firewall_lease(previous_lease.as_deref());
+    tokio::spawn(async move {
+        let completed = tokio::select! {
+            result = pairing_completion.changed() => result.is_ok() && *pairing_completion.borrow(),
+            _ = tokio::time::sleep(Duration::from_secs(300)) => false,
+        };
+        cleanup_pairing_session(&app, &session_id, completed).await;
+    });
     Ok(PairingCode {
         code: format!("{} {}", &code[..3], &code[3..]),
         expires_in_seconds: 300,
@@ -77,9 +125,10 @@ pub async fn generate_pairing_code(
 #[tauri::command]
 pub async fn pair_with_peer(
     code: String,
+    allow_public_network: bool,
     state: State<'_, AppState>,
 ) -> Result<NodeCapabilities, ErrorPayload> {
-    require_private_network()?;
+    let _ = require_pairing_network(allow_public_network)?;
     let local = state.lock()?.local.clone();
     let mut endpoints = Vec::new();
     if let Ok(endpoint) = std::env::var("SHARED_LOCAL_LLM_PEER_ENDPOINT") {
@@ -146,26 +195,4 @@ pub async fn pair_with_peer(
     Err(last_error.unwrap_or_else(|| {
         ErrorPayload::new("pairing_failed", "The pairing attempt failed.", None)
     }))
-}
-
-fn require_private_network() -> Result<(), ErrorPayload> {
-    #[cfg(windows)]
-    {
-        let output = std::process::Command::new("powershell.exe")
-            .args(["-NoProfile", "-NonInteractive", "-Command", "@(Get-NetConnectionProfile | Where-Object IPv4Connectivity -ne 'Disconnected' | Select-Object -ExpandProperty NetworkCategory) -join ','"])
-            .output()
-            .map_err(|error| ErrorPayload::new("network_profile_probe", error.to_string(), None))?;
-        let profiles = String::from_utf8_lossy(&output.stdout);
-        if !profiles.split(',').any(|profile| {
-            profile.trim().eq_ignore_ascii_case("Private")
-                || profile.trim().eq_ignore_ascii_case("DomainAuthenticated")
-        }) {
-            return Err(ErrorPayload::new(
-                "private_network_required",
-                "Pairing is available only on a Windows Private network profile.",
-                Some("Change the trusted LAN profile to Private in Windows Settings.".into()),
-            ));
-        }
-    }
-    Ok(())
 }

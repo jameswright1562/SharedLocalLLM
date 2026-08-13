@@ -30,6 +30,7 @@ async fn start_peer(code: &str, rpc_target: SocketAddr) -> PeerServer {
 async fn rejects_wrong_pairing_code_and_accepts_correct_code() {
     let unavailable_rpc = SocketAddr::from((Ipv4Addr::LOCALHOST, 9));
     let peer = start_peer("482916", unavailable_rpc).await;
+    let mut pairing_completion = peer.pairing_completion();
 
     assert!(
         PeerClient::pair(peer.address(), "000000", "client-id", "Client")
@@ -39,8 +40,13 @@ async fn rejects_wrong_pairing_code_and_accepts_correct_code() {
     let client = PeerClient::pair(peer.address(), "482 916", "client-id", "Client")
         .await
         .unwrap();
-    assert!(client.heartbeat().await.unwrap());
     assert_eq!(client.capabilities().await.unwrap()["gpu"], "test");
+    tokio::time::timeout(Duration::from_secs(1), pairing_completion.changed())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(*pairing_completion.borrow());
+    assert!(client.heartbeat().await.unwrap());
     peer.shutdown().await;
 }
 

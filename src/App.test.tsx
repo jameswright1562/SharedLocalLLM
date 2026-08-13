@@ -176,7 +176,7 @@ describe("SharedLocalLLM app", () => {
     expect(await screen.findByText("481 209")).toBeInTheDocument();
     await user.type(screen.getByLabelText(/enter code/i), "481209");
     await user.click(screen.getByRole("button", { name: /^pair computers$/i }));
-    await waitFor(() => expect(pairWithPeer).toHaveBeenCalledWith("481209"));
+    await waitFor(() => expect(pairWithPeer).toHaveBeenCalledWith("481209", false));
   });
 
   it("masks the API key and can reveal it", async () => {

@@ -1,14 +1,17 @@
 @import "./tokens.css";
+@import "./primitives.css";
 @import "./shell.css";
 @import "./compute-path.css";
 @import "./overview.css";
 @import "./nodes.css";
 @import "./network.css";
 @import "./models.css";
+@import "./model-allocation.css";
 @import "./benchmarks.css";
 @import "./chat.css";
 @import "./api.css";
 @import "./settings.css";
 @import "./common.css";
 @import "./setup.css";
+@import "./setup-steps.css";
 @import "./responsive.css";

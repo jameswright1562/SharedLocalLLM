@@ -2,38 +2,68 @@ use std::time::Duration;
 
 use tauri::State;
 
+pub mod benchmark;
+pub mod split;
+
+pub use benchmark::{cancel_inference_benchmark, run_inference_benchmark};
+pub use split::estimate_model_split;
+
 use crate::{
+    commands::pairing::require_private_network,
     runtime,
     state::AppState,
-    types::{ClusterSession, ErrorPayload, InferenceBenchmark},
+    types::{ClusterSession, ErrorPayload, ModelLoadConfig},
 };
 
 #[tauri::command]
 pub async fn start_cluster(
     model_id: String,
-    context_size: u32,
+    load_config: ModelLoadConfig,
     state: State<'_, AppState>,
 ) -> Result<ClusterSession, ErrorPayload> {
-    let (model, api_key, api_port, coordinator, peer_id) = {
+    require_private_network()?;
+    let (model, api_key, api_port, coordinator, peer_id, normalized_config) = {
         let inner = state.lock()?;
         let model = inner
             .models
             .iter()
             .find(|model| model.id == model_id)
             .cloned()
-            .ok_or_else(|| {
-                ErrorPayload::new(
-                    "model_not_found",
-                    "Refresh the catalogue and choose an available model.",
-                    None,
-                )
-            })?;
+            .ok_or_else(model_not_found)?;
+        let nodes = split::cluster_nodes(&inner.local, inner.peers.first());
+        let mut normalized_config = ModelLoadConfig {
+            context_size: load_config
+                .context_size
+                .max(4096)
+                .min(model.context_length.max(4096)),
+            gpu_layers: vec![],
+        };
+        if !load_config.gpu_layers.is_empty() {
+            let (estimate, gpu_layers) = split::build_split_estimate(&model, &load_config, &nodes)?;
+            if let Some(device) = estimate.devices.iter().find(|device| !device.fits) {
+                let node_name = nodes
+                    .iter()
+                    .find(|node| node.id == device.node_id)
+                    .map(|node| node.name.as_str())
+                    .unwrap_or("A selected computer");
+                return Err(ErrorPayload::new(
+                    "split_exceeds_vram",
+                    format!(
+                        "{node_name} needs an estimated {} MiB of VRAM, but only {} MiB is currently available.",
+                        device.estimated_vram_mib, device.available_vram_mib
+                    ),
+                    Some("Move layers to the other computer, reduce context, or use automatic allocation.".into()),
+                ));
+            }
+            normalized_config.gpu_layers = gpu_layers;
+        }
         (
             model,
             inner.api_key.clone(),
             inner.api_port,
             inner.local.id.clone(),
             inner.peers.first().map(|peer| peer.id.clone()),
+            normalized_config,
         )
     };
     if runtime::status().status != "ready" {
@@ -65,7 +95,7 @@ pub async fn start_cluster(
         })?
         .start(
             &model,
-            context_size.max(4096),
+            &normalized_config,
             &api_key,
             peer_id.is_some(),
             rpc_endpoint,
@@ -99,6 +129,14 @@ pub async fn start_cluster(
     Ok(session)
 }
 
+fn model_not_found() -> ErrorPayload {
+    ErrorPayload::new(
+        "model_not_found",
+        "Refresh the catalogue and choose an available model.",
+        None,
+    )
+}
+
 #[tauri::command]
 pub async fn stop_cluster(state: State<'_, AppState>) -> Result<ClusterSession, ErrorPayload> {
     state
@@ -126,111 +164,6 @@ pub async fn stop_cluster(state: State<'_, AppState>) -> Result<ClusterSession, 
         ..ClusterSession::default()
     };
     Ok(inner.cluster.clone())
-}
-
-#[tauri::command]
-pub async fn run_inference_benchmark(
-    model_id: String,
-    state: State<'_, AppState>,
-) -> Result<Vec<InferenceBenchmark>, ErrorPayload> {
-    let model = state
-        .lock()?
-        .models
-        .iter()
-        .find(|model| model.id == model_id)
-        .cloned()
-        .ok_or_else(|| {
-            ErrorPayload::new(
-                "model_not_found",
-                "The benchmark model is unavailable.",
-                None,
-            )
-        })?;
-    let executable = runtime::runtime_root()
-        .join("current")
-        .join("llama-bench.exe");
-    if !executable.is_file() {
-        return Err(ErrorPayload::new(
-            "benchmark_runtime_missing",
-            "llama-bench.exe is not installed.",
-            Some("Install or repair the pinned runtime.".into()),
-        ));
-    }
-    let mut command = tokio::process::Command::new(executable);
-    command
-        .args([
-            "-m",
-            &model.shard_paths[0],
-            "-p",
-            "512",
-            "-n",
-            "128",
-            "-r",
-            "3",
-            "-o",
-            "json",
-        ])
-        .kill_on_drop(true);
-    let (cancel, cancelled) = tokio::sync::oneshot::channel();
-    *state.benchmark_cancel.lock().map_err(|_| {
-        ErrorPayload::new(
-            "benchmark_state",
-            "Benchmark cancellation state is unavailable.",
-            None,
-        )
-    })? = Some(cancel);
-    let output = tokio::select! {
-        output = command.output() => output.map_err(|error| ErrorPayload::new("benchmark_process", error.to_string(), None))?,
-        _ = cancelled => return Err(ErrorPayload::new("benchmark_cancelled", "The inference benchmark was cancelled.", None)),
-    };
-    let _ = state.benchmark_cancel.lock().map(|mut slot| slot.take());
-    if !output.status.success() {
-        return Err(ErrorPayload::new(
-            "benchmark_failed",
-            String::from_utf8_lossy(&output.stderr).trim().to_owned(),
-            Some("Review the model fit recommendation and runtime logs.".into()),
-        ));
-    }
-    let raw: serde_json::Value = serde_json::from_slice(&output.stdout)
-        .map_err(|error| ErrorPayload::new("benchmark_output", error.to_string(), None))?;
-    let rows = raw.as_array().cloned().unwrap_or_default();
-    let generation = rows
-        .iter()
-        .find_map(|row| row.get("avg_ts").and_then(|v| v.as_f64()))
-        .unwrap_or_default();
-    let result = InferenceBenchmark {
-        id: uuid::Uuid::new_v4().to_string(),
-        model_name: model.name,
-        topology: "local".into(),
-        prompt_tokens_per_second: generation,
-        generation_tokens_per_second: generation,
-        load_time_seconds: 0.0,
-        memory_peak_gb: 0.0,
-        recommended: true,
-        ran_at: format!("{}", crate::pairing::now()),
-    };
-    state.lock()?.benchmarks.push(result.clone());
-    state.persist()?;
-    Ok(vec![result])
-}
-
-#[tauri::command]
-pub fn cancel_inference_benchmark(state: State<'_, AppState>) -> Result<(), ErrorPayload> {
-    if let Some(cancel) = state
-        .benchmark_cancel
-        .lock()
-        .map_err(|_| {
-            ErrorPayload::new(
-                "benchmark_state",
-                "Benchmark cancellation state is unavailable.",
-                None,
-            )
-        })?
-        .take()
-    {
-        let _ = cancel.send(());
-    }
-    Ok(())
 }
 
 async fn wait_for_health(port: u16, api_key: &str) -> Result<(), ErrorPayload> {

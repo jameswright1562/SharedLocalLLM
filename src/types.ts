@@ -45,10 +45,41 @@ export interface ModelRecord {
   quantization: string;
   sizeBytes: number;
   contextLength: number;
+  layerCount?: number;
+  embeddingLength?: number;
+  attentionHeadCount?: number;
+  attentionHeadCountKv?: number;
   capability: "text" | "vision";
   shards: number;
   locations: ModelLocation[];
   fit: ModelFit;
+}
+
+export interface GpuLayerAllocation {
+  nodeId: string;
+  layers: number;
+}
+
+export interface ModelLoadConfig {
+  contextSize: number;
+  gpuLayers: GpuLayerAllocation[];
+}
+
+export interface DeviceVramEstimate {
+  nodeId: string;
+  layers: number;
+  estimatedVramMib: number;
+  availableVramMib: number;
+  fits: boolean;
+}
+
+export interface SplitEstimate {
+  totalLayers: number;
+  gpuLayers: number;
+  cpuLayers: number;
+  estimatedCpuRamMib: number;
+  usesAttentionMetadata: boolean;
+  devices: DeviceVramEstimate[];
 }
 
 export interface ModelDirectory {
@@ -144,9 +175,13 @@ export interface AppService {
   addModelDirectory(): Promise<ModelDirectory | null>;
   removeModelDirectory(id: string): Promise<void>;
   runNetworkTest(): Promise<NetworkBenchmark>;
-  generatePairingCode(): Promise<{ code: string; expiresInSeconds: number }>;
-  pairWithPeer(code: string): Promise<NodeCapabilities>;
-  startCluster(modelId: string, contextSize: number): Promise<ClusterSession>;
+  generatePairingCode(allowPublicNetwork?: boolean): Promise<{
+    code: string;
+    expiresInSeconds: number;
+  }>;
+  pairWithPeer(code: string, allowPublicNetwork?: boolean): Promise<NodeCapabilities>;
+  estimateModelSplit(modelId: string, loadConfig: ModelLoadConfig): Promise<SplitEstimate>;
+  startCluster(modelId: string, loadConfig: ModelLoadConfig): Promise<ClusterSession>;
   stopCluster(): Promise<ClusterSession>;
   runInferenceBenchmark(modelId: string): Promise<InferenceBenchmark[]>;
   cancelInferenceBenchmark(): Promise<void>;
@@ -158,6 +193,7 @@ export interface AppService {
   cancelGeneration(): Promise<void>;
   getApiConfig(): Promise<ApiConfig>;
   regenerateApiKey(): Promise<ApiConfig>;
+  openNetworkSettings(): Promise<void>;
   openLogsFolder(): Promise<void>;
 }
 

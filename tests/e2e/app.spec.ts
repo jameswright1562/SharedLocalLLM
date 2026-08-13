@@ -28,6 +28,19 @@ test.describe("browser demo", () => {
     await expect(page.getByTestId("network-test-result")).toBeVisible();
   });
 
+  test("previews a manual per-computer GPU layer split", async ({ page }) => {
+    await page.getByRole("button", { name: "Models", exact: true }).click();
+    await page.getByRole("button", { name: /manual gpu split/i }).click();
+
+    await expect(page.getByRole("heading", { name: /gpu layer allocation/i })).toBeVisible();
+    await page.getByLabel(/gpu layers on primary node/i).fill("24");
+    await page.getByLabel(/gpu layers on compute node/i).fill("16");
+
+    await expect(page.getByText(/40 of 40 layers on gpu/i)).toBeVisible();
+    await expect(page.getByText("Estimated VRAM")).toHaveCount(2);
+    await expect(page.getByRole("button", { name: /launch meridian 12b instruct/i })).toBeEnabled();
+  });
+
   test("accepts a chat prompt through the accessible composer", async ({ page }) => {
     await page.getByRole("button", { name: "Models", exact: true }).click();
     await page.getByRole("button", { name: /launch meridian 12b instruct/i }).click();

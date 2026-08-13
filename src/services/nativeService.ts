@@ -33,9 +33,13 @@ export const nativeService: AppService = {
   addModelDirectory: () => invoke("add_model_directory"),
   removeModelDirectory: (id) => invoke("remove_model_directory", { id }),
   runNetworkTest: () => invoke("run_network_test"),
-  generatePairingCode: () => invoke("generate_pairing_code"),
-  pairWithPeer: (code) => invoke("pair_with_peer", { code }),
-  startCluster: (modelId, contextSize) => invoke("start_cluster", { modelId, contextSize }),
+  generatePairingCode: (allowPublicNetwork = false) =>
+    invoke("generate_pairing_code", { allowPublicNetwork }),
+  pairWithPeer: (code, allowPublicNetwork = false) =>
+    invoke("pair_with_peer", { code, allowPublicNetwork }),
+  estimateModelSplit: (modelId, loadConfig) =>
+    invoke("estimate_model_split", { modelId, loadConfig }),
+  startCluster: (modelId, loadConfig) => invoke("start_cluster", { modelId, loadConfig }),
   stopCluster: () => invoke("stop_cluster"),
   runInferenceBenchmark: (modelId) => invoke("run_inference_benchmark", { modelId }),
   cancelInferenceBenchmark: () => invoke("cancel_inference_benchmark"),
@@ -44,5 +48,6 @@ export const nativeService: AppService = {
   cancelGeneration: () => invoke("cancel_generation"),
   getApiConfig: () => invoke("get_api_config"),
   regenerateApiKey: () => invoke("regenerate_api_key"),
+  openNetworkSettings: () => invoke("open_network_settings"),
   openLogsFolder: () => invoke("open_logs_folder"),
 };

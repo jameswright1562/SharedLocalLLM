@@ -43,6 +43,10 @@ export const demoModels: ModelRecord[] = [
     quantization: "Q5_K_M",
     sizeBytes: 9_120_000_000,
     contextLength: 32768,
+    layerCount: 40,
+    embeddingLength: 5120,
+    attentionHeadCount: 40,
+    attentionHeadCountKv: 8,
     capability: "text",
     shards: 1,
     locations: [
@@ -57,6 +61,10 @@ export const demoModels: ModelRecord[] = [
     quantization: "Q4_K_M",
     sizeBytes: 18_800_000_000,
     contextLength: 32768,
+    layerCount: 64,
+    embeddingLength: 5120,
+    attentionHeadCount: 40,
+    attentionHeadCountKv: 8,
     capability: "text",
     shards: 2,
     locations: [
@@ -71,6 +79,10 @@ export const demoModels: ModelRecord[] = [
     quantization: "Q4_K_M",
     sizeBytes: 8_700_000_000,
     contextLength: 16384,
+    layerCount: 40,
+    embeddingLength: 3584,
+    attentionHeadCount: 28,
+    attentionHeadCountKv: 4,
     capability: "vision",
     shards: 1,
     locations: [

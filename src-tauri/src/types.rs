@@ -57,6 +57,10 @@ pub struct ModelRecord {
     pub quantization: String,
     pub size_bytes: u64,
     pub context_length: u32,
+    pub layer_count: Option<u32>,
+    pub embedding_length: Option<u32>,
+    pub attention_head_count: Option<u32>,
+    pub attention_head_count_kv: Option<u32>,
     pub capability: String,
     pub shards: usize,
     pub locations: Vec<ModelLocation>,
@@ -67,6 +71,20 @@ pub struct ModelRecord {
     pub projector: Option<String>,
     #[serde(skip_serializing)]
     pub vision_capable: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct GpuLayerAllocation {
+    pub node_id: String,
+    pub layers: u32,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelLoadConfig {
+    pub context_size: u32,
+    pub gpu_layers: Vec<GpuLayerAllocation>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
