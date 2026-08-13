@@ -14,6 +14,8 @@ interface ModelInspectorProps {
   setGpuLayers: (layers: GpuLayerAllocation[]) => void;
   busy: boolean;
   splitInvalid: boolean;
+  force: boolean;
+  setForce: (force: boolean) => void;
   launch: () => void;
 }
 
@@ -30,6 +32,8 @@ export function ModelInspector({
   setGpuLayers,
   busy,
   splitInvalid,
+  force,
+  setForce,
   launch,
 }: ModelInspectorProps) {
   if (!selected)
@@ -106,12 +110,36 @@ export function ModelInspector({
       )}
       <button
         className="button primary full"
-        disabled={busy || selected.fit === "does-not-fit" || splitInvalid || selected.remoteOnly}
+        disabled={
+          busy ||
+          selected.remoteOnly ||
+          ((selected.fit === "does-not-fit" || splitInvalid) && !force)
+        }
         onClick={launch}
         aria-label={`Launch ${selected.name}`}
       >
         {busy ? "Starting cluster…" : `Launch ${selected.name}`}
       </button>
+      {selected.remoteOnly ? (
+        <p className="metadata-note">
+          This GGUF is stored on the other computer. Launch it there, or copy the file locally.
+        </p>
+      ) : selected.fit === "does-not-fit" || splitInvalid ? (
+        <label className="force-launch">
+          <input
+            type="checkbox"
+            checked={force}
+            onChange={(event) => setForce(event.target.checked)}
+          />
+          <span>Force launch — ignore the memory estimate</span>
+        </label>
+      ) : null}
+      {force && (
+        <p className="metadata-note">
+          Forced launch disables the fit check. The model may load slowly, spill heavily, or fail to
+          start if memory is genuinely insufficient.
+        </p>
+      )}
     </aside>
   );
 }

@@ -66,6 +66,7 @@ export interface GpuLayerAllocation {
 export interface ModelLoadConfig {
   contextSize: number;
   gpuLayers: GpuLayerAllocation[];
+  force?: boolean;
 }
 
 export interface DeviceVramEstimate {

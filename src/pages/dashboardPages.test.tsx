@@ -188,6 +188,7 @@ describe("dashboard pages", () => {
     expect(startCluster).toHaveBeenCalledWith("model-text", {
       contextSize: 16384,
       gpuLayers: expect.any(Array),
+      force: false,
     });
 
     await user.click(screen.getByRole("button", { name: /^add folder$/i }));
@@ -222,6 +223,34 @@ describe("dashboard pages", () => {
         { nodeId: "node-a", layers: 24 },
         { nodeId: "node-b", layers: 16 },
       ],
+      force: false,
+    });
+  });
+
+  it("allows force launch for a model that does not fit and passes the flag through", async () => {
+    const user = userEvent.setup();
+    const snapshot = cloneSnapshot();
+    snapshot.models.push({
+      ...snapshot.models[0]!,
+      id: "too-large",
+      name: "Colossus 70B",
+      fit: "does-not-fit",
+    });
+    const startCluster = vi.fn().mockResolvedValue({ status: "loading", modelId: "too-large" });
+    render(<ModelsPage {...props(snapshot, { startCluster })} />);
+
+    await user.type(screen.getByRole("searchbox"), "Colossus");
+    const launchButton = screen.getByRole("button", { name: /launch colossus/i });
+    expect(launchButton).toBeDisabled();
+
+    await user.click(screen.getByRole("checkbox", { name: /force launch/i }));
+    expect(launchButton).toBeEnabled();
+
+    await user.click(launchButton);
+    expect(startCluster).toHaveBeenCalledWith("too-large", {
+      contextSize: 8192,
+      gpuLayers: expect.any(Array),
+      force: true,
     });
   });
 
@@ -238,6 +267,18 @@ describe("dashboard pages", () => {
     expect(screen.getByText(/no benchmark runs/i)).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: /benchmark a model/i }));
     expect(emptyProps.navigate).toHaveBeenCalledWith("models");
+  });
+
+  it("renders benchmark run times from epoch seconds and tolerates invalid values", () => {
+    const snapshot = cloneSnapshot();
+    const base = cloneSnapshot().benchmarks[0]!;
+    snapshot.benchmarks = [
+      { ...base, id: "epoch-run", ranAt: String(Math.floor(Date.now() / 1000)) },
+      { ...base, id: "broken-run", ranAt: "" },
+    ];
+    render(<BenchmarksPage {...props(snapshot)} />);
+    expect(screen.getAllByRole("row")).toHaveLength(3);
+    expect(screen.getAllByText("—")).toHaveLength(1);
   });
 
   it("runs and cancels inference benchmarks through the native service", async () => {

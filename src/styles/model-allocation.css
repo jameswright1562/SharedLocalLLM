@@ -97,6 +97,24 @@
 .metadata-note {
   margin: 16px 0;
 }
+.force-launch {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 12px 0 0;
+  padding: 10px 12px;
+  background: #09141f;
+  border: 1px solid var(--line);
+  cursor: pointer;
+}
+.force-launch input {
+  margin: 0;
+  accent-color: var(--amber);
+}
+.force-launch span {
+  color: var(--text);
+  font-size: 0.7rem;
+}
 .model-empty {
   min-height: 260px;
   border: 0 !important;

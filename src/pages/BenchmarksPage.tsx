@@ -2,6 +2,7 @@ import { useRef, useState } from "react";
 import { describeAppError } from "../services/errors";
 import { fitLayersByVram } from "../services/splitEstimate";
 import type { InferenceBenchmark, PageProps } from "../types";
+import { formatRunTime } from "./pageFormat";
 
 export function BenchmarksPage({ snapshot, service, refreshSnapshot, navigate }: PageProps) {
   const [modelId, setModelId] = useState(snapshot.models[0]?.id ?? "");
@@ -162,14 +163,7 @@ export function BenchmarksPage({ snapshot, service, refreshSnapshot, navigate }:
                   <td>
                     {benchmark.memoryPeakGb > 0 ? `${benchmark.memoryPeakGb.toFixed(1)} GB` : "—"}
                   </td>
-                  <td>
-                    {new Intl.DateTimeFormat(undefined, {
-                      month: "short",
-                      day: "numeric",
-                      hour: "2-digit",
-                      minute: "2-digit",
-                    }).format(new Date(benchmark.ranAt))}
-                  </td>
+                  <td>{formatRunTime(benchmark.ranAt)}</td>
                 </tr>
               ))}
             </tbody>

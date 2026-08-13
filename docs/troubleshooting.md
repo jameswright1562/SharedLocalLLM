@@ -95,7 +95,7 @@ Confirm the result and the adapter name:
 Get-NetConnectionProfile | Format-Table Name, InterfaceAlias, NetworkCategory, IPv4Connectivity
 ```
 
-This policy only tells Windows to treat an *unidentified* (unroutable, directly cabled) link as your
+This policy only tells Windows to treat an _unidentified_ (unroutable, directly cabled) link as your
 trusted private LAN; the app still refuses cluster launch on a genuinely Public profile.
 
 > WSL/Hyper-V note: virtual adapters such as `vEthernet (WSL)` advertise a fake 10 Gbps and used to

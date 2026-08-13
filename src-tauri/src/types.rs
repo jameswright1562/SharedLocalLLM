@@ -91,6 +91,8 @@ pub struct GpuLayerAllocation {
 pub struct ModelLoadConfig {
     pub context_size: u32,
     pub gpu_layers: Vec<GpuLayerAllocation>,
+    #[serde(default)]
+    pub force: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]

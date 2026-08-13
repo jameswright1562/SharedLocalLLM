@@ -167,6 +167,7 @@ fn fit_gpu_layers(
         let load_config = ModelLoadConfig {
             context_size: 4096,
             gpu_layers: allocations.clone(),
+            force: false,
         };
         if split::build_split_estimate(model, &load_config, nodes)
             .is_ok_and(|(estimate, _)| estimate.devices.iter().all(|device| device.fits))

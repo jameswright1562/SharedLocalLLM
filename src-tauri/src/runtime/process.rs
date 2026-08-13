@@ -58,6 +58,7 @@ impl ProcessManager {
             tensor_split: &layer_counts,
             rpc_endpoint,
             projector: model.projector.as_deref(),
+            force: load_config.force,
         }));
         command.env("LLAMA_ARG_API_KEY", api_key);
         command.env("LLAMA_API_KEY", api_key);
@@ -90,6 +91,13 @@ impl ProcessManager {
         terminate(&mut self.rpc);
         self.job = None;
     }
+
+    pub fn server_has_exited(&mut self) -> bool {
+        match self.server.as_mut() {
+            Some(child) => matches!(child.try_wait(), Ok(Some(_))),
+            None => false,
+        }
+    }
 }
 
 struct ServerArguments<'a> {
@@ -100,6 +108,7 @@ struct ServerArguments<'a> {
     tensor_split: &'a [u32],
     rpc_endpoint: Option<&'a str>,
     projector: Option<&'a str>,
+    force: bool,
 }
 
 fn server_arguments(config: ServerArguments<'_>) -> Vec<String> {
@@ -119,10 +128,10 @@ fn server_arguments(config: ServerArguments<'_>) -> Vec<String> {
             config.gpu_layer_count.to_string()
         },
         "--fit".into(),
-        if config.tensor_split.is_empty() {
-            "on".into()
-        } else {
+        if config.force || !config.tensor_split.is_empty() {
             "off".into()
+        } else {
+            "on".into()
         },
         "--split-mode".into(),
         "layer".into(),
@@ -173,6 +182,23 @@ mod tests {
     use super::{server_arguments, ServerArguments};
 
     #[test]
+    fn reports_when_the_server_process_has_exited() {
+        let mut manager = super::ProcessManager::default();
+        assert!(!manager.server_has_exited());
+
+        let mut child = std::process::Command::new("cmd.exe")
+            .args(["/C", "exit", "0"])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("spawn short-lived process");
+        let _ = child.wait();
+        manager.server = Some(child);
+        assert!(manager.server_has_exited());
+    }
+
+    #[test]
     fn manual_layer_split_is_forwarded_to_llama_server() {
         let arguments = server_arguments(ServerArguments {
             model_path: "model.gguf",
@@ -182,6 +208,7 @@ mod tests {
             tensor_split: &[24, 16],
             rpc_endpoint: Some("127.0.0.1:50052"),
             projector: None,
+            force: false,
         });
 
         assert!(arguments
@@ -195,5 +222,24 @@ mod tests {
             .windows(2)
             .any(|pair| pair == ["--rpc", "127.0.0.1:50052"]));
         assert!(!arguments.iter().any(|argument| argument == "--api-key"));
+    }
+
+    #[test]
+    fn force_launch_disables_fit_check_when_using_automatic_allocation() {
+        let arguments = server_arguments(ServerArguments {
+            model_path: "model.gguf",
+            context: 8_192,
+            api_port: 11_435,
+            gpu_layer_count: 0,
+            tensor_split: &[],
+            rpc_endpoint: None,
+            projector: None,
+            force: true,
+        });
+
+        assert!(arguments.windows(2).any(|pair| pair == ["--fit", "off"]));
+        assert!(arguments
+            .windows(2)
+            .any(|pair| pair == ["--n-gpu-layers", "auto"]));
     }
 }

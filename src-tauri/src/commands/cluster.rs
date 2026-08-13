@@ -48,6 +48,7 @@ pub async fn start_cluster(
                 .max(4096)
                 .min(model.context_length.max(4096)),
             gpu_layers: load_config.gpu_layers.clone(),
+            force: load_config.force,
         };
         if normalized_config.gpu_layers.is_empty() {
             if let Some(layers) = model.layer_count {
@@ -57,20 +58,22 @@ pub async fn start_cluster(
         if !normalized_config.gpu_layers.is_empty() {
             let (estimate, gpu_layers) =
                 split::build_split_estimate(&model, &normalized_config, &nodes)?;
-            if let Some(device) = estimate.devices.iter().find(|device| !device.fits) {
-                let node_name = nodes
-                    .iter()
-                    .find(|node| node.id == device.node_id)
-                    .map(|node| node.name.as_str())
-                    .unwrap_or("A selected computer");
-                return Err(ErrorPayload::new(
-                    "split_exceeds_vram",
-                    format!(
-                        "{node_name} needs an estimated {} MiB of VRAM, but only {} MiB is currently available.",
-                        device.estimated_vram_mib, device.available_vram_mib
-                    ),
-                    Some("Move layers to the other computer, reduce context, or use automatic allocation.".into()),
-                ));
+            if !normalized_config.force {
+                if let Some(device) = estimate.devices.iter().find(|device| !device.fits) {
+                    let node_name = nodes
+                        .iter()
+                        .find(|node| node.id == device.node_id)
+                        .map(|node| node.name.as_str())
+                        .unwrap_or("A selected computer");
+                    return Err(ErrorPayload::new(
+                        "split_exceeds_vram",
+                        format!(
+                            "{node_name} needs an estimated {} MiB of VRAM, but only {} MiB is currently available.",
+                            device.estimated_vram_mib, device.available_vram_mib
+                        ),
+                        Some("Move layers to the other computer, reduce context, or use automatic allocation.".into()),
+                    ));
+                }
             }
             normalized_config.gpu_layers = gpu_layers;
         }
@@ -167,7 +170,7 @@ pub async fn start_cluster(
             rpc_endpoint,
             api_port,
         )?;
-    if let Err(error) = control::wait_for_health(api_port, &api_key).await {
+    if let Err(error) = control::wait_for_health(api_port, &api_key, &state).await {
         control::halt(&state).await;
         state.log("ERROR", "cluster_health_failed", &error.to_string());
         return Err(error);
