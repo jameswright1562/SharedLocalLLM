@@ -45,12 +45,12 @@ revert or rewrite them. Send the owner or root a precise finding instead.
 Only the root integrator updates this table after this initial seed. This single-writer rule avoids
 conflicts and stale competing status reports.
 
-| Workstream         | State     | Current evidence / next action                                                                                                                                                                                         |
-| ------------------ | --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `rust_core`        | Verifying | Functional implementation is green with 8/8 tests, fmt, Clippy warnings-as-errors, Cargo build, and web build; final peer-service readability extraction is active. Enhanced authentication is deferred to `ideas.md`. |
-| `desktop_ui`       | Verifying | Mandatory review fixes are green with 32/32 tests and 89.71% statements, 85.88% branches, 90.76% functions, and 91.56% lines; final format/lint/typecheck/build/E2E rerun is active.                                   |
-| `tooling_docs`     | Complete  | Root toolchain, runtime manifest, CI, user/developer docs, and browser E2E are in place; E2E is 3/3 green.                                                                                                             |
-| `root` integration | Active    | Coordinating interface alignment, reviews, Rust completion, coverage, packaging, and final combined gates.                                                                                                             |
+| Workstream         | State    | Current evidence / next action                                                                                                                             |
+| ------------------ | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `rust_core`        | Complete | Native implementation is green with 12/12 tests, formatting, Clippy warnings-as-errors, Cargo build, and a successful release bundle.                      |
+| `desktop_ui`       | Complete | Frontend is green with 37/37 tests, coverage above 86% in every dimension, production build, and 4/4 browser workflows.                                    |
+| `tooling_docs`     | Complete | Junior-friendly README, developer docs, pinned runtime manifest, CI, release packaging, and checksum workflow are in place.                                |
+| `root` integration | Complete | Final Tauri command-path regression fixed; direct full gates, production readability audit, NSIS rebuild, and SHA-256 verification completed successfully. |
 
 ## Validation checklist
 
@@ -59,19 +59,22 @@ acceptance.
 
 - [x] `pnpm install` — dependency graph and lockfile created successfully.
 - [x] `pnpm peers check` — no peer dependency issues.
-- [ ] `pnpm format:check` — tooling/docs files pass; latest known remaining frontend issue is
-      `src/styles.css` while UI refactoring is active.
-- [x] `pnpm typecheck` — green at latest tooling validation.
-- [x] `pnpm lint` — green at latest tooling validation.
-- [x] `pnpm test` — 32/32 frontend tests pass after mandatory review fixes.
-- [x] `pnpm test:coverage` — 32/32 tests passed with 89.71% statements, 85.88% branches,
-      90.76% functions, and 91.56% lines after mandatory review fixes.
+- [x] `pnpm format:check` — all matched repository files use Prettier formatting.
+- [x] `pnpm typecheck` — strict TypeScript project build passes.
+- [x] `pnpm lint` — ESLint passes with zero warnings.
+- [x] `pnpm test` — 37/37 frontend tests pass.
+- [x] `pnpm test:coverage` — 37/37 tests passed with 93.21% statements, 86.93% branches,
+      93.53% functions, and 94.88% lines.
 - [x] `pnpm build` — production Vite build succeeds.
-- [x] `pnpm e2e` — three of three Chromium browser-demo workflows pass.
-- [x] `cargo fmt --manifest-path src-tauri/Cargo.toml --all --check` — green before final readability extraction.
-- [x] `cargo test --manifest-path src-tauri/Cargo.toml --all-targets` — 8/8 green before final readability extraction.
-- [x] `cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings` — green before final readability extraction.
-- [ ] `pnpm tauri build --bundles nsis` and verify installer plus `SHA256SUMS.txt` artifact.
+- [x] `pnpm e2e` — four of four Chromium browser-demo workflows pass.
+- [x] `cargo fmt --manifest-path src-tauri/Cargo.toml --all --check` — passes.
+- [x] `cargo test --manifest-path src-tauri/Cargo.toml --all-targets` — 12/12 tests pass.
+- [x] `cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings` — passes.
+- [x] `cargo build --manifest-path src-tauri/Cargo.toml` — development build succeeds.
+- [x] Production readability audit — every production TypeScript, TSX, CSS, and Rust file is under
+      300 lines; the largest is `src-tauri/src/runtime/installer.rs` at 299 lines.
+- [x] `pnpm tauri build --bundles nsis` — unsigned x64 installer and matching
+      `SHA256SUMS.txt` generated under `src-tauri/target/release/bundle/nsis/`.
 - [ ] Physical two-computer acceptance in `docs/testing.md`; automated loopback/demo tests do not
       satisfy this item.
 
@@ -95,8 +98,8 @@ acceptance.
 
 ## Current blockers
 
-- Final consolidated frontend and native reruns remain after the last readability-only extractions; the
-  latest focused gates are green. Stronger production-grade peer authentication is explicitly deferred
-  to `ideas.md`; v1 remains a trusted-private-LAN preview.
-- Final formatting, full `pnpm check`, NSIS packaging, and physical two-computer validation cannot be
-  declared complete until the active source workstreams finish.
+- No remaining automated code, readability, or packaging blocker is known.
+- Physical two-computer GPU acceptance remains pending and must follow `docs/testing.md`; loopback and
+  browser-demo tests are not a substitute for that hardware check.
+- Stronger production-grade peer authentication is explicitly deferred to `ideas.md`; v1 remains a
+  trusted-private-LAN preview.

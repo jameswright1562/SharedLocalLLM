@@ -11,10 +11,10 @@ model size, context length, and network performance are detected at runtime. LM 
 default model source, but it is optional: you can select any local model directory instead.
 
 > [!IMPORTANT]
-> **This project is an implementation preview.** The browser UI and automated frontend/native tests
-> are working, but the full installer and physical two-computer GPU acceptance matrix are not yet
-> complete. Do not read the current test results as a claim that distributed inference has been
-> proven on real hardware. Both `llama.cpp` RPC and multimodal support are experimental.
+> **This project is an implementation preview.** The browser UI, automated frontend/native tests,
+> and unsigned Windows installer build are working. The physical two-computer GPU acceptance matrix
+> is not yet complete, so do not read the current test results as a claim that distributed inference
+> has been proven on real hardware. Both `llama.cpp` RPC and multimodal support are experimental.
 
 ## Why this project exists
 
