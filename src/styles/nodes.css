@@ -1,0 +1,60 @@
+/* Nodes */
+.detail-node-list {
+  display: grid;
+  gap: 14px;
+}
+.detail-node {
+  position: relative;
+  overflow: hidden;
+  padding: 28px 28px 22px 90px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+}
+.node-ordinal {
+  position: absolute;
+  inset: 0 auto 0 0;
+  display: grid;
+  place-items: center;
+  width: 58px;
+  color: #567083;
+  background: #0a1622;
+  border-right: 1px solid var(--line);
+  font: 600 0.61rem var(--mono);
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+  letter-spacing: 0.12em;
+}
+.detail-node header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+}
+.detail-node header h2 {
+  margin: 0;
+}
+.detail-node header p {
+  margin: 3px 0 0;
+  font-size: 0.75rem;
+  text-transform: capitalize;
+}
+.spec-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+  margin: 24px 0 0;
+}
+.spec-grid > div {
+  padding: 14px;
+  background: #0a1622;
+  border-top: 1px solid #284254;
+}
+.spec-grid dt {
+  margin-bottom: 7px;
+  color: var(--dim);
+  font: 0.58rem var(--mono);
+  text-transform: uppercase;
+}
+.spec-grid dd {
+  margin: 0;
+  font-size: 0.77rem;
+}

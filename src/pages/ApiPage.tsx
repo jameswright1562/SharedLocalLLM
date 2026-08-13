@@ -1,0 +1,188 @@
+import { useEffect, useState } from "react";
+import { describeAppError } from "../services/errors";
+import type { ApiConfig, PageProps } from "../types";
+
+function maskApiKey(key: string) {
+  const prefix = key.startsWith("sk-local-") ? "sk-local-" : key.slice(0, 4);
+  return `${prefix}••••••••••`;
+}
+
+export function ApiPage({ service }: PageProps) {
+  const [config, setConfig] = useState<ApiConfig | null>(null);
+  const [revealed, setRevealed] = useState(false);
+  const [copied, setCopied] = useState<"url" | "key" | "curl" | "">("");
+  const [busy, setBusy] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    let active = true;
+    void service
+      .getApiConfig()
+      .then((nextConfig) => {
+        if (active) setConfig(nextConfig);
+      })
+      .catch((reason) => {
+        if (active) setError(describeAppError(reason, "Could not read the API configuration."));
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [service]);
+  async function copy(value: string, what: "url" | "key" | "curl") {
+    setError("");
+    try {
+      if (!navigator.clipboard) throw new Error("Clipboard is unavailable in this environment.");
+      await navigator.clipboard.writeText(value);
+      setCopied(what);
+      window.setTimeout(() => setCopied(""), 1400);
+    } catch (reason) {
+      setError(describeAppError(reason, "The value could not be copied."));
+    }
+  }
+  async function regenerate() {
+    setBusy(true);
+    setError("");
+    try {
+      setConfig(await service.regenerateApiKey());
+      setRevealed(true);
+    } catch (reason) {
+      setError(describeAppError(reason, "The API key could not be regenerated."));
+    } finally {
+      setBusy(false);
+    }
+  }
+  const curlPayload = JSON.stringify({
+    model: "local-model",
+    messages: [{ role: "user", content: "Hello" }],
+  });
+  const curl = config
+    ? `curl.exe -X POST "${config.url}/v1/chat/completions" -H "Authorization: Bearer ${config.apiKey}" -H "Content-Type: application/json" --data-raw '${curlPayload}'`
+    : "";
+  return (
+    <div className="page">
+      <header className="page-header">
+        <p className="section-kicker">Loopback interface</p>
+        <h1>Local API</h1>
+        <p>
+          Connect local tools using an OpenAI-compatible endpoint. It is never exposed to the LAN.
+        </p>
+      </header>
+      {error && (
+        <div className="error-panel" role="alert">
+          {error}
+        </div>
+      )}
+      {loading ? (
+        <div className="loading-panel" role="status" aria-live="polite">
+          <span className="spinner" /> Reading API configuration…
+        </div>
+      ) : !config ? (
+        <div className="empty-state">
+          <span>!</span>
+          <div>
+            <h2>API configuration unavailable</h2>
+            <p>Resolve the error above, then reopen this page.</p>
+          </div>
+        </div>
+      ) : (
+        <>
+          <section className="api-status-panel">
+            <div>
+              <span className={`large-health ${config.healthy ? "healthy" : "unhealthy"}`}>
+                <i aria-hidden="true" />
+              </span>
+              <div>
+                <p className="section-kicker">Connection health</p>
+                <h2>{config.healthy ? "Listening on loopback" : "API unavailable"}</h2>
+                <p>
+                  {config.healthy
+                    ? "Requests from this computer can reach the active coordinator."
+                    : "Start the API service or resolve the port conflict in Settings."}
+                </p>
+              </div>
+            </div>
+            <span className={`status-pill ${config.healthy ? "online" : "offline"}`}>
+              <i aria-hidden="true" />
+              {config.healthy ? "Healthy" : "Offline"}
+            </span>
+          </section>
+          <section className="credential-panel">
+            <div className="credential-row">
+              <span className="credential-label">Base URL</span>
+              <code>{config.url}</code>
+              <button className="button secondary" onClick={() => void copy(config.url, "url")}>
+                {copied === "url" ? "Copied" : "Copy"}
+              </button>
+            </div>
+            <div className="credential-row">
+              <span className="credential-label">API key</span>
+              <code>{revealed ? config.apiKey : maskApiKey(config.apiKey)}</code>
+              <button
+                className="icon-button"
+                aria-label={revealed ? "Hide API key" : "Show API key"}
+                onClick={() => setRevealed(!revealed)}
+              >
+                {revealed ? "◉" : "○"}
+              </button>
+              <button className="button secondary" onClick={() => void copy(config.apiKey, "key")}>
+                {copied === "key" ? "Copied" : "Copy"}
+              </button>
+            </div>
+            <div className="key-actions">
+              <p>
+                Keep this key private. Regenerating it immediately invalidates the previous key.
+              </p>
+              <button
+                className="text-button danger-text"
+                disabled={busy}
+                onClick={() => void regenerate()}
+              >
+                {busy ? "Regenerating…" : "Regenerate key"}
+              </button>
+            </div>
+          </section>
+          <section className="code-example">
+            <header>
+              <div>
+                <span className="code-language">PowerShell / curl</span>
+                <h2>Chat completion</h2>
+              </div>
+              <button className="button secondary" onClick={() => void copy(curl, "curl")}>
+                {copied === "curl" ? "Copied" : "Copy example"}
+              </button>
+            </header>
+            <pre>
+              <code>{curl}</code>
+            </pre>
+          </section>
+        </>
+      )}
+      <section className="endpoint-list">
+        <h2>Supported endpoints</h2>
+        <div>
+          <code>GET</code>
+          <strong>/health</strong>
+          <span>Service and model readiness</span>
+        </div>
+        <div>
+          <code>GET</code>
+          <strong>/v1/models</strong>
+          <span>Available local models</span>
+        </div>
+        <div>
+          <code>POST</code>
+          <strong>/v1/chat/completions</strong>
+          <span>Chat, images, and streaming</span>
+        </div>
+        <div>
+          <code>POST</code>
+          <strong>/v1/completions</strong>
+          <span>Text completions and streaming</span>
+        </div>
+      </section>
+    </div>
+  );
+}

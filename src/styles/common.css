@@ -1,0 +1,65 @@
+/* Empty/loading */
+.empty-state {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 20px;
+  min-height: 280px;
+  padding: 30px;
+  border: 1px dashed var(--line-bright);
+}
+.empty-state > span {
+  display: grid;
+  place-items: center;
+  width: 55px;
+  height: 55px;
+  flex: 0 0 55px;
+  color: var(--cyan);
+  border: 1px solid #2a5360;
+  font: 600 0.8rem var(--mono);
+}
+.empty-state h2 {
+  margin-bottom: 7px;
+}
+.empty-state p {
+  max-width: 480px;
+  margin: 0;
+  font-size: 0.8rem;
+}
+.empty-state.compact {
+  min-height: 150px;
+  justify-content: flex-start;
+}
+.boot-screen {
+  display: grid;
+  place-items: center;
+  align-content: center;
+  min-height: 100vh;
+  background: radial-gradient(circle, #102535 0, var(--ink) 42%);
+}
+.boot-screen h1 {
+  margin: 20px 0 7px;
+  font-family: var(--mono);
+  font-size: 1.2rem;
+  letter-spacing: -0.05em;
+}
+.boot-screen p {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font: 0.7rem var(--mono);
+}
+.spinner {
+  display: inline-block;
+  width: 13px;
+  height: 13px;
+  border: 1px solid #34505f;
+  border-top-color: var(--cyan);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

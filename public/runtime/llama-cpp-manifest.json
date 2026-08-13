@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "enabled": true,
+  "channel": "pinned",
+  "project": "ggml-org/llama.cpp",
+  "releasePage": "https://github.com/ggml-org/llama.cpp/releases",
+  "platform": "windows-x86_64",
+  "backend": "cuda-12.4",
+  "assetPatterns": {
+    "llamaCpp": "llama-{tag}-bin-win-cuda-12.4-x64.zip",
+    "cudaRuntime": "cudart-llama-bin-win-cuda-12.4-x64.zip"
+  },
+  "release": {
+    "tag": "b10405",
+    "publishedAt": "2026-08-13",
+    "llamaCpp": {
+      "url": "https://github.com/ggml-org/llama.cpp/releases/download/b10405/llama-b10405-bin-win-cuda-12.4-x64.zip",
+      "size": 250767461,
+      "sha256": "7da18847181aa668a77b02fa8bd47bb9588b82ca077cf184bccc3bf016b46e79"
+    },
+    "cudaRuntime": {
+      "url": "https://github.com/ggml-org/llama.cpp/releases/download/b10405/cudart-llama-bin-win-cuda-12.4-x64.zip",
+      "size": 391443627,
+      "sha256": "8c79a9b226de4b3cacfd1f83d24f962d0773be79f1e7b75c6af4ded7e32ae1d6"
+    }
+  },
+  "requiredExecutables": ["llama-server.exe", "llama-bench.exe", "ggml-rpc-server.exe"],
+  "notes": [
+    "Assets and SHA-256 values are pinned from the official GitHub release metadata for b10405.",
+    "Runtime installation must still verify HTTPS origin, byte size, SHA-256, archive entries, and executable health before activation."
+  ]
+}
