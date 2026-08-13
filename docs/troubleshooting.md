@@ -70,6 +70,38 @@ On a direct cable with no router, a `169.254.x.x` address is expected. Use the a
 the Ethernet interface, not a Wi-Fi, VPN, loopback, or virtual-machine adapter. Manual entry skips
 UDP discovery and connects directly to TCP port `49158`.
 
+## Pairing keeps requiring a Private profile (direct Ethernet cable)
+
+A direct cable between two computers has no router or DHCP server, so Windows gives the adapter a
+link-local `169.254.x.x` address and labels the network **"Unidentified network"**. Windows forces an
+unidentified network to **Public** and forgets a manual Private setting after each reconnect, which is
+why pairing asks for the profile again every time.
+
+Make it stick once. On Windows 11 Pro/Enterprise (the Home-edition equivalent is the Group
+Policy/registry version of the same setting):
+
+1. Open `secpol.msc` as administrator.
+2. Go to **Security Settings > Network List Manager Policies**.
+3. Double-click **Unidentified Networks**, set **Location type** to **Private**, and OK.
+4. Apply it to the currently connected cable immediately (administrator PowerShell):
+
+```powershell
+Set-NetConnectionProfile -InterfaceAlias Ethernet -NetworkCategory Private
+```
+
+Confirm the result and the adapter name:
+
+```powershell
+Get-NetConnectionProfile | Format-Table Name, InterfaceAlias, NetworkCategory, IPv4Connectivity
+```
+
+This policy only tells Windows to treat an *unidentified* (unroutable, directly cabled) link as your
+trusted private LAN; the app still refuses cluster launch on a genuinely Public profile.
+
+> WSL/Hyper-V note: virtual adapters such as `vEthernet (WSL)` advertise a fake 10 Gbps and used to
+> win the "fastest link" pick. The app now skips virtual adapters (Hyper-V, WSL, loopback, VPN, TAP)
+> when choosing the network path, so the physical Ethernet adapter is reported instead.
+
 ## Pairing codes do not match
 
 Cancel on both computers. Do not approve either identity. Restart pairing from one computer and
