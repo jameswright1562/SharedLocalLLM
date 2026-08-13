@@ -45,12 +45,12 @@ revert or rewrite them. Send the owner or root a precise finding instead.
 Only the root integrator updates this table after this initial seed. This single-writer rule avoids
 conflicts and stale competing status reports.
 
-| Workstream         | State    | Current evidence / next action                                                                                                                             |
-| ------------------ | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `rust_core`        | Complete | Native implementation is green with 14/14 tests, formatting, Clippy warnings-as-errors, and Cargo build; the direct-Ethernet release bundle is rebuilding. |
-| `desktop_ui`       | Complete | Frontend is green with 37/37 tests, coverage above 86% in every dimension, production build, and 4/4 browser workflows.                                    |
-| `tooling_docs`     | Complete | Junior-friendly README, developer docs, pinned runtime manifest, CI, release packaging, and checksum workflow are in place.                                |
-| `root` integration | Active   | Manual Ethernet IP fallback is implemented and automated gates are green; rebuild the NSIS installer, then retry on two physical computers.                |
+| Workstream         | State    | Current evidence / next action                                                                                                               |
+| ------------------ | -------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `rust_core`        | Complete | Native implementation is green with 14/14 tests, formatting, Clippy warnings-as-errors, Cargo build, and the direct-Ethernet release bundle. |
+| `desktop_ui`       | Complete | Frontend is green with 37/37 tests, coverage above 86% in every dimension, production build, and 4/4 browser workflows.                      |
+| `tooling_docs`     | Complete | Junior-friendly README, developer docs, pinned runtime manifest, CI, release packaging, and checksum workflow are in place.                  |
+| `root` integration | Active   | Manual Ethernet IP fallback is implemented; all gates and the NSIS rebuild are green. Retry the new build on two physical computers.         |
 
 ## Validation checklist
 
@@ -73,8 +73,8 @@ acceptance.
 - [x] `cargo build --manifest-path src-tauri/Cargo.toml` — development build succeeds.
 - [x] Production readability audit — every production TypeScript, TSX, CSS, and Rust file is under
       300 lines; the largest is `src-tauri/src/runtime/installer.rs` at 299 lines.
-- [ ] `pnpm tauri build --bundles nsis` — rebuilding the unsigned x64 installer with manual
-      Ethernet pairing support.
+- [x] `pnpm tauri build --bundles nsis` — unsigned x64 installer with manual Ethernet pairing and
+      matching `SHA256SUMS.txt` generated successfully.
 - [ ] Physical two-computer acceptance in `docs/testing.md`; automated loopback/demo tests do not
       satisfy this item.
 
@@ -98,8 +98,7 @@ acceptance.
 
 ## Current blockers
 
-- No remaining automated code blocker is known. Packaging the manual Ethernet pairing build is in
-  progress.
+- No remaining automated code or packaging blocker is known.
 - Physical two-computer GPU acceptance remains pending and must follow `docs/testing.md`; loopback and
   browser-demo tests are not a substitute for that hardware check.
 - Stronger production-grade peer authentication is explicitly deferred to `ideas.md`; v1 remains a
