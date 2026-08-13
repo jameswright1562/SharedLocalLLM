@@ -179,7 +179,11 @@ export interface AppService {
     code: string;
     expiresInSeconds: number;
   }>;
-  pairWithPeer(code: string, allowPublicNetwork?: boolean): Promise<NodeCapabilities>;
+  pairWithPeer(
+    code: string,
+    allowPublicNetwork?: boolean,
+    manualEndpoint?: string,
+  ): Promise<NodeCapabilities>;
   estimateModelSplit(modelId: string, loadConfig: ModelLoadConfig): Promise<SplitEstimate>;
   startCluster(modelId: string, loadConfig: ModelLoadConfig): Promise<ClusterSession>;
   stopCluster(): Promise<ClusterSession>;

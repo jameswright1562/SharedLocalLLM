@@ -24,6 +24,8 @@ pub(crate) use network::require_private_network;
 use network::{close_firewall_lease, open_temporary_public_firewall_port, require_pairing_network};
 use session::cleanup_pairing_session;
 
+const PAIRING_PORT: u16 = 49_158;
+
 #[tauri::command]
 pub async fn generate_pairing_code(
     allow_public_network: bool,
@@ -49,8 +51,24 @@ pub async fn generate_pairing_code(
             "50052".into(),
         ]
     });
+    let (previous_discovery, previous_server, previous_lease) = {
+        let mut peer = state.peer.lock().await;
+        peer.pairing_session_id = None;
+        (
+            peer.discovery.take(),
+            peer.server.take(),
+            peer.public_firewall_lease.take(),
+        )
+    };
+    if let Some(previous) = previous_discovery {
+        previous.shutdown().await;
+    }
+    if let Some(previous) = previous_server {
+        previous.shutdown().await;
+    }
+    close_firewall_lease(previous_lease.as_deref());
     let server = PeerServer::start(PeerServerConfig {
-        bind: SocketAddr::from((Ipv4Addr::UNSPECIFIED, 0)),
+        bind: SocketAddr::from((Ipv4Addr::UNSPECIFIED, PAIRING_PORT)),
         device_id: local.id.clone(),
         device_name: local.name.clone(),
         capabilities: serde_json::to_value(&local)
@@ -89,26 +107,13 @@ pub async fn generate_pairing_code(
     };
     let mut pairing_completion = server.pairing_completion();
     let session_id = uuid::Uuid::new_v4().to_string();
-    let (previous_discovery, previous_server, previous_lease) = {
+    {
         let mut peer = state.peer.lock().await;
-        let previous = (
-            peer.discovery.take(),
-            peer.server.take(),
-            peer.public_firewall_lease.take(),
-        );
         peer.pairing_session_id = Some(session_id.clone());
         peer.server = Some(server);
         peer.discovery = Some(broadcaster);
         peer.public_firewall_lease = firewall_lease;
-        previous
-    };
-    if let Some(previous) = previous_discovery {
-        previous.shutdown().await;
     }
-    if let Some(previous) = previous_server {
-        previous.shutdown().await;
-    }
-    close_firewall_lease(previous_lease.as_deref());
     tokio::spawn(async move {
         let completed = tokio::select! {
             result = pairing_completion.changed() => result.is_ok() && *pairing_completion.borrow(),
@@ -126,30 +131,36 @@ pub async fn generate_pairing_code(
 pub async fn pair_with_peer(
     code: String,
     allow_public_network: bool,
+    manual_endpoint: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<NodeCapabilities, ErrorPayload> {
     let _ = require_pairing_network(allow_public_network)?;
     let local = state.lock()?.local.clone();
     let mut endpoints = Vec::new();
-    if let Ok(endpoint) = std::env::var("SHARED_LOCAL_LLM_PEER_ENDPOINT") {
-        if let Ok(endpoint) = endpoint.parse() {
-            endpoints.push(endpoint);
+    let manual_endpoint = parse_manual_endpoint(manual_endpoint.as_deref())?;
+    if let Some(endpoint) = manual_endpoint {
+        endpoints.push(endpoint);
+    } else {
+        if let Ok(endpoint) = std::env::var("SHARED_LOCAL_LLM_PEER_ENDPOINT") {
+            if let Some(endpoint) = parse_manual_endpoint(Some(&endpoint))? {
+                endpoints.push(endpoint);
+            }
         }
+        endpoints.extend(
+            discover(Duration::from_secs(5))
+                .await?
+                .into_iter()
+                .filter(|(announcement, _)| announcement.device_id != local.id)
+                .map(|(_, endpoint)| endpoint),
+        );
     }
-    endpoints.extend(
-        discover(Duration::from_secs(5))
-            .await?
-            .into_iter()
-            .filter(|(announcement, _)| announcement.device_id != local.id)
-            .map(|(_, endpoint)| endpoint),
-    );
     endpoints.sort_unstable();
     endpoints.dedup();
     if endpoints.is_empty() {
         return Err(ErrorPayload::new(
             "peer_not_discovered",
             "No pairable SharedLocalLLM computer was discovered.",
-            Some("Keep the pairing code visible on the other computer or set a manual peer endpoint.".into()),
+            Some("Keep the pairing code visible on the other computer, or enter its Ethernet IPv4 address.".into()),
         ));
     }
     let mut last_error = None;
@@ -195,6 +206,25 @@ pub async fn pair_with_peer(
     Err(last_error.unwrap_or_else(|| {
         ErrorPayload::new("pairing_failed", "The pairing attempt failed.", None)
     }))
+}
+
+fn parse_manual_endpoint(value: Option<&str>) -> Result<Option<SocketAddr>, ErrorPayload> {
+    let Some(value) = value.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Ok(None);
+    };
+    if let Ok(endpoint) = value.parse::<SocketAddr>() {
+        return Ok(Some(endpoint));
+    }
+    if let Ok(address) = value.parse::<std::net::IpAddr>() {
+        return Ok(Some(SocketAddr::new(address, PAIRING_PORT)));
+    }
+    Err(ErrorPayload::new(
+        "manual_peer_endpoint_invalid",
+        format!("'{value}' is not a valid Ethernet IP address or IP:port."),
+        Some(format!(
+            "Enter the other computer's IPv4 address, for example 192.168.50.2. Port {PAIRING_PORT} is used automatically."
+        )),
+    ))
 }
 
 #[cfg(test)]
