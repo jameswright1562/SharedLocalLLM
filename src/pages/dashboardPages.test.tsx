@@ -62,6 +62,24 @@ describe("dashboard pages", () => {
     expect(screen.getByText(/no worker paired/i)).toBeInTheDocument();
   });
 
+  it("forgets a paired worker only after explicit confirmation", async () => {
+    const user = userEvent.setup();
+    const resetPairing = vi.fn().mockResolvedValue({
+      ...cloneSnapshot(),
+      nodes: cloneSnapshot().nodes.slice(0, 1),
+    });
+    const pageProps = props(cloneSnapshot(), { resetPairing });
+    render(<NodesPage {...pageProps} />);
+
+    await user.click(screen.getByRole("button", { name: /forget remote node/i }));
+    expect(resetPairing).not.toHaveBeenCalled();
+    expect(screen.getByText(/model files and folders stay untouched/i)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /confirm forget remote node/i }));
+    expect(resetPairing).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(pageProps.refreshSnapshot).toHaveBeenCalled());
+  });
+
   it("covers untested, poor, and failed network diagnostics", async () => {
     const user = userEvent.setup();
     const snapshot = cloneSnapshot();
@@ -200,6 +218,7 @@ describe("dashboard pages", () => {
     const user = userEvent.setup();
     const snapshot = cloneSnapshot();
     snapshot.benchmarks = [];
+    snapshot.models[1]!.layerCount = 40;
     let resolveBenchmark!: (rows: AppSnapshot["benchmarks"]) => void;
     const runInferenceBenchmark = vi
       .fn()
@@ -210,6 +229,8 @@ describe("dashboard pages", () => {
     );
 
     await user.selectOptions(screen.getByLabelText(/benchmark model/i), "model-vision");
+    expect(screen.getByRole("status")).toHaveTextContent(/studio host: 25 layers/i);
+    expect(screen.getByRole("status")).toHaveTextContent(/remote node: 15 layers/i);
     await user.click(screen.getByRole("button", { name: /run benchmark/i }));
     expect(runInferenceBenchmark).toHaveBeenCalledWith("model-vision");
     await user.click(screen.getByRole("button", { name: /cancel benchmark/i }));

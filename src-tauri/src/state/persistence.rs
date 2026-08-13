@@ -15,6 +15,7 @@ use crate::{
 #[derive(Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub(super) struct PersistedSettings {
+    pub install_id: Option<String>,
     pub custom_model_directories: Vec<String>,
     pub peers: Vec<PeerRecord>,
     pub device_name: Option<String>,
@@ -22,6 +23,13 @@ pub(super) struct PersistedSettings {
     pub api_port: Option<u16>,
     pub autostart: bool,
     pub benchmarks: Vec<InferenceBenchmark>,
+}
+
+pub(super) fn resolve_install_id(saved: Option<&str>) -> String {
+    saved
+        .filter(|id| id.starts_with("device-") && id.len() > "device-".len())
+        .map(str::to_owned)
+        .unwrap_or_else(|| format!("device-{}", uuid::Uuid::new_v4()))
 }
 
 pub(super) fn read_settings() -> PersistedSettings {
@@ -96,4 +104,20 @@ fn state_io(error: std::io::Error) -> ErrorPayload {
         error.to_string(),
         Some("Check the application data folder permissions.".into()),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_install_id;
+
+    #[test]
+    fn install_identity_is_stable_and_legacy_placeholder_is_replaced() {
+        assert_eq!(
+            resolve_install_id(Some("device-existing")),
+            "device-existing"
+        );
+        let replacement = resolve_install_id(Some("local-node"));
+        assert!(replacement.starts_with("device-"));
+        assert_ne!(replacement, "local-node");
+    }
 }

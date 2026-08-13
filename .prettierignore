@@ -4,4 +4,5 @@ node_modules/
 playwright-report/
 pnpm-lock.yaml
 src-tauri/target/
+src-tauri/target-package/
 test-results/

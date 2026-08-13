@@ -118,6 +118,8 @@ pub struct InferenceBenchmark {
     pub id: String,
     pub model_name: String,
     pub topology: String,
+    #[serde(default)]
+    pub gpu_layers: Vec<GpuLayerAllocation>,
     pub prompt_tokens_per_second: f64,
     pub generation_tokens_per_second: f64,
     pub load_time_seconds: f64,

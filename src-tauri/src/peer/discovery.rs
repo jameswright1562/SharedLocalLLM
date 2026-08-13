@@ -6,9 +6,11 @@ use std::{
 use serde::{Deserialize, Serialize};
 use tokio::{net::UdpSocket, sync::oneshot, task::JoinHandle};
 
+use get_if_addrs::{get_if_addrs, IfAddr};
+
 use crate::types::ErrorPayload;
 
-const DISCOVERY_PORT: u16 = 49_157;
+pub(crate) const DISCOVERY_PORT: u16 = 49_157;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -26,19 +28,18 @@ pub struct DiscoveryBroadcaster {
 
 impl DiscoveryBroadcaster {
     pub async fn start(announcement: DiscoveryAnnouncement) -> Result<Self, ErrorPayload> {
-        let socket = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0))
-            .await
-            .map_err(io_error)?;
-        socket.set_broadcast(true).map_err(io_error)?;
+        let sockets = interface_broadcast_sockets().await?;
         let message = serde_json::to_vec(&announcement)
             .map_err(|error| ErrorPayload::new("discovery_encode", error.to_string(), None))?;
         let (stop, mut stopped) = oneshot::channel();
         let task = tokio::spawn(async move {
-            let target = SocketAddr::from((Ipv4Addr::BROADCAST, DISCOVERY_PORT));
             loop {
+                for (socket, target) in &sockets {
+                    let _ = socket.send_to(&message, target).await;
+                }
                 tokio::select! {
                     _ = &mut stopped => break,
-                    _ = tokio::time::sleep(Duration::from_secs(2)) => { let _ = socket.send_to(&message, target).await; }
+                    _ = tokio::time::sleep(Duration::from_secs(1)) => {}
                 }
             }
         });
@@ -53,6 +54,54 @@ impl DiscoveryBroadcaster {
         }
         let _ = self.task.await;
     }
+}
+
+async fn interface_broadcast_sockets() -> Result<Vec<(UdpSocket, SocketAddr)>, ErrorPayload> {
+    let interfaces = get_if_addrs().map_err(interface_error)?;
+    let mut sockets = Vec::new();
+    for interface in interfaces {
+        let IfAddr::V4(address) = interface.addr else {
+            continue;
+        };
+        if address.ip.is_loopback() || address.ip.is_unspecified() {
+            continue;
+        }
+        let socket = match UdpSocket::bind((address.ip, 0)).await {
+            Ok(socket) => socket,
+            Err(_) => continue,
+        };
+        socket.set_broadcast(true).map_err(io_error)?;
+        let broadcast = address
+            .broadcast
+            .unwrap_or_else(|| directed_broadcast(address.ip, address.netmask));
+        sockets.push((socket, SocketAddr::from((broadcast, DISCOVERY_PORT))));
+    }
+    if sockets.is_empty() {
+        let socket = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0))
+            .await
+            .map_err(io_error)?;
+        socket.set_broadcast(true).map_err(io_error)?;
+        sockets.push((
+            socket,
+            SocketAddr::from((Ipv4Addr::BROADCAST, DISCOVERY_PORT)),
+        ));
+    }
+    Ok(sockets)
+}
+
+fn directed_broadcast(address: Ipv4Addr, netmask: Ipv4Addr) -> Ipv4Addr {
+    Ipv4Addr::from(u32::from(address) | !u32::from(netmask))
+}
+
+pub(crate) fn local_ip_addresses() -> Result<Vec<std::net::IpAddr>, ErrorPayload> {
+    get_if_addrs()
+        .map(|interfaces| {
+            interfaces
+                .into_iter()
+                .map(|interface| interface.ip())
+                .collect()
+        })
+        .map_err(interface_error)
 }
 
 pub async fn discover(
@@ -88,4 +137,36 @@ fn io_error(error: std::io::Error) -> ErrorPayload {
         error.to_string(),
         Some("Allow SharedLocalLLM on Private networks or enter the peer address manually.".into()),
     )
+}
+
+fn interface_error(error: std::io::Error) -> ErrorPayload {
+    ErrorPayload::new(
+        "network_interface_probe",
+        error.to_string(),
+        Some("Check that the Ethernet adapter is enabled, then try discovery again.".into()),
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::directed_broadcast;
+    use std::net::Ipv4Addr;
+
+    #[test]
+    fn calculates_a_directed_broadcast_for_private_and_link_local_interfaces() {
+        assert_eq!(
+            directed_broadcast(
+                Ipv4Addr::new(192, 168, 50, 12),
+                Ipv4Addr::new(255, 255, 255, 0)
+            ),
+            Ipv4Addr::new(192, 168, 50, 255)
+        );
+        assert_eq!(
+            directed_broadcast(
+                Ipv4Addr::new(169, 254, 179, 236),
+                Ipv4Addr::new(255, 255, 0, 0)
+            ),
+            Ipv4Addr::new(169, 254, 255, 255)
+        );
+    }
 }

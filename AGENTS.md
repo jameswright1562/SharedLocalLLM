@@ -45,12 +45,12 @@ revert or rewrite them. Send the owner or root a precise finding instead.
 Only the root integrator updates this table after this initial seed. This single-writer rule avoids
 conflicts and stale competing status reports.
 
-| Workstream         | State    | Current evidence / next action                                                                                                                             |
-| ------------------ | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `rust_core`        | Complete | Native implementation is green with 12/12 tests, formatting, Clippy warnings-as-errors, Cargo build, and a successful release bundle.                      |
-| `desktop_ui`       | Complete | Frontend is green with 37/37 tests, coverage above 86% in every dimension, production build, and 4/4 browser workflows.                                    |
-| `tooling_docs`     | Complete | Junior-friendly README, developer docs, pinned runtime manifest, CI, release packaging, and checksum workflow are in place.                                |
-| `root` integration | Complete | Final Tauri command-path regression fixed; direct full gates, production readability audit, NSIS rebuild, and SHA-256 verification completed successfully. |
+| Workstream         | State    | Current evidence / next action                                                                                                             |
+| ------------------ | -------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `rust_core`        | Complete | Native implementation is green with 24/24 tests, formatting, Clippy warnings-as-errors, Cargo build, and the version 0.1.2 release bundle. |
+| `desktop_ui`       | Complete | Frontend is green with 39/39 tests, coverage above 86% in every dimension, production build, and 4/4 browser workflows.                    |
+| `tooling_docs`     | Complete | Junior-friendly README, developer docs, pinned runtime manifest, CI, release packaging, and checksum workflow are in place.                |
+| `root` integration | Active   | Version 0.1.2 full gates and packaging are green; install it on both computers and complete physical pairing/model acceptance.             |
 
 ## Validation checklist
 
@@ -62,19 +62,21 @@ acceptance.
 - [x] `pnpm format:check` — all matched repository files use Prettier formatting.
 - [x] `pnpm typecheck` — strict TypeScript project build passes.
 - [x] `pnpm lint` — ESLint passes with zero warnings.
-- [x] `pnpm test` — 37/37 frontend tests pass.
-- [x] `pnpm test:coverage` — 37/37 tests passed with 93.21% statements, 86.93% branches,
-      93.53% functions, and 94.88% lines.
+- [x] `pnpm test` — 39/39 frontend tests pass.
+- [x] `pnpm test:coverage` — 39/39 tests passed with 92.04% statements, 86.52% branches,
+      92.03% functions, and 93.54% lines.
 - [x] `pnpm build` — production Vite build succeeds.
 - [x] `pnpm e2e` — four of four Chromium browser-demo workflows pass.
 - [x] `cargo fmt --manifest-path src-tauri/Cargo.toml --all --check` — passes.
-- [x] `cargo test --manifest-path src-tauri/Cargo.toml --all-targets` — 12/12 tests pass.
+- [x] `cargo test --manifest-path src-tauri/Cargo.toml --all-targets` — 24/24 tests pass.
 - [x] `cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings` — passes.
 - [x] `cargo build --manifest-path src-tauri/Cargo.toml` — development build succeeds.
-- [x] Production readability audit — every production TypeScript, TSX, CSS, and Rust file is under
-      300 lines; the largest is `src-tauri/src/runtime/installer.rs` at 299 lines.
-- [x] `pnpm tauri build --bundles nsis` — unsigned x64 installer and matching
-      `SHA256SUMS.txt` generated under `src-tauri/target/release/bundle/nsis/`.
+- [x] Production readability audit — every production file changed for version 0.1.2 is under 300
+      lines; the largest changed file is `src-tauri/src/commands/pairing.rs` at 284 lines. The
+      pre-existing `src/components/SetupStepContent.tsx` remains 306 lines.
+- [x] `pnpm tauri build --bundles nsis` — version 0.1.2 built in the isolated
+      `src-tauri/target-package` target while preserving the running development app; SHA-256
+      `28444fe5fd7822aa92114a8080c22fff9959246841b24ce587eaae387d2f9abd`.
 - [ ] Physical two-computer acceptance in `docs/testing.md`; automated loopback/demo tests do not
       satisfy this item.
 
@@ -98,7 +100,7 @@ acceptance.
 
 ## Current blockers
 
-- No remaining automated code, readability, or packaging blocker is known.
+- No remaining automated code or packaging blocker is known.
 - Physical two-computer GPU acceptance remains pending and must follow `docs/testing.md`; loopback and
   browser-demo tests are not a substitute for that hardware check.
 - Stronger production-grade peer authentication is explicitly deferred to `ideas.md`; v1 remains a

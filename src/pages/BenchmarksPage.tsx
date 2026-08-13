@@ -1,5 +1,6 @@
 import { useRef, useState } from "react";
 import { describeAppError } from "../services/errors";
+import { fitLayersByVram } from "../services/splitEstimate";
 import type { InferenceBenchmark, PageProps } from "../types";
 
 export function BenchmarksPage({ snapshot, service, refreshSnapshot, navigate }: PageProps) {
@@ -8,6 +9,9 @@ export function BenchmarksPage({ snapshot, service, refreshSnapshot, navigate }:
   const [running, setRunning] = useState(false);
   const [error, setError] = useState("");
   const runRef = useRef(0);
+  const selectedModel = snapshot.models.find((model) => model.id === modelId);
+  const gpuNodes = snapshot.nodes.filter((node) => node.online && node.gpu.vramAvailableGb > 0);
+  const plannedSplit = selectedModel ? fitLayersByVram(selectedModel, gpuNodes) : [];
 
   async function runBenchmark() {
     if (!modelId || running) return;
@@ -61,6 +65,17 @@ export function BenchmarksPage({ snapshot, service, refreshSnapshot, navigate }:
               </option>
             ))}
           </select>
+          {plannedSplit.length > 0 && (
+            <p className="benchmark-split" role="status">
+              Automatic GPU split:{" "}
+              {plannedSplit
+                .map((allocation) => {
+                  const name = gpuNodes.find((node) => node.id === allocation.nodeId)?.name;
+                  return `${name ?? "Unknown node"}: ${allocation.layers} layers`;
+                })
+                .join(" · ")}
+            </p>
+          )}
           {running ? (
             <button className="button stop-button" onClick={() => void cancelBenchmark()}>
               Cancel benchmark
@@ -100,7 +115,7 @@ export function BenchmarksPage({ snapshot, service, refreshSnapshot, navigate }:
                 <th>Model / topology</th>
                 <th>Prompt</th>
                 <th>Generation</th>
-                <th>Load</th>
+                <th>Duration</th>
                 <th>Peak memory</th>
                 <th>Run</th>
               </tr>
@@ -112,6 +127,9 @@ export function BenchmarksPage({ snapshot, service, refreshSnapshot, navigate }:
                     <strong>{benchmark.modelName}</strong>
                     <span className="capitalize">
                       {benchmark.topology}
+                      {benchmark.gpuLayers?.length
+                        ? ` · ${benchmark.gpuLayers.map((item) => item.layers).join("/")} GPU layers`
+                        : ""}
                       {benchmark.recommended && <i>Recommended</i>}
                     </span>
                   </td>
@@ -124,7 +142,9 @@ export function BenchmarksPage({ snapshot, service, refreshSnapshot, navigate }:
                     <small>tok/s</small>
                   </td>
                   <td>{benchmark.loadTimeSeconds.toFixed(1)} s</td>
-                  <td>{benchmark.memoryPeakGb.toFixed(1)} GB</td>
+                  <td>
+                    {benchmark.memoryPeakGb > 0 ? `${benchmark.memoryPeakGb.toFixed(1)} GB` : "—"}
+                  </td>
                   <td>
                     {new Intl.DateTimeFormat(undefined, {
                       month: "short",

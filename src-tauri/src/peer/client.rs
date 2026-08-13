@@ -39,6 +39,7 @@ impl PeerClient {
         code: &str,
         device_id: &str,
         device_name: &str,
+        capabilities: Value,
     ) -> Result<Self, ErrorPayload> {
         let normalized: String = code
             .chars()
@@ -63,6 +64,7 @@ impl PeerClient {
                 version: PROTOCOL_VERSION,
                 device_id: device_id.into(),
                 device_name: device_name.into(),
+                capabilities,
             })
             .await?
         {

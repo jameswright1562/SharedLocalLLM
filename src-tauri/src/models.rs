@@ -1,11 +1,11 @@
+mod lm_studio;
+
 use std::{
     collections::{BTreeMap, HashSet},
     path::{Path, PathBuf},
-    process::Command,
 };
 
 use regex::Regex;
-use serde_json::Value;
 use sha2::{Digest, Sha256};
 use walkdir::WalkDir;
 
@@ -14,55 +14,10 @@ use crate::{
     types::{ErrorPayload, ModelLocation, ModelRecord},
 };
 
-pub fn default_lm_studio_root() -> Option<PathBuf> {
-    dirs::home_dir().map(|home| home.join(".lmstudio").join("models"))
-}
-
-pub fn lms_catalog_roots() -> Vec<PathBuf> {
-    let Ok(output) = Command::new("lms")
-        .args(["ls", "--json", "--detailed"])
-        .output()
-    else {
-        return vec![];
-    };
-    if !output.status.success() {
-        return vec![];
-    }
-    let Ok(value) = serde_json::from_slice::<Value>(&output.stdout) else {
-        return vec![];
-    };
-    let mut values = Vec::new();
-    collect_paths(&value, &mut values);
-    values
-        .into_iter()
-        .filter_map(|path| {
-            let path = PathBuf::from(path);
-            if path
-                .extension()
-                .is_some_and(|x| x.eq_ignore_ascii_case("gguf"))
-            {
-                path.parent().map(Path::to_path_buf)
-            } else if path.is_dir() {
-                Some(path)
-            } else {
-                None
-            }
-        })
-        .collect()
-}
-
-fn collect_paths(value: &Value, output: &mut Vec<String>) {
-    match value {
-        Value::String(value) if value.to_ascii_lowercase().contains(".gguf") => {
-            output.push(value.clone())
-        }
-        Value::Array(values) => values.iter().for_each(|value| collect_paths(value, output)),
-        Value::Object(values) => values
-            .values()
-            .for_each(|value| collect_paths(value, output)),
-        _ => {}
-    }
-}
+pub use lm_studio::{
+    default_roots as default_lm_studio_roots, expand_roots as expand_lm_studio_roots,
+    lms_catalog_roots,
+};
 
 pub fn discover_gguf_models(roots: &[PathBuf]) -> Result<Vec<ModelRecord>, ErrorPayload> {
     let split = Regex::new(r"(?i)^(.*)-(\d{5})-of-(\d{5})\.gguf$").expect("valid split regex");

@@ -4,7 +4,7 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use crate::types::ErrorPayload;
 
-pub const PROTOCOL_VERSION: u16 = 1;
+pub const PROTOCOL_VERSION: u16 = 2;
 pub const MAX_FRAME: usize = 1024 * 1024;
 
 pub fn check_version(version: u16) -> Result<(), ErrorPayload> {
@@ -26,6 +26,7 @@ pub enum Request {
         version: u16,
         device_id: String,
         device_name: String,
+        capabilities: Value,
     },
     Heartbeat {
         version: u16,

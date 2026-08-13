@@ -85,8 +85,11 @@ The intended installed flow is the same on both computers:
 2. Install the pinned `llama.cpp` runtime from the first-run wizard. The runtime manager checks the
    official origin, archive size, SHA-256 digest, archive contents, and required executables.
 3. Give each computer a friendly name.
-4. Start pairing on one computer. Select the discovered peer—or enter its private IPv4 address—and
-   confirm the six-digit code shown by both apps. If Windows classifies a trusted LAN as Public, the
+4. Start pairing on one computer. If discovery does not find a direct Ethernet peer, run `ipconfig`
+   on the computer showing the code and enter its Ethernet IPv4 address in the other computer's
+   **Ethernet IPv4 address** field. SharedLocalLLM uses TCP port `49158` automatically; you may also
+   enter `address:port` when testing a non-default development build. Confirm the six-digit code. If
+   Windows classifies a trusted LAN as Public, the
    wizard can permit a temporary five-minute pairing session after a native warning. Showing a code
    also requires approval for an app-and-port-specific Public firewall rule, which is removed after
    pairing or timeout. The app still will not launch a cluster until the profile is Private or
@@ -99,6 +102,17 @@ The intended installed flow is the same on both computers:
 8. Use **Chat** from either computer, or copy the localhost API details from **API**. Stop the cluster
    from the app when finished so its managed processes are cleaned up.
 
+Version 0.1.2 replaces the old shared `local-node` placeholder with a unique per-install identity.
+After upgrading from 0.1.1, open **Nodes**, choose **Forget** for the old peer if it is still listed,
+then pair once more. This removes only peer trust and its protected channel key; model directories
+and model files are unchanged. After re-pairing, each app keeps an authenticated listener available
+and refreshes peer health periodically so a trusted computer can reconnect after reopening.
+
+For a cable connected directly between two computers, Windows may assign `169.254.x.x` link-local
+addresses when there is no router or DHCP server. That is valid: enter the code-showing computer's
+`169.254.x.x` Ethernet address manually. Both computers still need to run this same app version, and
+the Ethernet network profile must be **Private** before a distributed cluster can launch.
+
 There is not yet a published, physically validated installer release. Contributors can build the
 current preview from source using the steps below. If pairing or launch fails, use the
 [two-computer troubleshooting guide](docs/troubleshooting.md); every manual command there is clearly
@@ -110,7 +124,9 @@ Model discovery runs independently on both computers:
 
 1. If LM Studio's `lms` command is available, the app reads `lms ls --json --detailed`. This follows
    the model location configured inside LM Studio, including a non-default location.
-2. If the CLI is unavailable, it checks `%USERPROFILE%\.lmstudio\models`.
+2. If the CLI is unavailable, it checks the legacy `%USERPROFILE%\.lmstudio\models` layout, the
+   current `.lmstudio\hub\models` catalogue, bundled models, and the real `downloadsFolder` recorded
+   in `.lmstudio\settings.json` (often `%USERPROFILE%\.cache\huggingface\hub`).
 3. It also indexes every custom folder you add in SharedLocalLLM.
 
 Configured folders are read-only. SharedLocalLLM does not move, rename, overwrite, delete, or copy

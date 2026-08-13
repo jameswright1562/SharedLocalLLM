@@ -78,6 +78,13 @@ export const demoService: AppService = {
       demoSnapshot.nodes.push(peerNode);
     return structuredClone(peerNode);
   },
+  async resetPairing() {
+    await delay();
+    demoSnapshot.nodes = demoSnapshot.nodes.slice(0, 1);
+    demoSnapshot.network = undefined;
+    demoSnapshot.cluster = { status: "idle" };
+    return structuredClone(demoSnapshot);
+  },
   async estimateModelSplit(modelId, loadConfig) {
     await delay(80);
     const model = demoSnapshot.models.find((item) => item.id === modelId);

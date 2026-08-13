@@ -1,11 +1,21 @@
 use tauri::{AppHandle, Manager};
 
-use crate::state::AppState;
+use crate::{peer::PeerPairingEvent, state::AppState};
 
-use super::network::close_firewall_lease;
+use super::{lifecycle, network::close_firewall_lease};
 
-pub(super) async fn cleanup_pairing_session(app: &AppHandle, session_id: &str, completed: bool) {
+pub(super) async fn cleanup_pairing_session(
+    app: &AppHandle,
+    session_id: &str,
+    completed: Option<PeerPairingEvent>,
+) {
     let state = app.state::<AppState>();
+    let paired = completed.is_some();
+    if let Some(event) = completed {
+        if let Err(error) = lifecycle::persist_incoming_pair(&state, event) {
+            state.log("ERROR", "pairing_persist_failed", &error.to_string());
+        }
+    }
     let cleanup = {
         let mut peer = state.peer.lock().await;
         if peer.pairing_session_id.as_deref() != Some(session_id) {
@@ -14,7 +24,7 @@ pub(super) async fn cleanup_pairing_session(app: &AppHandle, session_id: &str, c
         peer.pairing_session_id = None;
         (
             peer.discovery.take(),
-            if completed { None } else { peer.server.take() },
+            peer.server.take(),
             peer.public_firewall_lease.take(),
         )
     };
@@ -25,4 +35,12 @@ pub(super) async fn cleanup_pairing_session(app: &AppHandle, session_id: &str, c
         server.shutdown().await;
     }
     close_firewall_lease(cleanup.2.as_deref());
+    if !paired {
+        state.log(
+            "INFO",
+            "pairing_expired",
+            "Pairing closed after five minutes",
+        );
+    }
+    lifecycle::start_persistent_peer_service(app.clone()).await;
 }

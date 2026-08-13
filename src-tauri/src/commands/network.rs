@@ -37,5 +37,13 @@ pub async fn run_network_test(
         adapter: format!("{adapter} · encrypted peer channel"),
     };
     state.lock()?.network = Some(benchmark.clone());
+    state.log(
+        "INFO",
+        "network_benchmark_completed",
+        &format!(
+            "classification={} throughput_mbps={:.1} p95_ms={:.2}",
+            benchmark.classification, benchmark.down_mbps, benchmark.latency_p95_ms
+        ),
+    );
     Ok(benchmark)
 }

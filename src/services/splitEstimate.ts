@@ -61,6 +61,8 @@ export function distributeLayersByVram(
   nodes: NodeCapabilities[],
 ): ModelLoadConfig["gpuLayers"] {
   if (!nodes.length) return [];
+  const reservedPerNode = totalLayers >= nodes.length ? 1 : 0;
+  const distributable = Math.max(0, totalLayers - reservedPerNode * nodes.length);
   const totalVram = nodes.reduce((total, node) => total + Math.max(0, node.gpu.vramAvailableGb), 0);
   let assigned = 0;
   return nodes.map((node, index) => {
@@ -68,9 +70,26 @@ export function distributeLayersByVram(
       index === nodes.length - 1
         ? totalLayers - assigned
         : totalVram > 0
-          ? Math.floor((totalLayers * Math.max(0, node.gpu.vramAvailableGb)) / totalVram)
-          : Math.floor(totalLayers / nodes.length);
+          ? reservedPerNode +
+            Math.floor((distributable * Math.max(0, node.gpu.vramAvailableGb)) / totalVram)
+          : reservedPerNode + Math.floor(distributable / nodes.length);
     assigned += layers;
     return { nodeId: node.id, layers };
   });
+}
+
+export function fitLayersByVram(
+  model: ModelRecord,
+  nodes: NodeCapabilities[],
+): ModelLoadConfig["gpuLayers"] {
+  if (!model.layerCount || !nodes.length) return [];
+  for (let gpuLayerCount = model.layerCount; gpuLayerCount >= nodes.length; gpuLayerCount -= 1) {
+    const gpuLayers = distributeLayersByVram(gpuLayerCount, nodes);
+    const estimate = estimateModelSplitLocally(model, nodes, {
+      contextSize: 4096,
+      gpuLayers,
+    });
+    if (estimate.devices.every((device) => device.fits)) return gpuLayers;
+  }
+  return [];
 }

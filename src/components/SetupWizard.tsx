@@ -19,6 +19,7 @@ export function SetupWizard({ snapshot, service, onComplete }: SetupWizardProps)
   const [step, setStep] = useState(initialStep);
   const [deviceName, setDeviceName] = useState(snapshot.deviceName || "Local node");
   const [pairCode, setPairCode] = useState("");
+  const [manualEndpoint, setManualEndpoint] = useState("");
   const [generatedCode, setGeneratedCode] = useState("");
   const [pairedNode, setPairedNode] = useState<NodeCapabilities | null>(snapshot.nodes[1] ?? null);
   const [network, setNetwork] = useState<NetworkBenchmark | undefined>(snapshot.network);
@@ -79,7 +80,11 @@ export function SetupWizard({ snapshot, service, onComplete }: SetupWizardProps)
     setBusy(true);
     clearError();
     try {
-      const node = await service.pairWithPeer(pairCode.replace(/\s/g, ""), allowPublicNetwork);
+      const normalizedCode = pairCode.replace(/\s/g, "");
+      const endpoint = manualEndpoint.trim();
+      const node = endpoint
+        ? await service.pairWithPeer(normalizedCode, allowPublicNetwork, endpoint)
+        : await service.pairWithPeer(normalizedCode, allowPublicNetwork);
       setPairedNode(node);
       setStep(3);
     } catch (reason) {
@@ -188,6 +193,8 @@ export function SetupWizard({ snapshot, service, onComplete }: SetupWizardProps)
           setDeviceName={setDeviceName}
           pairCode={pairCode}
           setPairCode={setPairCode}
+          manualEndpoint={manualEndpoint}
+          setManualEndpoint={setManualEndpoint}
           generatedCode={generatedCode}
           pairedNode={pairedNode}
           network={network}

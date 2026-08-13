@@ -1,8 +1,8 @@
 # Two-computer troubleshooting
 
-Use the in-app diagnostics first: **Settings > Diagnostics > Run checks** records the chosen route,
-network profile, listeners, peer/runtime versions, child-process exits, GPU memory, and redacted
-errors. Exported bundles omit prompts, images, credentials, and personal path prefixes.
+Use the in-app diagnostics first: **Settings > Logs** shows redacted pairing, reconnect, cluster,
+network, and benchmark events. **Open logs folder** opens the persistent
+`shared-local-llm.log`. Logs omit prompts, images, credentials, and personal path prefixes.
 
 The examples below call the machines **Computer A (Desktop/coordinator)** and **Computer B
 (Laptop/worker)** only to make direction explicit. Your app may assign the opposite roles. Open
@@ -10,7 +10,8 @@ PowerShell normally unless a step explicitly says **Run as administrator**.
 
 ## The peer does not appear
 
-1. On both computers, confirm the app is open and **Nodes > Discoverable** is enabled.
+1. On both computers, confirm the same SharedLocalLLM version is open. The authenticated peer
+   listener and private-LAN discovery broadcaster run while the app is open.
 2. Confirm both are on the same trusted home/work network, with client isolation disabled on the
    router or access point.
 3. Check the Windows network category on each computer.
@@ -32,12 +33,22 @@ If the active trusted connection says `Public`, change it in Windows **Settings 
 > Properties > Network profile type > Private**. SharedLocalLLM deliberately refuses a distributed
 > session on a Public profile. The setup wizard's **Use this public network** option permits a
 > confirmed five-minute pairing session only. When showing a code, approve the temporary Windows
-> firewall rule; it is restricted to the app and random pairing port, then removed after pairing or
+> firewall rule; it is restricted to the app and TCP port `49158`, then removed after pairing or
 > timeout. The override does not permit cluster launch or raw RPC exposure.
 
-4. Use **Nodes > Pair with IP** and enter the peer's IPv4 address shown in its diagnostics. Never
-   forward the peer port on the router.
+4. On the computer entering the six-digit code, fill in **Ethernet IPv4 address (optional)** with the
+   address of the computer showing the code. The normal port is `49158`, so an address such as
+   `192.168.1.20` or `169.254.20.8` is enough. Never forward this port on the router.
 5. Confirm both installations run the same application and peer-protocol version.
+
+If either computer was paired with version 0.1.1, upgrade both to 0.1.2. On each computer that still
+lists the old peer, open **Nodes**, choose **Forget**, confirm the warning, and pair again. The reset
+does not remove model sources or model files. After re-pairing, close one app, reopen it, and allow
+one health-refresh interval for its status to return to Reachable.
+
+The persistent log is at
+`%LOCALAPPDATA%\SharedLocalLLM\logs\shared-local-llm.log`. Look for
+`peer_listener_ready`, `peer_disconnected`, `peer_reconnected`, or a redacted actionable error.
 
 To inspect IPv4 addresses:
 
@@ -45,7 +56,6 @@ To inspect IPv4 addresses:
 
 ```powershell
 Get-NetIPAddress -AddressFamily IPv4 |
-  Where-Object { $_.IPAddress -notlike '169.254.*' } |
   Format-Table InterfaceAlias, IPAddress, PrefixLength
 ```
 
@@ -53,9 +63,12 @@ Get-NetIPAddress -AddressFamily IPv4 |
 
 ```powershell
 Get-NetIPAddress -AddressFamily IPv4 |
-  Where-Object { $_.IPAddress -notlike '169.254.*' } |
   Format-Table InterfaceAlias, IPAddress, PrefixLength
 ```
+
+On a direct cable with no router, a `169.254.x.x` address is expected. Use the address attached to
+the Ethernet interface, not a Wi-Fi, VPN, loopback, or virtual-machine adapter. Manual entry skips
+UDP discovery and connects directly to TCP port `49158`.
 
 ## Pairing codes do not match
 

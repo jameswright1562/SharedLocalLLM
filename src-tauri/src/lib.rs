@@ -16,6 +16,13 @@ use state::AppState;
 pub fn run() {
     tauri::Builder::default()
         .manage(AppState::new())
+        .setup(|app| {
+            let handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                commands::pairing::lifecycle::start_persistent_peer_service(handle).await;
+            });
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             commands::app::get_app_snapshot,
             commands::app::install_runtime,
@@ -28,6 +35,7 @@ pub fn run() {
             commands::network::run_network_test,
             commands::pairing::generate_pairing_code,
             commands::pairing::pair_with_peer,
+            commands::pairing::reset::reset_pairing,
             commands::cluster::split::estimate_model_split,
             commands::cluster::start_cluster,
             commands::cluster::stop_cluster,

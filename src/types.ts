@@ -104,6 +104,7 @@ export interface InferenceBenchmark {
   id: string;
   modelName: string;
   topology: "local" | "remote" | "distributed";
+  gpuLayers?: GpuLayerAllocation[];
   promptTokensPerSecond: number;
   generationTokensPerSecond: number;
   loadTimeSeconds: number;
@@ -179,7 +180,12 @@ export interface AppService {
     code: string;
     expiresInSeconds: number;
   }>;
-  pairWithPeer(code: string, allowPublicNetwork?: boolean): Promise<NodeCapabilities>;
+  pairWithPeer(
+    code: string,
+    allowPublicNetwork?: boolean,
+    manualEndpoint?: string,
+  ): Promise<NodeCapabilities>;
+  resetPairing(): Promise<AppSnapshot>;
   estimateModelSplit(modelId: string, loadConfig: ModelLoadConfig): Promise<SplitEstimate>;
   startCluster(modelId: string, loadConfig: ModelLoadConfig): Promise<ClusterSession>;
   stopCluster(): Promise<ClusterSession>;

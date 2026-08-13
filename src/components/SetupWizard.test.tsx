@@ -110,14 +110,15 @@ describe("SetupWizard", () => {
 
     await user.click(screen.getByRole("button", { name: /continue/i }));
     await user.type(screen.getByLabelText(/enter code/i), "123456");
+    await user.type(screen.getByLabelText(/ethernet ipv4 address/i), "192.168.50.2");
     await user.click(screen.getByRole("button", { name: /pair computers/i }));
     await user.click(await screen.findByRole("button", { name: /use this public network/i }));
 
     expect(
       await screen.findByRole("heading", { name: /choose where models live/i }),
     ).toBeInTheDocument();
-    expect(pairWithPeer).toHaveBeenNthCalledWith(1, "123456", false);
-    expect(pairWithPeer).toHaveBeenNthCalledWith(2, "123456", true);
+    expect(pairWithPeer).toHaveBeenNthCalledWith(1, "123456", false, "192.168.50.2");
+    expect(pairWithPeer).toHaveBeenNthCalledWith(2, "123456", true, "192.168.50.2");
   });
 
   it("handles code generation and pairing failures, then completes every setup step", async () => {

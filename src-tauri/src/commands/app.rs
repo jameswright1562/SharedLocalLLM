@@ -9,7 +9,8 @@ use crate::{
 };
 
 #[tauri::command]
-pub fn get_app_snapshot(state: State<'_, AppState>) -> Result<AppSnapshot, ErrorPayload> {
+pub async fn get_app_snapshot(state: State<'_, AppState>) -> Result<AppSnapshot, ErrorPayload> {
+    crate::commands::pairing::lifecycle::refresh_peer_status(&state).await;
     state.snapshot()
 }
 
@@ -81,9 +82,22 @@ pub async fn install_runtime(
 }
 
 #[tauri::command]
-pub fn refresh_hardware(state: State<'_, AppState>) -> Result<AppSnapshot, ErrorPayload> {
-    state.lock()?.local = hardware::probe_local();
+pub async fn refresh_hardware(state: State<'_, AppState>) -> Result<AppSnapshot, ErrorPayload> {
+    let (id, name) = {
+        let inner = state.lock()?;
+        (inner.local.id.clone(), inner.local.name.clone())
+    };
+    let mut local = hardware::probe_local();
+    local.id = id;
+    local.name = name;
+    state.lock()?.local = local;
+    crate::commands::pairing::lifecycle::refresh_peer_status(&state).await;
     state.refresh_models_shared()?;
+    state.log(
+        "INFO",
+        "hardware_refreshed",
+        "Updated local and peer capabilities",
+    );
     state.snapshot()
 }
 

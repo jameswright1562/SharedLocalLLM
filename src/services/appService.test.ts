@@ -151,7 +151,8 @@ describe("app services", () => {
     await nativeService.removeModelDirectory("dir-7");
     await nativeService.runNetworkTest();
     await nativeService.generatePairingCode(true);
-    await nativeService.pairWithPeer("481209", true);
+    await nativeService.pairWithPeer("481209", true, "192.168.50.2");
+    await nativeService.resetPairing();
     const loadConfig = {
       contextSize: 8192,
       gpuLayers: [
@@ -189,7 +190,11 @@ describe("app services", () => {
       ["remove_model_directory", { id: "dir-7" }],
       ["run_network_test", undefined],
       ["generate_pairing_code", { allowPublicNetwork: true }],
-      ["pair_with_peer", { code: "481209", allowPublicNetwork: true }],
+      [
+        "pair_with_peer",
+        { code: "481209", allowPublicNetwork: true, manualEndpoint: "192.168.50.2" },
+      ],
+      ["reset_pairing", undefined],
       ["estimate_model_split", { modelId: "model-2", loadConfig }],
       ["start_cluster", { modelId: "model-2", loadConfig }],
       ["stop_cluster", undefined],

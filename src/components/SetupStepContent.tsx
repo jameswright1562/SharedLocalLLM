@@ -9,6 +9,8 @@ interface SetupStepContentProps {
   setDeviceName: Dispatch<SetStateAction<string>>;
   pairCode: string;
   setPairCode: Dispatch<SetStateAction<string>>;
+  manualEndpoint: string;
+  setManualEndpoint: Dispatch<SetStateAction<string>>;
   generatedCode: string;
   pairedNode: NodeCapabilities | null;
   network?: NetworkBenchmark;
@@ -31,6 +33,8 @@ export function SetupStepContent({
   setDeviceName,
   pairCode,
   setPairCode,
+  manualEndpoint,
+  setManualEndpoint,
   generatedCode,
   pairedNode,
   network,
@@ -171,12 +175,30 @@ export function SetupStepContent({
                 value={pairCode}
                 onChange={(event) => setPairCode(event.target.value)}
               />
+              <label className="field-label" htmlFor="manual-peer-endpoint">
+                Ethernet IPv4 address (optional)
+              </label>
+              <input
+                id="manual-peer-endpoint"
+                inputMode="decimal"
+                placeholder="192.168.50.2"
+                value={manualEndpoint}
+                onChange={(event) => setManualEndpoint(event.target.value)}
+              />
+              <small>
+                For a direct cable, enter the IPv4 address shown by <code>ipconfig</code> on the
+                computer displaying the code. Port 49158 is automatic.
+              </small>
               <button
                 className="button primary"
                 disabled={busy || pairCode.replace(/\s/g, "").length !== 6}
                 onClick={() => void pair()}
               >
-                {busy ? "Searching private LAN…" : "Pair computers"}
+                {busy
+                  ? manualEndpoint.trim()
+                    ? "Connecting over Ethernet…"
+                    : "Searching private LAN…"
+                  : "Pair computers"}
               </button>
             </div>
           </div>
