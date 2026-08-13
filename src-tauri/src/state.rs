@@ -11,7 +11,9 @@ use persistence::{new_api_key, read_settings, save_settings, secrets_path, Persi
 
 use crate::{
     hardware,
-    models::{default_lm_studio_root, discover_gguf_models, lms_catalog_roots},
+    models::{
+        default_lm_studio_roots, discover_gguf_models, expand_lm_studio_roots, lms_catalog_roots,
+    },
     pairing::{PairingManager, PeerRecord},
     peer::{DiscoveryBroadcaster, PeerClient, PeerServer, RpcForwarder},
     runtime::{self, ProcessManager},
@@ -61,7 +63,7 @@ impl AppState {
             local.name = device_name.clone();
         }
         let mut directories = Vec::new();
-        if let Some(path) = default_lm_studio_root() {
+        for path in default_lm_studio_roots() {
             directories.push(directory_for(&path, "lm-studio", &local.id));
         }
         for path in persisted.custom_model_directories.iter().map(PathBuf::from) {
@@ -141,6 +143,7 @@ impl AppState {
             )
         };
         roots.extend(lms_catalog_roots());
+        let roots = expand_lm_studio_roots(&roots);
         let mut models = discover_gguf_models(&roots)?;
         let peers = self.lock()?.peers.clone();
         placement::apply_fit(&mut models, &local, &peers);

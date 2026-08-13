@@ -1,11 +1,11 @@
+mod lm_studio;
+
 use std::{
     collections::{BTreeMap, HashSet},
     path::{Path, PathBuf},
-    process::Command,
 };
 
 use regex::Regex;
-use serde_json::Value;
 use sha2::{Digest, Sha256};
 use walkdir::WalkDir;
 
@@ -14,87 +14,10 @@ use crate::{
     types::{ErrorPayload, ModelLocation, ModelRecord},
 };
 
-pub fn default_lm_studio_root() -> Option<PathBuf> {
-    dirs::home_dir().map(|home| home.join(".lmstudio").join("models"))
-}
-
-pub fn lms_catalog_roots() -> Vec<PathBuf> {
-    let Ok(output) = Command::new("lms")
-        .args(["ls", "--json", "--detailed"])
-        .output()
-    else {
-        return vec![];
-    };
-    if !output.status.success() {
-        return vec![];
-    }
-    let Ok(value) = serde_json::from_slice::<Value>(&output.stdout) else {
-        return vec![];
-    };
-    let mut values = Vec::new();
-    collect_paths(&value, &mut values);
-    values
-        .into_iter()
-        .filter_map(|path| {
-            let path = PathBuf::from(path);
-            if path
-                .extension()
-                .is_some_and(|x| x.eq_ignore_ascii_case("gguf"))
-            {
-                path.parent().map(Path::to_path_buf)
-            } else if path.is_dir() {
-                Some(path)
-            } else {
-                None
-            }
-        })
-        .collect()
-}
-
-fn collect_paths(value: &Value, output: &mut Vec<String>) {
-    match value {
-        Value::String(value) if value.to_ascii_lowercase().contains(".gguf") => {
-            output.push(value.clone())
-        }
-        Value::Array(values) => values.iter().for_each(|value| collect_paths(value, output)),
-        Value::Object(values) => values
-            .values()
-            .for_each(|value| collect_paths(value, output)),
-        _ => {}
-    }
-}
-
-#[cfg(test)]
-mod default_root_tests {
-    use super::{discover_gguf_models, expand_lm_studio_roots, lm_studio_roots_for_home};
-
-    #[test]
-    fn resolves_hub_metadata_to_the_configured_lm_studio_download_folder() {
-        let home = tempfile::tempdir().unwrap();
-        let legacy = home.path().join(".lmstudio").join("models");
-        let hub = home.path().join(".lmstudio").join("hub").join("models");
-        let downloads = home.path().join("download-cache");
-        std::fs::create_dir_all(&legacy).unwrap();
-        std::fs::create_dir_all(&hub).unwrap();
-        let model_folder = downloads.join("publisher").join("model");
-        std::fs::create_dir_all(&model_folder).unwrap();
-        std::fs::write(model_folder.join("model-Q4_K_M.gguf"), b"GGUF").unwrap();
-        std::fs::write(
-            home.path().join(".lmstudio").join("settings.json"),
-            serde_json::json!({ "downloadsFolder": downloads }).to_string(),
-        )
-        .unwrap();
-
-        let defaults = lm_studio_roots_for_home(home.path());
-        assert!(defaults.contains(&legacy));
-        assert!(defaults.contains(&hub));
-        assert!(defaults.contains(&downloads));
-
-        let manual_roots = expand_lm_studio_roots(&[hub]);
-        assert!(manual_roots.contains(&downloads));
-        assert_eq!(discover_gguf_models(&manual_roots).unwrap().len(), 1);
-    }
-}
+pub use lm_studio::{
+    default_roots as default_lm_studio_roots, expand_roots as expand_lm_studio_roots,
+    lms_catalog_roots,
+};
 
 pub fn discover_gguf_models(roots: &[PathBuf]) -> Result<Vec<ModelRecord>, ErrorPayload> {
     let split = Regex::new(r"(?i)^(.*)-(\d{5})-of-(\d{5})\.gguf$").expect("valid split regex");
