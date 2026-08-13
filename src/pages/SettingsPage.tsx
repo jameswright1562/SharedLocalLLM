@@ -3,12 +3,13 @@ import { describeAppError } from "../services/errors";
 import type { PageProps } from "../types";
 
 export function SettingsPage({ snapshot, service, refreshSnapshot }: PageProps) {
-  const [tab, setTab] = useState<"general" | "sources" | "logs">("general");
+  const [tab, setTab] = useState<"general" | "runtime" | "sources" | "logs">("general");
   const [deviceName, setDeviceName] = useState(snapshot.deviceName);
   const [apiPort, setApiPort] = useState(snapshot.apiPort);
   const [autostart, setAutostart] = useState(snapshot.autostart);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
+  const [runtimeProgress, setRuntimeProgress] = useState("");
 
   async function saveSettings() {
     setBusy(true);
@@ -56,6 +57,20 @@ export function SettingsPage({ snapshot, service, refreshSnapshot }: PageProps) 
     }
   }
 
+  async function installRuntime() {
+    setBusy(true);
+    setMessage("");
+    try {
+      await service.installRuntime((_percent, status) => setRuntimeProgress(status));
+      await refreshSnapshot();
+      setMessage("Runtime installed.");
+    } catch (reason) {
+      setMessage(describeAppError(reason, "The runtime could not be installed."));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function openLogs() {
     setMessage("");
     try {
@@ -65,7 +80,7 @@ export function SettingsPage({ snapshot, service, refreshSnapshot }: PageProps) 
     }
   }
 
-  const tabs = ["general", "sources", "logs"] as const;
+  const tabs = ["general", "runtime", "sources", "logs"] as const;
   return (
     <div className="page">
       <header className="page-header">
@@ -87,7 +102,9 @@ export function SettingsPage({ snapshot, service, refreshSnapshot }: PageProps) 
             >
               {value === "sources"
                 ? "Model sources"
-                : `${value[0]!.toUpperCase()}${value.slice(1)}`}
+                : value === "runtime"
+                  ? "Runtime"
+                  : `${value[0]!.toUpperCase()}${value.slice(1)}`}
             </button>
           ))}
         </nav>
@@ -107,21 +124,10 @@ export function SettingsPage({ snapshot, service, refreshSnapshot }: PageProps) 
                 </div>
                 <input
                   aria-label="Device name"
+                  maxLength={80}
                   value={deviceName}
                   onChange={(event) => setDeviceName(event.target.value)}
                 />
-              </div>
-              <div className="settings-row">
-                <div>
-                  <strong>llama.cpp runtime</strong>
-                  <p>Verified backend shared by both nodes.</p>
-                </div>
-                <span
-                  className={`status-pill ${snapshot.runtime.status === "ready" ? "online" : "offline"}`}
-                >
-                  <i aria-hidden="true" />
-                  {snapshot.runtime.version ?? snapshot.runtime.status}
-                </span>
               </div>
               <div className="settings-row">
                 <div>
@@ -156,10 +162,54 @@ export function SettingsPage({ snapshot, service, refreshSnapshot }: PageProps) 
               <div className="button-row">
                 <button
                   className="button primary"
-                  disabled={busy || !deviceName.trim() || apiPort < 1024 || apiPort > 65535}
+                  disabled={
+                    busy ||
+                    !deviceName.trim() ||
+                    deviceName.trim().length > 80 ||
+                    apiPort < 1024 ||
+                    apiPort > 65535
+                  }
                   onClick={() => void saveSettings()}
                 >
                   {busy ? "Saving…" : "Save changes"}
+                </button>
+              </div>
+            </>
+          )}
+          {tab === "runtime" && (
+            <>
+              <h2>Runtime</h2>
+              <p>
+                Install or repair the pinned llama.cpp CUDA runtime. Failed downloads are never
+                activated.
+              </p>
+              <div className="settings-row">
+                <div>
+                  <strong>llama.cpp runtime</strong>
+                  <p>
+                    {snapshot.runtime.error ||
+                      runtimeProgress ||
+                      "Verified backend used by this computer."}
+                  </p>
+                </div>
+                <span
+                  className={`status-pill ${snapshot.runtime.status === "ready" ? "online" : "offline"}`}
+                >
+                  <i aria-hidden="true" />
+                  {snapshot.runtime.version ?? snapshot.runtime.status}
+                </span>
+              </div>
+              <div className="button-row">
+                <button
+                  className="button primary"
+                  disabled={busy}
+                  onClick={() => void installRuntime()}
+                >
+                  {busy
+                    ? "Installing…"
+                    : snapshot.runtime.status === "ready"
+                      ? "Repair runtime"
+                      : "Install runtime"}
                 </button>
               </div>
             </>

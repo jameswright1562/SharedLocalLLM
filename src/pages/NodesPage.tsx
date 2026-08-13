@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { describeAppError } from "../services/errors";
+import { PairingPanel } from "../components/PairingPanel";
+import { decodeAppError, describeAppError } from "../services/errors";
 import type { PageProps } from "../types";
 import { StatusPill } from "../components/Telemetry";
 import { formatGb } from "./pageFormat";
@@ -8,11 +9,18 @@ export function NodesPage({ snapshot, service, refreshSnapshot }: PageProps) {
   const [refreshing, setRefreshing] = useState(false);
   const [confirmingReset, setConfirmingReset] = useState(false);
   const [message, setMessage] = useState("");
+  const [pairCode, setPairCode] = useState("");
+  const [manualEndpoint, setManualEndpoint] = useState("");
+  const [generatedCode, setGeneratedCode] = useState("");
+  const [publicRetry, setPublicRetry] = useState<"create-code" | "pair">();
   async function refresh() {
     setRefreshing(true);
+    setMessage("");
     try {
       await service.refreshHardware();
       await refreshSnapshot();
+    } catch (reason) {
+      setMessage(describeAppError(reason, "Hardware refresh failed."));
     } finally {
       setRefreshing(false);
     }
@@ -27,6 +35,36 @@ export function NodesPage({ snapshot, service, refreshSnapshot }: PageProps) {
       setMessage("Paired node forgotten. Create a new pairing code to reconnect it.");
     } catch (reason) {
       setMessage(describeAppError(reason, "The paired node could not be forgotten."));
+    } finally {
+      setRefreshing(false);
+    }
+  }
+  async function createCode(allowPublicNetwork = false) {
+    setRefreshing(true);
+    setMessage("");
+    try {
+      setGeneratedCode((await service.generatePairingCode(allowPublicNetwork)).code);
+    } catch (reason) {
+      setMessage(describeAppError(reason, "Could not create a pairing code."));
+      if (decodeAppError(reason).code === "private_network_required") setPublicRetry("create-code");
+    } finally {
+      setRefreshing(false);
+    }
+  }
+  async function pair(allowPublicNetwork = false) {
+    if (pairCode.replace(/\s/g, "").length !== 6) return;
+    setRefreshing(true);
+    setMessage("");
+    try {
+      const endpoint = manualEndpoint.trim();
+      await (endpoint
+        ? service.pairWithPeer(pairCode.replace(/\s/g, ""), allowPublicNetwork, endpoint)
+        : service.pairWithPeer(pairCode.replace(/\s/g, ""), allowPublicNetwork));
+      await refreshSnapshot();
+      setMessage("Paired with the other computer.");
+    } catch (reason) {
+      setMessage(describeAppError(reason, "Pairing failed."));
+      if (decodeAppError(reason).code === "private_network_required") setPublicRetry("pair");
     } finally {
       setRefreshing(false);
     }
@@ -126,11 +164,23 @@ export function NodesPage({ snapshot, service, refreshSnapshot }: PageProps) {
             <div>
               <h2>No worker paired</h2>
               <p>
-                The local node can still run models that fit. Pair another computer from Settings to
-                pool resources.
+                The local node can still run models that fit. Create or enter a pairing code below.
               </p>
             </div>
           </div>
+        )}
+        {snapshot.nodes.length < 2 && (
+          <PairingPanel
+            generatedCode={generatedCode}
+            pairCode={pairCode}
+            setPairCode={setPairCode}
+            manualEndpoint={manualEndpoint}
+            setManualEndpoint={setManualEndpoint}
+            pairedNode={null}
+            busy={refreshing}
+            createCode={() => void createCode(publicRetry === "create-code")}
+            pair={() => void pair(publicRetry === "pair")}
+          />
         )}
       </div>
       {message && (

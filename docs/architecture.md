@@ -15,8 +15,8 @@ not encoded in separate builds.
   remote GPU devices using layer split.
 - **Worker runtime:** `ggml-rpc-server.exe` listens on an ephemeral loopback port. It is reachable
   only through the Rust process's authenticated peer tunnel.
-- **Local API:** binds to `127.0.0.1`; a worker-side request is forwarded through the tunnel to the
-  active coordinator.
+- **Local API:** binds to `127.0.0.1`. Chat from the worker is proxied over the authenticated peer
+  channel to the computer that launched `llama-server`.
 
 ## Session lifecycle
 
@@ -37,12 +37,14 @@ terminates the process tree. Normal window close hides to the tray while a sessi
 ## Peer protocol and trust
 
 Discovery uses a small UDP announcement on private interfaces. Manual private IPv4 entry reaches
-the same pairing flow. Pairing performs an ephemeral key exchange and displays a derived six-digit
-comparison code on both computers. Confirmation persists each peer identity through Windows DPAPI.
+the same pairing flow. One computer shows a six-digit pairing code; the other enters it. The code
+host also advances once the incoming pair is persisted. Confirmation stores each peer identity and
+channel key through Windows DPAPI.
 
-All later peer traffic uses mutual TLS and a versioned application handshake. One private-network
-TCP listener multiplexes control messages, the bounded RPC byte tunnel, network tests, and proxied
-API requests. Incompatible protocol/runtime versions fail before launch with upgrade guidance.
+All later peer traffic uses a Noise-encrypted, versioned application handshake. One private-network
+TCP listener multiplexes control messages, the bounded RPC byte tunnel, network tests, catalogue
+metadata, worker stop, and proxied chat. Incompatible protocol versions fail before launch with
+upgrade guidance. Stronger production-grade authentication remains deferred.
 
 Security invariants:
 
@@ -58,10 +60,10 @@ untrusted networks. A direct RPC socket must be treated as a security defect.
 
 ## Model and inference data flow
 
-Each node indexes its own read-only sources. The merged catalogue carries the file owner and a
-stable fingerprint, but not model bytes. Split GGUF shards become one record; adjacent `mmproj`
-files are associated with eligible vision models. The node holding the selected file coordinates
-unless both hold it and measured performance selects the other node.
+Each node indexes its own read-only sources. Peer catalogue metadata (names and locations) can be
+merged for display, but model bytes stay in place and launch requires a local GGUF. Split GGUF
+shards become one record; adjacent `mmproj` files are associated with eligible vision models. The
+computer that clicks Launch is the coordinator.
 
 The recommendation engine performs these stages:
 
@@ -78,8 +80,9 @@ a token rate before measurement.
 
 ## State and compatibility
 
-SQLite stores non-secret settings, per-node model metadata, benchmark history, conversations, and
-launch profiles. Credentials are stored separately with DPAPI. Model directories remain untouched.
+JSON settings store non-secret preferences, peer records, and benchmark history. Chat stays in
+renderer memory for the session. Credentials are stored separately with DPAPI. Model directories
+remain untouched.
 
 Cache keys include model fingerprint, both hardware identities, drivers, runtime version, requested
 context, and route/adapter identity. Any change invalidates the result. Peer messages and persisted

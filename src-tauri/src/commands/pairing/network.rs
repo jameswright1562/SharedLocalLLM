@@ -4,12 +4,27 @@ use crate::peer::DISCOVERY_PORT;
 use crate::types::ErrorPayload;
 
 pub(crate) fn require_private_network() -> Result<(), ErrorPayload> {
+    require_private_network_for(None)
+}
+
+pub(crate) fn require_private_network_for(peer_address: Option<&str>) -> Result<(), ErrorPayload> {
     #[cfg(windows)]
     {
+        if let Some(address) = peer_address.and_then(peer_ip) {
+            let profile = profile_for_peer(&address)?;
+            if !network_profiles_are_trusted(&profile) {
+                return Err(private_network_error());
+            }
+            return Ok(());
+        }
         let profiles = active_network_profiles()?;
         if !network_profiles_are_trusted(&profiles) {
             return Err(private_network_error());
         }
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = peer_address;
     }
     Ok(())
 }
@@ -146,6 +161,34 @@ pub(super) async fn open_temporary_public_firewall_port(
 #[cfg(windows)]
 fn powershell_literal(value: &str) -> String {
     format!("'{}'", value.replace('\'', "''"))
+}
+
+#[cfg(windows)]
+fn peer_ip(address: &str) -> Option<String> {
+    address
+        .parse::<std::net::SocketAddr>()
+        .ok()
+        .map(|endpoint| endpoint.ip().to_string())
+        .or_else(|| {
+            address
+                .parse::<std::net::IpAddr>()
+                .ok()
+                .map(|ip| ip.to_string())
+        })
+}
+
+#[cfg(windows)]
+fn profile_for_peer(ip: &str) -> Result<String, ErrorPayload> {
+    let script = format!(
+        "$route = Find-NetRoute -RemoteIPAddress {} -ErrorAction SilentlyContinue | Select-Object -First 1; if ($null -eq $route) {{ '' }} else {{ (Get-NetConnectionProfile -InterfaceIndex $route.InterfaceIndex -ErrorAction SilentlyContinue).NetworkCategory }}"
+        ,
+        powershell_literal(ip)
+    );
+    let output = std::process::Command::new("powershell.exe")
+        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+        .output()
+        .map_err(|error| ErrorPayload::new("network_profile_probe", error.to_string(), None))?;
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
 }
 
 #[cfg(windows)]

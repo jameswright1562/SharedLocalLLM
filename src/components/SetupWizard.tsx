@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { decodeAppError, describeAppError } from "../services/errors";
 import type { AppService, AppSnapshot, NetworkBenchmark, NodeCapabilities } from "../types";
@@ -15,6 +15,7 @@ type PublicNetworkRetry = "create-code" | "pair";
 const steps = ["Runtime", "Device", "Pair", "Models", "Network", "Ready"];
 
 export function SetupWizard({ snapshot, service, onComplete }: SetupWizardProps) {
+  const [liveSnapshot, setLiveSnapshot] = useState(snapshot);
   const initialStep = snapshot.runtime.status === "ready" ? 1 : 0;
   const [step, setStep] = useState(initialStep);
   const [deviceName, setDeviceName] = useState(snapshot.deviceName || "Local node");
@@ -43,6 +44,41 @@ export function SetupWizard({ snapshot, service, onComplete }: SetupWizardProps)
   function reportError(reason: unknown, fallback: string) {
     setError(describeAppError(reason, fallback));
     setErrorCode(decodeAppError(reason).code);
+  }
+
+  useEffect(() => {
+    if (step !== 2 || pairedNode) return;
+    let active = true;
+    const poll = async () => {
+      try {
+        const next = await service.getAppSnapshot();
+        if (!active) return;
+        setLiveSnapshot(next);
+        if (next.nodes.length > 1) setPairedNode(next.nodes[1] ?? null);
+      } catch {
+        /* keep waiting for the code host to persist the peer */
+      }
+    };
+    const timer = window.setInterval(() => void poll(), 2_000);
+    void poll();
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [pairedNode, service, step]);
+
+  async function checkAgain() {
+    setBusy(true);
+    clearError();
+    try {
+      const next = await service.refreshHardware();
+      setLiveSnapshot(next);
+      if (next.runtime.status === "ready") setStep(1);
+    } catch (reason) {
+      reportError(reason, "Hardware and runtime status could not be refreshed.");
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function createCode(allowPublicNetwork = false) {
@@ -187,7 +223,7 @@ export function SetupWizard({ snapshot, service, onComplete }: SetupWizardProps)
         </div>
         <SetupStepContent
           step={step}
-          snapshot={snapshot}
+          snapshot={liveSnapshot}
           service={service}
           deviceName={deviceName}
           setDeviceName={setDeviceName}
@@ -201,6 +237,7 @@ export function SetupWizard({ snapshot, service, onComplete }: SetupWizardProps)
           busy={busy}
           runtimeProgress={runtimeProgress}
           installRuntime={installRuntime}
+          checkAgain={checkAgain}
           createCode={createCode}
           pair={pair}
           addFolder={addFolder}

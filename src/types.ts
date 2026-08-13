@@ -30,6 +30,8 @@ export interface NodeCapabilities {
     kind: "ethernet" | "wifi" | "other";
     linkSpeedMbps?: number;
   };
+  clusterStatus?: string;
+  clusterModelId?: string;
 }
 
 export interface ModelLocation {
@@ -53,6 +55,7 @@ export interface ModelRecord {
   shards: number;
   locations: ModelLocation[];
   fit: ModelFit;
+  remoteOnly?: boolean;
 }
 
 export interface GpuLayerAllocation {
@@ -111,6 +114,7 @@ export interface InferenceBenchmark {
   memoryPeakGb: number;
   recommended: boolean;
   ranAt: string;
+  error?: string;
 }
 
 export interface ClusterSession {
@@ -153,6 +157,7 @@ export interface ChatMessage {
   role: "user" | "assistant" | "system";
   content: string;
   imageNames?: string[];
+  imageData?: string[];
   error?: boolean;
 }
 

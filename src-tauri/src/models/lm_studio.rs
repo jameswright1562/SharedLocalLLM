@@ -1,7 +1,4 @@
-use std::{
-    path::{Path, PathBuf},
-    process::Command,
-};
+use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
@@ -62,13 +59,14 @@ pub fn lms_catalog_roots() -> Vec<PathBuf> {
         .map(|home| home.join(".lmstudio").join("bin").join("lms.exe"))
         .filter(|path| path.is_file())
         .unwrap_or_else(|| PathBuf::from("lms"));
-    let Ok(output) = Command::new(executable).args(["ls", "--json"]).output() else {
+    let Some(stdout) = crate::hardware::output_with_timeout(
+        &executable.to_string_lossy(),
+        &["ls", "--json"],
+        std::time::Duration::from_secs(4),
+    ) else {
         return vec![];
     };
-    if !output.status.success() {
-        return vec![];
-    }
-    let Ok(value) = serde_json::from_slice::<Value>(&output.stdout) else {
+    let Ok(value) = serde_json::from_str::<Value>(&stdout) else {
         return vec![];
     };
     let mut values = Vec::new();
@@ -132,6 +130,11 @@ mod tests {
         assert!(defaults.contains(&downloads));
         let manual_roots = expand_roots(&[hub]);
         assert!(manual_roots.contains(&downloads));
-        assert_eq!(discover_gguf_models(&manual_roots).unwrap().len(), 1);
+        assert_eq!(
+            discover_gguf_models(&manual_roots, "test-node")
+                .unwrap()
+                .len(),
+            1
+        );
     }
 }

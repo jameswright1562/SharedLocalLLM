@@ -82,9 +82,11 @@ export function ModelInspector({
         value={String(contextSize)}
         onChange={(event) => setContextSize(Number(event.target.value))}
       >
-        <option value="4096">4,096 tokens</option>
-        <option value="8192">8,192 tokens</option>
-        {selected.contextLength >= 16384 && <option value="16384">16,384 tokens</option>}
+        {contextOptions(selected.contextLength, contextSize).map((value) => (
+          <option key={value} value={String(value)}>
+            {value.toLocaleString()} tokens
+          </option>
+        ))}
       </select>
       {selected.layerCount ? (
         <GpuAllocation
@@ -104,7 +106,7 @@ export function ModelInspector({
       )}
       <button
         className="button primary full"
-        disabled={busy || selected.fit === "does-not-fit" || splitInvalid}
+        disabled={busy || selected.fit === "does-not-fit" || splitInvalid || selected.remoteOnly}
         onClick={launch}
         aria-label={`Launch ${selected.name}`}
       >
@@ -257,6 +259,14 @@ function VramEstimate({
       )}
     </div>
   );
+}
+
+function contextOptions(max: number, current: number) {
+  const presets = [4096, 8192, 16384, 32768, 65536, max, current].filter(
+    (value, index, all) =>
+      value > 0 && value <= Math.max(max, current) && all.indexOf(value) === index,
+  );
+  return presets.sort((left, right) => left - right);
 }
 
 function formatMib(value: number) {

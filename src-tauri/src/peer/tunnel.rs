@@ -26,6 +26,7 @@ impl RpcForwarder {
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
             .await
             .map_err(protocol::io_error)?;
+        let _ = listener.set_ttl(64);
         let local_address = listener.local_addr().map_err(protocol::io_error)?;
         let (stop, mut stopped) = oneshot::channel();
         let task = tokio::spawn(async move {
@@ -34,6 +35,7 @@ impl RpcForwarder {
                     _ = &mut stopped => break,
                     accepted = listener.accept() => {
                         let Ok((local, _)) = accepted else { break };
+                        let _ = local.set_nodelay(true);
                         let client = client.clone();
                         tokio::spawn(async move {
                             if let Ok((peer, noise)) = client.open_rpc_stream().await { let _ = client_bridge(local, peer, noise).await; }
@@ -64,6 +66,8 @@ async fn client_bridge(
     mut peer: TcpStream,
     mut noise: snow::TransportState,
 ) -> Result<(), ErrorPayload> {
+    let _ = local.set_nodelay(true);
+    let _ = peer.set_nodelay(true);
     let (mut local_read, mut local_write) = local.split();
     let (mut peer_read, mut peer_write) = peer.split();
     let mut from_local = [0_u8; TUNNEL_CHUNK];
@@ -77,6 +81,7 @@ async fn client_bridge(
                 let encrypted_count = noise.write_message(&from_local[..count], &mut encrypted).map_err(super::crypto::noise_error)?;
                 peer_write.write_u32(encrypted_count as u32).await.map_err(protocol::io_error)?;
                 peer_write.write_all(&encrypted[..encrypted_count]).await.map_err(protocol::io_error)?;
+                peer_write.flush().await.map_err(protocol::io_error)?;
             }
             frame_size = peer_read.read_u32() => {
                 let frame_size = frame_size.map_err(protocol::io_error)? as usize;
@@ -84,6 +89,7 @@ async fn client_bridge(
                 peer_read.read_exact(&mut from_peer[..frame_size]).await.map_err(protocol::io_error)?;
                 let plain_count = noise.read_message(&from_peer[..frame_size], &mut from_local).map_err(super::crypto::noise_error)?;
                 local_write.write_all(&from_local[..plain_count]).await.map_err(protocol::io_error)?;
+                local_write.flush().await.map_err(protocol::io_error)?;
             }
         }
     }
@@ -95,6 +101,8 @@ pub(crate) async fn serve_rpc(
     mut noise: snow::TransportState,
     mut rpc: TcpStream,
 ) -> Result<(), ErrorPayload> {
+    let _ = peer.set_nodelay(true);
+    let _ = rpc.set_nodelay(true);
     let (mut peer_read, mut peer_write) = peer.split();
     let (mut rpc_read, mut rpc_write) = rpc.split();
     let mut encrypted = vec![0_u8; TUNNEL_CHUNK + 16];
@@ -107,6 +115,7 @@ pub(crate) async fn serve_rpc(
                 peer_read.read_exact(&mut encrypted[..frame_size]).await.map_err(protocol::io_error)?;
                 let count = noise.read_message(&encrypted[..frame_size], &mut plain).map_err(super::crypto::noise_error)?;
                 rpc_write.write_all(&plain[..count]).await.map_err(protocol::io_error)?;
+                rpc_write.flush().await.map_err(protocol::io_error)?;
             }
             count = rpc_read.read(&mut plain) => {
                 let count = count.map_err(protocol::io_error)?;
@@ -114,6 +123,7 @@ pub(crate) async fn serve_rpc(
                 let encrypted_count = noise.write_message(&plain[..count], &mut encrypted).map_err(super::crypto::noise_error)?;
                 peer_write.write_u32(encrypted_count as u32).await.map_err(protocol::io_error)?;
                 peer_write.write_all(&encrypted[..encrypted_count]).await.map_err(protocol::io_error)?;
+                peer_write.flush().await.map_err(protocol::io_error)?;
             }
         }
     }

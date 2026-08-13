@@ -11,7 +11,7 @@ import { NetworkPage } from "./pages/NetworkPage";
 import { NodesPage } from "./pages/NodesPage";
 import { OverviewPage } from "./pages/OverviewPage";
 import { SettingsPage } from "./pages/SettingsPage";
-import { appService } from "./services/appService";
+import { appService, demoService } from "./services/appService";
 import { describeAppError } from "./services/errors";
 import type { AppService, AppSnapshot, PageId, PageProps } from "./types";
 
@@ -107,14 +107,35 @@ export default function App({ service = appService }: { service?: AppService }) 
   }
 
   if (!snapshot.setupComplete) {
-    return <SetupWizard snapshot={snapshot} service={service} onComplete={setSnapshot} />;
+    return (
+      <>
+        {service === demoService && (
+          <div className="preview-banner" role="status">
+            Browser preview — simulated hardware. This is not a live two-computer cluster.
+          </div>
+        )}
+        <SetupWizard snapshot={snapshot} service={service} onComplete={setSnapshot} />
+      </>
+    );
   }
 
   const CurrentPage = pageComponents[page];
   const onlineNodes = snapshot.nodes.filter((node) => node.online).length;
 
+  const preview = service === demoService;
+
   return (
     <div className="app-shell">
+      {preview && (
+        <div className="preview-banner" role="status">
+          Browser preview — simulated hardware. This is not a live two-computer cluster.
+        </div>
+      )}
+      {loadingError && snapshot && (
+        <div className="preview-banner" role="alert">
+          Latest refresh failed: {loadingError}
+        </div>
+      )}
       <button
         className="mobile-menu"
         aria-label="Open navigation"

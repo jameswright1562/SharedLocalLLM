@@ -5,7 +5,7 @@ import { describeAppError } from "../services/errors";
 import { fileToDataUrl } from "../services/media";
 import type { ChatMessage, ChatSettings, PageProps } from "../types";
 
-export function ChatPage({ snapshot, service, navigate }: PageProps) {
+export function ChatPage({ snapshot, service, navigate, refreshSnapshot }: PageProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [draft, setDraft] = useState("");
   const [images, setImages] = useState<File[]>([]);
@@ -18,9 +18,19 @@ export function ChatPage({ snapshot, service, navigate }: PageProps) {
   });
   const bottomRef = useRef<HTMLDivElement>(null);
   const generationRef = useRef(0);
+  const localRunning = snapshot.cluster.status === "running";
+  const peerRunning = snapshot.nodes.some(
+    (node, index) => index > 0 && node.clusterStatus === "running",
+  );
+  const activeModel =
+    snapshot.models.find((model) => model.id === snapshot.cluster.modelId) ??
+    snapshot.models.find(
+      (model) => model.id === snapshot.nodes.find((node) => node.clusterModelId)?.clusterModelId,
+    );
+  const visionEnabled = activeModel?.capability === "vision";
   const runtimeMissing = snapshot.runtime.status !== "ready";
   const noModels = snapshot.models.length === 0;
-  const noActiveModel = snapshot.cluster.status !== "running";
+  const noActiveModel = !localRunning && !peerRunning;
   const disabledReason = runtimeMissing
     ? "The inference runtime is not installed. Complete runtime setup before starting chat."
     : noModels
@@ -33,7 +43,7 @@ export function ChatPage({ snapshot, service, navigate }: PageProps) {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, generating]);
 
-  async function submit(content = draft) {
+  async function submit(content = draft, existing?: ChatMessage[], retryImages: string[] = []) {
     if (!content.trim() || disabledReason || generating) return;
     const generationId = ++generationRef.current;
     const attachedImages = images;
@@ -41,25 +51,39 @@ export function ChatPage({ snapshot, service, navigate }: PageProps) {
       id: crypto.randomUUID(),
       role: "user",
       content: content.trim(),
-      imageNames: images.map((image) => image.name),
+      imageNames: attachedImages.map((image) => image.name),
     };
-    const nextMessages = [...messages, userMessage];
-    setMessages(nextMessages);
-    setDraft("");
-    setImages([]);
+    const history = existing ?? [...messages.filter((message) => !message.error), userMessage];
+    if (!existing) {
+      setMessages(history);
+      setDraft("");
+      setImages([]);
+    }
     setGenerating(true);
     try {
-      const imageDataUrls = await Promise.all(attachedImages.map(fileToDataUrl));
-      const response = await service.sendChatMessage(nextMessages, settings, imageDataUrls);
+      const imageDataUrls =
+        retryImages.length > 0 ? retryImages : await Promise.all(attachedImages.map(fileToDataUrl));
+      if (!existing) history[history.length - 1] = { ...userMessage, imageData: imageDataUrls };
+      const wire = history.map((message) => ({
+        id: message.id,
+        role: message.role,
+        content: message.content,
+        imageNames: message.imageNames,
+      }));
+      const response = await service.sendChatMessage(
+        wire.filter((message) => message.role !== "system"),
+        settings,
+        visionEnabled ? imageDataUrls : [],
+      );
       if (generationRef.current !== generationId) return;
       setMessages([
-        ...nextMessages,
+        ...history,
         { id: crypto.randomUUID(), role: "assistant", content: response.content },
       ]);
     } catch (reason) {
       if (generationRef.current !== generationId) return;
       setMessages([
-        ...nextMessages,
+        ...history,
         {
           id: crypto.randomUUID(),
           role: "assistant",
@@ -70,6 +94,15 @@ export function ChatPage({ snapshot, service, navigate }: PageProps) {
     } finally {
       if (generationRef.current === generationId) setGenerating(false);
     }
+  }
+
+  async function retry() {
+    const lastUser = [...messages].reverse().find((message) => message.role === "user");
+    if (!lastUser) return;
+    const cutoff = messages.findIndex((message) => message.id === lastUser.id);
+    const history = messages.slice(0, cutoff + 1).filter((message) => !message.error);
+    setMessages(history);
+    await submit(lastUser.content, history, lastUser.imageData ?? []);
   }
 
   async function stop() {
@@ -89,7 +122,6 @@ export function ChatPage({ snapshot, service, navigate }: PageProps) {
       ]);
     }
   }
-  const lastUser = [...messages].reverse().find((message) => message.role === "user");
 
   return (
     <div className="page chat-page">
@@ -99,12 +131,18 @@ export function ChatPage({ snapshot, service, navigate }: PageProps) {
           <h1>Cluster chat</h1>
         </div>
         <div>
-          <span
-            className={`status-pill ${snapshot.cluster.status === "running" ? "online" : "offline"}`}
-          >
+          <span className={`status-pill ${!noActiveModel ? "online" : "offline"}`}>
             <i aria-hidden="true" />
-            {snapshot.cluster.status === "running" ? "Model ready" : "No model"}
+            {!noActiveModel ? "Model ready" : "No model"}
           </span>
+          {localRunning && (
+            <button
+              className="button stop-button compact-button"
+              onClick={() => void service.stopCluster().then(() => refreshSnapshot())}
+            >
+              Stop cluster
+            </button>
+          )}
           <button
             className="button secondary compact-button"
             onClick={() => setDrawerOpen(!drawerOpen)}
@@ -127,6 +165,11 @@ export function ChatPage({ snapshot, service, navigate }: PageProps) {
             </button>
           </div>
         </div>
+      )}
+      {peerRunning && !localRunning && (
+        <p className="inline-success">
+          Chat is proxied through the computer that launched the model.
+        </p>
       )}
       <div className="chat-workspace">
         <section className="message-stage" aria-label="Conversation">
@@ -151,11 +194,7 @@ export function ChatPage({ snapshot, service, navigate }: PageProps) {
               <header>
                 <span>{message.role === "user" ? "YOU" : "CLUSTER"}</span>
                 {message.error && (
-                  <button
-                    className="text-button"
-                    disabled={!lastUser}
-                    onClick={() => void submit(lastUser?.content)}
-                  >
+                  <button className="text-button" onClick={() => void retry()}>
                     Retry
                   </button>
                 )}
@@ -198,6 +237,7 @@ export function ChatPage({ snapshot, service, navigate }: PageProps) {
         setImages={setImages}
         disabledReason={disabledReason}
         generating={generating}
+        allowImages={visionEnabled}
         submit={() => void submit()}
         stop={() => void stop()}
       />

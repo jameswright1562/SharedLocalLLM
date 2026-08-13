@@ -1,12 +1,16 @@
-use std::process::{Child, Command, Stdio};
+use std::{
+    fs::{self, File},
+    process::{Child, Command, Stdio},
+};
 
-use super::runtime_root;
+use super::{runtime_root, ProcessJob};
 use crate::types::{ErrorPayload, ModelLoadConfig, ModelRecord};
 
 #[derive(Default)]
 pub struct ProcessManager {
     pub server: Option<Child>,
     pub rpc: Option<Child>,
+    job: Option<ProcessJob>,
 }
 
 impl ProcessManager {
@@ -21,14 +25,12 @@ impl ProcessManager {
     ) -> Result<(), ErrorPayload> {
         self.stop();
         let root = runtime_root().join("current");
-        for name in ["llama-server.exe"] {
-            if !root.join(name).is_file() {
-                return Err(ErrorPayload::new(
-                    "runtime_missing",
-                    format!("{name} is not installed."),
-                    Some("Install the pinned llama.cpp runtime from Setup.".into()),
-                ));
-            }
+        if !root.join("llama-server.exe").is_file() {
+            return Err(ErrorPayload::new(
+                "runtime_missing",
+                "llama-server.exe is not installed.",
+                Some("Install the pinned llama.cpp runtime from Setup.".into()),
+            ));
         }
         let mut command = Command::new(root.join("llama-server.exe"));
         let rpc_endpoint = if use_rpc {
@@ -51,34 +53,48 @@ impl ProcessManager {
         command.args(server_arguments(ServerArguments {
             model_path: &model.shard_paths[0],
             context: load_config.context_size.max(4096),
-            api_key,
             api_port,
             gpu_layer_count,
             tensor_split: &layer_counts,
             rpc_endpoint,
             projector: model.projector.as_deref(),
         }));
-        self.server = Some(
-            command
-                .stdin(Stdio::null())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .spawn()
-                .map_err(process_error)?,
-        );
+        command.env("LLAMA_ARG_API_KEY", api_key);
+        command.env("LLAMA_API_KEY", api_key);
+        let log_path = dirs::data_local_dir()
+            .unwrap_or_else(std::env::temp_dir)
+            .join("SharedLocalLLM")
+            .join("logs")
+            .join("llama-server.stderr.log");
+        if let Some(parent) = log_path.parent() {
+            let _ = fs::create_dir_all(parent);
+        }
+        let stderr = File::create(&log_path).map_err(process_error)?;
+        let job = ProcessJob::new();
+        let child = command
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::from(stderr))
+            .spawn()
+            .map_err(process_error)?;
+        if let Some(job) = job.as_ref() {
+            job.assign(&child)?;
+        }
+        self.job = job;
+        self.server = Some(child);
         Ok(())
     }
 
     pub fn stop(&mut self) {
         terminate(&mut self.server);
         terminate(&mut self.rpc);
+        self.job = None;
     }
 }
 
 struct ServerArguments<'a> {
     model_path: &'a str,
     context: u32,
-    api_key: &'a str,
     api_port: u16,
     gpu_layer_count: u32,
     tensor_split: &'a [u32],
@@ -110,8 +126,6 @@ fn server_arguments(config: ServerArguments<'_>) -> Vec<String> {
         },
         "--split-mode".into(),
         "layer".into(),
-        "--api-key".into(),
-        config.api_key.into(),
     ];
     if !config.tensor_split.is_empty() {
         arguments.extend([
@@ -163,7 +177,6 @@ mod tests {
         let arguments = server_arguments(ServerArguments {
             model_path: "model.gguf",
             context: 8_192,
-            api_key: "secret",
             api_port: 11_435,
             gpu_layer_count: 40,
             tensor_split: &[24, 16],
@@ -181,5 +194,6 @@ mod tests {
         assert!(arguments
             .windows(2)
             .any(|pair| pair == ["--rpc", "127.0.0.1:50052"]));
+        assert!(!arguments.iter().any(|argument| argument == "--api-key"));
     }
 }

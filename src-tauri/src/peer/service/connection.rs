@@ -1,7 +1,7 @@
 use std::{
     collections::HashMap,
     net::SocketAddr,
-    process::Command,
+    path::PathBuf,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -14,13 +14,13 @@ use tokio::{
 };
 
 use super::auth::{credential_for, ensure_trusted};
+use super::worker::{self, ManagedChild};
 use super::{PeerPairingEvent, PeerServerConfig};
 use crate::{
     peer::{
         channel::{receive_encrypted, send_encrypted},
         crypto,
         protocol::{self, ClientHello, Request, Response},
-        tunnel::serve_rpc,
     },
     types::ErrorPayload,
 };
@@ -28,15 +28,19 @@ use crate::{
 pub(super) struct ServerState {
     device_id: String,
     device_name: String,
-    capabilities: Value,
+    pub(super) capabilities: Mutex<Value>,
     pub(super) pairing_code: Mutex<Option<String>>,
     pub(super) pairing_expires_at: Instant,
     pairing_completed: watch::Sender<Option<PeerPairingEvent>>,
     pending_pairing: Mutex<Option<PeerPairingEvent>>,
     pub(super) trusted: Mutex<HashMap<String, String>>,
-    rpc_target: SocketAddr,
-    rpc_command: Option<Vec<String>>,
-    worker: Mutex<Option<ManagedChild>>,
+    pub(super) rpc_binary: Option<PathBuf>,
+    pub(super) rpc_override: Option<SocketAddr>,
+    pub(super) rpc_target: Mutex<Option<SocketAddr>>,
+    pub(super) worker: Mutex<Option<ManagedChild>>,
+    pub(super) catalogue: Mutex<Value>,
+    pub(super) api_key: Mutex<String>,
+    pub(super) api_port: Mutex<u16>,
 }
 
 impl ServerState {
@@ -47,7 +51,7 @@ impl ServerState {
         Self {
             device_id: config.device_id,
             device_name: config.device_name,
-            capabilities: config.capabilities,
+            capabilities: Mutex::new(config.capabilities),
             pairing_code: Mutex::new(config.pairing_code),
             pairing_expires_at: Instant::now() + Duration::from_secs(300),
             pairing_completed,
@@ -59,18 +63,31 @@ impl ServerState {
                     .map(|peer| (peer.device_id, peer.channel_key))
                     .collect(),
             ),
-            rpc_target: config.rpc_target,
-            rpc_command: config.rpc_command,
+            rpc_binary: config.rpc_binary,
+            rpc_override: config.rpc_override,
+            rpc_target: Mutex::new(config.rpc_override),
             worker: Mutex::new(None),
+            catalogue: Mutex::new(config.catalogue),
+            api_key: Mutex::new(config.api_key),
+            api_port: Mutex::new(config.api_port),
         }
     }
-}
 
-struct ManagedChild(std::process::Child);
-impl Drop for ManagedChild {
-    fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
+    pub(super) async fn set_capabilities(&self, value: Value) {
+        *self.capabilities.lock().await = value;
+    }
+
+    pub(super) async fn set_catalogue(&self, value: Value) {
+        *self.catalogue.lock().await = value;
+    }
+
+    pub(super) async fn set_api(&self, api_key: String, api_port: u16) {
+        *self.api_key.lock().await = api_key;
+        *self.api_port.lock().await = api_port;
+    }
+
+    pub(super) async fn stop_local_worker(&self) {
+        worker::stop_worker(self).await;
     }
 }
 
@@ -78,6 +95,7 @@ pub(super) async fn handle_connection(
     mut socket: TcpStream,
     state: Arc<ServerState>,
 ) -> Result<(), ErrorPayload> {
+    let _ = socket.set_nodelay(true);
     let hello: ClientHello =
         tokio::time::timeout(Duration::from_secs(5), protocol::read_plain(&mut socket))
             .await
@@ -126,11 +144,20 @@ pub(super) async fn handle_connection(
             send_encrypted(&mut socket, &mut noise, &Response::Heartbeat).await
         }
         Request::Capabilities => capabilities(&mut socket, &mut noise, &state, &hello).await,
-        Request::Benchmark { payload } => {
-            ensure_trusted(&state, &hello.device_id).await?;
-            send_encrypted(&mut socket, &mut noise, &Response::Benchmark { payload }).await
+        Request::Benchmark { size } => {
+            worker::handle_benchmark(&mut socket, &mut noise, &state, &hello.device_id, size).await
         }
-        Request::RpcTunnel => rpc_tunnel(socket, noise, state, &hello.device_id).await,
+        Request::RpcTunnel => worker::rpc_tunnel(socket, noise, state, &hello.device_id).await,
+        Request::StopWorker => {
+            worker::handle_stop_worker(&mut socket, &mut noise, &state, &hello.device_id).await
+        }
+        Request::Models => {
+            worker::handle_models(&mut socket, &mut noise, &state, &hello.device_id).await
+        }
+        request @ Request::ProxyChat { .. } => {
+            worker::handle_proxy_chat(&mut socket, &mut noise, &state, &hello.device_id, request)
+                .await
+        }
     }
 }
 
@@ -162,12 +189,6 @@ async fn pair(
         .take(64)
         .map(char::from)
         .collect();
-    state
-        .trusted
-        .lock()
-        .await
-        .insert(attempt.device_id.clone(), channel_key.clone());
-    *state.pairing_code.lock().await = None;
     send_encrypted(
         socket,
         noise,
@@ -178,6 +199,12 @@ async fn pair(
         },
     )
     .await?;
+    state
+        .trusted
+        .lock()
+        .await
+        .insert(attempt.device_id.clone(), channel_key.clone());
+    *state.pairing_code.lock().await = None;
     *state.pending_pairing.lock().await = Some(PeerPairingEvent {
         device_id: attempt.device_id,
         device_name: attempt.device_name,
@@ -199,7 +226,7 @@ async fn capabilities(
         socket,
         noise,
         &Response::Capabilities {
-            value: state.capabilities.clone(),
+            value: state.capabilities.lock().await.clone(),
         },
     )
     .await?;
@@ -211,56 +238,4 @@ async fn capabilities(
         let _ = state.pairing_completed.send(pending.take());
     }
     Ok(())
-}
-
-async fn rpc_tunnel(
-    socket: TcpStream,
-    mut noise: snow::TransportState,
-    state: Arc<ServerState>,
-    device_id: &str,
-) -> Result<(), ErrorPayload> {
-    ensure_trusted(&state, device_id).await?;
-    ensure_worker(&state).await?;
-    let rpc = connect_rpc(state.rpc_target).await?;
-    let mut socket = socket;
-    send_encrypted(&mut socket, &mut noise, &Response::RpcReady).await?;
-    serve_rpc(socket, noise, rpc).await
-}
-
-async fn ensure_worker(state: &ServerState) -> Result<(), ErrorPayload> {
-    let mut worker = state.worker.lock().await;
-    let running = match worker.as_mut() {
-        Some(child) => child.0.try_wait().map_err(protocol::io_error)?.is_none(),
-        None => false,
-    };
-    if running {
-        return Ok(());
-    }
-    *worker = None;
-    if let Some((program, args)) = state
-        .rpc_command
-        .as_ref()
-        .and_then(|command| command.split_first())
-    {
-        *worker = Some(ManagedChild(
-            Command::new(program)
-                .args(args)
-                .spawn()
-                .map_err(protocol::io_error)?,
-        ));
-    }
-    Ok(())
-}
-
-async fn connect_rpc(target: SocketAddr) -> Result<TcpStream, ErrorPayload> {
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
-    loop {
-        match TcpStream::connect(target).await {
-            Ok(stream) => return Ok(stream),
-            Err(_) if tokio::time::Instant::now() < deadline => {
-                tokio::time::sleep(Duration::from_millis(100)).await
-            }
-            Err(error) => return Err(protocol::io_error(error)),
-        }
-    }
 }

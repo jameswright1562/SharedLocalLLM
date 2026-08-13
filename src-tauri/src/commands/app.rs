@@ -11,7 +11,53 @@ use crate::{
 #[tauri::command]
 pub async fn get_app_snapshot(state: State<'_, AppState>) -> Result<AppSnapshot, ErrorPayload> {
     crate::commands::pairing::lifecycle::refresh_peer_status(&state).await;
+    merge_peer_catalogue(&state).await;
     state.snapshot()
+}
+
+async fn merge_peer_catalogue(state: &AppState) {
+    let Ok(client) = state.peer_client().await else {
+        return;
+    };
+    if client.heartbeat().await.is_err() {
+        return;
+    }
+    let Ok(value) = client.remote_models().await else {
+        return;
+    };
+    let Ok(mut remote) = serde_json::from_value::<Vec<crate::types::ModelRecord>>(value) else {
+        return;
+    };
+    for model in &mut remote {
+        model.remote_only = model.shard_paths.is_empty();
+        if model.locations.is_empty() {
+            continue;
+        }
+    }
+    if let Ok(mut inner) = state.lock() {
+        let local_ids = inner
+            .models
+            .iter()
+            .map(|model| model.id.clone())
+            .collect::<std::collections::HashSet<_>>();
+        for model in remote {
+            if !local_ids.contains(&model.id) {
+                inner.models.push(model);
+            }
+        }
+    }
+    if let Ok(models) = state.lock().map(|inner| inner.models.clone()) {
+        if let Some(server) = state.peer.lock().await.server.as_ref() {
+            if let Ok(value) = serde_json::to_value(
+                models
+                    .iter()
+                    .filter(|model| !model.remote_only)
+                    .collect::<Vec<_>>(),
+            ) {
+                server.set_catalogue(value).await;
+            }
+        }
+    }
 }
 
 #[tauri::command]
@@ -37,7 +83,7 @@ pub fn complete_setup(
 }
 
 #[tauri::command]
-pub fn update_settings(
+pub async fn update_settings(
     settings: AppSettings,
     state: State<'_, AppState>,
 ) -> Result<AppSnapshot, ErrorPayload> {
@@ -49,7 +95,15 @@ pub fn update_settings(
             None,
         ));
     }
-    let current_port = state.lock()?.api_port;
+    crate::autostart::apply(settings.autostart)?;
+    let (current_port, cluster_running, api_key) = {
+        let inner = state.lock()?;
+        (
+            inner.api_port,
+            inner.cluster.status == "running",
+            inner.api_key.clone(),
+        )
+    };
     if settings.api_port != current_port
         && std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, settings.api_port)).is_err()
     {
@@ -59,11 +113,19 @@ pub fn update_settings(
             Some("Choose another local API port.".into()),
         ));
     }
+    if cluster_running && settings.api_port != current_port {
+        crate::commands::cluster::halt_runtime(&state).await;
+        let mut inner = state.lock()?;
+        inner.cluster = crate::commands::cluster::idle_cluster(!inner.peers.is_empty());
+    }
     {
         let mut inner = state.lock()?;
         inner.local.name = name.into();
         inner.api_port = settings.api_port;
         inner.autostart = settings.autostart;
+    }
+    if let Some(server) = state.peer.lock().await.server.as_ref() {
+        server.set_api(api_key, settings.api_port).await;
     }
     state.persist()?;
     state.snapshot()

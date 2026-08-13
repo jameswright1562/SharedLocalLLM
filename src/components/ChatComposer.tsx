@@ -7,6 +7,7 @@ interface ChatComposerProps {
   setImages: (images: File[]) => void;
   disabledReason: string;
   generating: boolean;
+  allowImages: boolean;
   submit: () => void;
   stop: () => void;
 }
@@ -18,6 +19,7 @@ export function ChatComposer({
   setImages,
   disabledReason,
   generating,
+  allowImages,
   submit,
   stop,
 }: ChatComposerProps) {
@@ -35,6 +37,11 @@ export function ChatComposer({
 
   return (
     <form className="chat-composer" data-testid="chat-composer" onSubmit={onSubmit}>
+      {allowImages && (
+        <p className="estimate-note">
+          Image attach is experimental and only sent to vision models.
+        </p>
+      )}
       {images.length > 0 && (
         <div className="composer-attachments">
           {images.map((image) => (
@@ -61,19 +68,30 @@ export function ChatComposer({
         rows={2}
       />
       <div className="composer-actions">
-        <label
-          className={`icon-button attach-button ${disabledReason ? "disabled" : ""}`}
-          aria-label="Attach image"
-        >
-          ▧
-          <input
-            type="file"
-            accept="image/png,image/jpeg,image/webp"
-            multiple
+        {allowImages && (
+          <button
+            type="button"
+            className={`icon-button attach-button ${disabledReason ? "disabled" : ""}`}
+            aria-label="Choose image files"
             disabled={!!disabledReason}
-            onChange={(event) => setImages(Array.from(event.target.files ?? []))}
-          />
-        </label>
+            onClick={() => document.getElementById("chat-image-input")?.click()}
+          >
+            ▧
+          </button>
+        )}
+        <input
+          id="chat-image-input"
+          className="visually-hidden"
+          aria-label="Attach image"
+          type="file"
+          accept="image/png,image/jpeg,image/webp"
+          multiple
+          disabled={!!disabledReason || !allowImages}
+          onChange={(event) => {
+            setImages([...images, ...Array.from(event.target.files ?? [])]);
+            event.target.value = "";
+          }}
+        />
         <span>
           {images.length
             ? `${images.length} image${images.length === 1 ? "" : "s"}`

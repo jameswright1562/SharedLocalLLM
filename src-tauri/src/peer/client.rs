@@ -123,24 +123,34 @@ impl PeerClient {
         bytes: usize,
         samples: usize,
     ) -> Result<BenchmarkResult, ErrorPayload> {
-        let bytes = bytes.clamp(1024, 12 * 1024);
-        let samples = samples.clamp(1, 32);
+        let bytes = bytes.clamp(4 * 1024, 512 * 1024);
+        let samples = samples.clamp(1, 16);
         let payload = vec![0xa5; bytes];
         let mut latencies = Vec::with_capacity(samples);
         let started = Instant::now();
         for _ in 0..samples {
             let request_started = Instant::now();
-            match self
-                .request(Request::Benchmark {
-                    payload: payload.clone(),
-                })
-                .await?
-            {
-                Response::Benchmark { payload: echoed } if echoed.len() == bytes => {
-                    latencies.push(request_started.elapsed().as_secs_f64() * 1000.0)
-                }
+            let (mut socket, mut noise) = self.connect_noise(false).await?;
+            send_encrypted(
+                &mut socket,
+                &mut noise,
+                &Request::Benchmark { size: bytes as u32 },
+            )
+            .await?;
+            match receive_encrypted(&mut socket, &mut noise).await? {
+                Response::Benchmark { size } if size as usize == bytes => {}
                 response => return Err(response_error(response)),
             }
+            super::channel::send_encrypted_bytes(&mut socket, &mut noise, &payload).await?;
+            let echoed = super::channel::receive_encrypted_bytes(&mut socket, &mut noise).await?;
+            if echoed.len() != bytes {
+                return Err(ErrorPayload::new(
+                    "benchmark_size",
+                    "The peer benchmark payload did not match.",
+                    None,
+                ));
+            }
+            latencies.push(request_started.elapsed().as_secs_f64() * 1000.0);
         }
         let seconds = started.elapsed().as_secs_f64().max(0.000_001);
         latencies.sort_by(f64::total_cmp);
@@ -154,6 +164,36 @@ impl PeerClient {
             latency_p95_ms: p95,
             samples,
         })
+    }
+    pub async fn stop_worker(&self) -> Result<(), ErrorPayload> {
+        match self.request(Request::StopWorker).await? {
+            Response::WorkerStopped => Ok(()),
+            response => Err(response_error(response)),
+        }
+    }
+    pub async fn remote_models(&self) -> Result<Value, ErrorPayload> {
+        match self.request(Request::Models).await? {
+            Response::Models { models } => Ok(models),
+            response => Err(response_error(response)),
+        }
+    }
+    pub async fn proxy_chat(
+        &self,
+        messages: Value,
+        settings: Value,
+        images: Vec<String>,
+    ) -> Result<String, ErrorPayload> {
+        match self
+            .request(Request::ProxyChat {
+                messages,
+                settings,
+                images,
+            })
+            .await?
+        {
+            Response::ProxyChat { content } => Ok(content),
+            response => Err(response_error(response)),
+        }
     }
     pub async fn start_rpc_forwarder(self: &Arc<Self>) -> Result<RpcForwarder, ErrorPayload> {
         RpcForwarder::start(self.clone()).await
@@ -189,6 +229,7 @@ impl PeerClient {
                     )
                 })?
                 .map_err(protocol::io_error)?;
+        let _ = socket.set_nodelay(true);
         protocol::write_plain(
             &mut socket,
             &ClientHello {

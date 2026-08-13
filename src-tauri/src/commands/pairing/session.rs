@@ -1,4 +1,4 @@
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 
 use crate::{peer::PeerPairingEvent, state::AppState};
 
@@ -14,6 +14,8 @@ pub(super) async fn cleanup_pairing_session(
     if let Some(event) = completed {
         if let Err(error) = lifecycle::persist_incoming_pair(&state, event) {
             state.log("ERROR", "pairing_persist_failed", &error.to_string());
+        } else {
+            let _ = app.emit("pairing-complete", true);
         }
     }
     let cleanup = {

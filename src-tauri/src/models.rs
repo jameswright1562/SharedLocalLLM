@@ -19,7 +19,10 @@ pub use lm_studio::{
     lms_catalog_roots,
 };
 
-pub fn discover_gguf_models(roots: &[PathBuf]) -> Result<Vec<ModelRecord>, ErrorPayload> {
+pub fn discover_gguf_models(
+    roots: &[PathBuf],
+    local_id: &str,
+) -> Result<Vec<ModelRecord>, ErrorPayload> {
     let split = Regex::new(r"(?i)^(.*)-(\d{5})-of-(\d{5})\.gguf$").expect("valid split regex");
     let quant = Regex::new(r"(?i)(Q\d(?:_[A-Z0-9]+)+|F16|F32|BF16)").expect("valid quant regex");
     let mut files = HashSet::new();
@@ -153,7 +156,7 @@ pub fn discover_gguf_models(roots: &[PathBuf]) -> Result<Vec<ModelRecord>, Error
             .map(|path| path.to_string_lossy().into_owned())
             .collect();
         let location = ModelLocation {
-            node_id: "local-node".into(),
+            node_id: local_id.into(),
             path: shard_paths[0].clone(),
             source: source.into(),
         };
@@ -183,6 +186,7 @@ pub fn discover_gguf_models(roots: &[PathBuf]) -> Result<Vec<ModelRecord>, Error
             shard_paths,
             projector: projector.map(|path| path.to_string_lossy().into_owned()),
             vision_capable,
+            remote_only: false,
         });
     }
     Ok(records)

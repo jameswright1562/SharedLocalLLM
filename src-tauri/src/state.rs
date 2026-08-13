@@ -33,6 +33,7 @@ pub struct AppState {
     pub peer: tokio::sync::Mutex<PeerRuntime>,
     pub chat_cancel: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
     pub benchmark_cancel: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
+    pub cluster_lock: tokio::sync::Mutex<()>,
 }
 
 #[derive(Default)]
@@ -70,6 +71,10 @@ impl AppState {
         let install_id = persistence::resolve_install_id(previous_install_id.as_deref());
         persisted.install_id = Some(install_id.clone());
         let identity_log = save_settings(&persisted).err();
+        let autostart_error = persisted
+            .autostart
+            .then(|| crate::autostart::apply(true).err())
+            .flatten();
         let mut local = hardware::probe_local();
         local.id = install_id;
         if let Some(device_name) = &persisted.device_name {
@@ -110,6 +115,9 @@ impl AppState {
                 "WARN Legacy shared node identity replaced; reset and re-pair the computers".into(),
             );
         }
+        if let Some(error) = autostart_error {
+            logs.push(format!("WARN Autostart could not be applied: {error}"));
+        }
         if let Some(error) = identity_log {
             logs.push(format!(
                 "ERROR Stable install identity could not be saved: {error}"
@@ -138,6 +146,7 @@ impl AppState {
             peer: tokio::sync::Mutex::new(PeerRuntime::default()),
             chat_cancel: Mutex::new(None),
             benchmark_cancel: Mutex::new(None),
+            cluster_lock: tokio::sync::Mutex::new(()),
         };
         let _ = state.refresh_models_shared();
         state
@@ -167,7 +176,7 @@ impl AppState {
         };
         roots.extend(lms_catalog_roots());
         let roots = expand_lm_studio_roots(&roots);
-        let mut models = discover_gguf_models(&roots)?;
+        let mut models = discover_gguf_models(&roots, &local.id)?;
         let peers = self.lock()?.peers.clone();
         placement::apply_fit(&mut models, &local, &peers);
         self.lock()?.models = models.clone();

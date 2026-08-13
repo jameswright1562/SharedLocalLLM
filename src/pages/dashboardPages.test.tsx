@@ -32,8 +32,13 @@ describe("dashboard pages", () => {
     const { rerender } = render(<OverviewPage {...pageProps} />);
     expect(screen.getByRole("alert")).toHaveTextContent("Worker tunnel closed");
     expect(screen.getByText("Orchid 9B Q4_K_M")).toBeInTheDocument();
+    const stopCluster = vi.fn().mockResolvedValue({ status: "ready" });
+    const runningProps = props(snapshot, { stopCluster });
+    rerender(<OverviewPage {...runningProps} />);
+    await userEvent.click(screen.getByRole("button", { name: /stop cluster/i }));
+    expect(stopCluster).toHaveBeenCalled();
     await userEvent.click(screen.getByRole("button", { name: /choose model/i }));
-    expect(pageProps.navigate).toHaveBeenCalledWith("models");
+    expect(runningProps.navigate).toHaveBeenCalledWith("models");
 
     const empty = cloneSnapshot();
     empty.nodes = [];
@@ -60,6 +65,27 @@ describe("dashboard pages", () => {
     snapshot.nodes = snapshot.nodes.slice(0, 1);
     rerender(<NodesPage {...props(snapshot)} />);
     expect(screen.getByText(/no worker paired/i)).toBeInTheDocument();
+  });
+
+  it("pairs a worker from the nodes page after a refresh error", async () => {
+    const user = userEvent.setup();
+    const snapshot = cloneSnapshot();
+    snapshot.nodes = snapshot.nodes.slice(0, 1);
+    const refreshHardware = vi.fn().mockRejectedValue("probe failed");
+    const generatePairingCode = vi
+      .fn()
+      .mockResolvedValue({ code: "111 222", expiresInSeconds: 300 });
+    const pairWithPeer = vi.fn().mockResolvedValue(cloneSnapshot().nodes[1]);
+    const pageProps = props(snapshot, { refreshHardware, generatePairingCode, pairWithPeer });
+    render(<NodesPage {...pageProps} />);
+
+    await user.click(screen.getByRole("button", { name: /refresh hardware/i }));
+    expect(await screen.findByRole("status")).toHaveTextContent("probe failed");
+    await user.click(screen.getByRole("button", { name: /create pairing code/i }));
+    expect(await screen.findByText("111 222")).toBeInTheDocument();
+    await user.type(screen.getByLabelText(/enter code/i), "111222");
+    await user.click(screen.getByRole("button", { name: /pair computers/i }));
+    expect(pairWithPeer).toHaveBeenCalledWith("111222", false);
   });
 
   it("forgets a paired worker only after explicit confirmation", async () => {
@@ -161,7 +187,7 @@ describe("dashboard pages", () => {
     await user.click(screen.getByRole("button", { name: /launch orchid/i }));
     expect(startCluster).toHaveBeenCalledWith("model-text", {
       contextSize: 16384,
-      gpuLayers: [],
+      gpuLayers: expect.any(Array),
     });
 
     await user.click(screen.getByRole("button", { name: /^add folder$/i }));

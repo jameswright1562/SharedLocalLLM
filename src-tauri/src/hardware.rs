@@ -1,4 +1,8 @@
-use std::process::Command;
+use std::{
+    io::Read,
+    process::{Command, Stdio},
+    time::{Duration, Instant},
+};
 
 use serde::Deserialize;
 use sysinfo::System;
@@ -9,7 +13,7 @@ use crate::types::{GpuInfo, NetworkAdapterInfo, NodeCapabilities};
 #[serde(rename_all = "PascalCase")]
 struct AdapterProbe {
     name: Option<String>,
-    link_speed: Option<u64>,
+    transmit_link_speed: Option<u64>,
     interface_description: Option<String>,
 }
 
@@ -44,46 +48,53 @@ pub fn probe_local() -> NodeCapabilities {
             kind: "other".into(),
             link_speed_mbps: None,
         }),
+        cluster_status: None,
+        cluster_model_id: None,
     }
 }
 
 fn probe_nvidia() -> Option<GpuInfo> {
-    let output = Command::new("nvidia-smi")
-        .args([
+    let stdout = output_with_timeout(
+        "nvidia-smi",
+        &[
             "--query-gpu=name,memory.total,memory.free,driver_version",
             "--format=csv,noheader,nounits",
-        ])
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
+        ],
+        Duration::from_secs(4),
+    )?;
+    let mut names = Vec::new();
+    let mut total = 0.0;
+    let mut available = 0.0;
+    let mut driver = None;
+    for line in stdout.lines() {
+        let parts: Vec<_> = line.split(',').map(str::trim).collect();
+        if parts.len() < 4 {
+            continue;
+        }
+        names.push(parts[0].to_owned());
+        total += parts[1].parse::<f64>().ok()? / 1024.0;
+        available += parts[2].parse::<f64>().ok()? / 1024.0;
+        driver = Some(parts[3].to_owned());
     }
-    let line = String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .next()?
-        .to_owned();
-    let parts: Vec<_> = line.split(',').map(str::trim).collect();
-    if parts.len() < 4 {
+    if names.is_empty() {
         return None;
     }
     Some(GpuInfo {
-        name: parts[0].into(),
-        vram_total_gb: parts[1].parse::<f64>().ok()? / 1024.0,
-        vram_available_gb: parts[2].parse::<f64>().ok()? / 1024.0,
-        driver_version: Some(parts[3].into()),
+        name: names.join(" + "),
+        vram_total_gb: total,
+        vram_available_gb: available,
+        driver_version: driver,
     })
 }
 
 fn probe_adapter() -> Option<NetworkAdapterInfo> {
-    let script = "Get-NetAdapter | Where-Object Status -eq 'Up' | Sort-Object LinkSpeed -Descending | Select-Object -First 1 Name,LinkSpeed,InterfaceDescription | ConvertTo-Json -Compress";
-    let output = Command::new("powershell.exe")
-        .args(["-NoProfile", "-NonInteractive", "-Command", script])
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let probe: AdapterProbe = serde_json::from_slice(&output.stdout).ok()?;
+    let script = "Get-NetAdapter | Where-Object Status -eq 'Up' | Sort-Object TransmitLinkSpeed -Descending | Select-Object -First 1 Name,TransmitLinkSpeed,InterfaceDescription | ConvertTo-Json -Compress";
+    let stdout = output_with_timeout(
+        "powershell.exe",
+        &["-NoProfile", "-NonInteractive", "-Command", script],
+        Duration::from_secs(5),
+    )?;
+    let probe: AdapterProbe = serde_json::from_str(&stdout).ok()?;
     let description = probe.interface_description.unwrap_or_default();
     let lowered = format!(
         "{} {description}",
@@ -100,6 +111,40 @@ fn probe_adapter() -> Option<NetworkAdapterInfo> {
     Some(NetworkAdapterInfo {
         name: probe.name.unwrap_or(description),
         kind: kind.into(),
-        link_speed_mbps: probe.link_speed.map(|bits| bits as f64 / 1_000_000.0),
+        link_speed_mbps: probe
+            .transmit_link_speed
+            .map(|bits| bits as f64 / 1_000_000.0),
     })
+}
+
+pub(crate) fn output_with_timeout(
+    program: &str,
+    args: &[&str],
+    timeout: Duration,
+) -> Option<String> {
+    let mut child = Command::new(program)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+    let started = Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) if status.success() => {
+                let mut buf = String::new();
+                child.stdout.take()?.read_to_string(&mut buf).ok()?;
+                return Some(buf);
+            }
+            Ok(Some(_)) => return None,
+            Ok(None) if started.elapsed() > timeout => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+            Ok(None) => std::thread::sleep(Duration::from_millis(40)),
+            Err(_) => return None,
+        }
+    }
 }

@@ -29,6 +29,10 @@ pub struct NodeCapabilities {
     pub ram_available_gb: f64,
     pub gpu: GpuInfo,
     pub adapter: NetworkAdapterInfo,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cluster_status: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cluster_model_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -65,12 +69,14 @@ pub struct ModelRecord {
     pub shards: usize,
     pub locations: Vec<ModelLocation>,
     pub fit: String,
-    #[serde(skip_serializing)]
+    #[serde(default, skip_serializing)]
     pub shard_paths: Vec<String>,
-    #[serde(skip_serializing)]
+    #[serde(default, skip_serializing)]
     pub projector: Option<String>,
-    #[serde(skip_serializing)]
+    #[serde(default, skip_serializing)]
     pub vision_capable: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub remote_only: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -126,6 +132,8 @@ pub struct InferenceBenchmark {
     pub memory_peak_gb: f64,
     pub recommended: bool,
     pub ran_at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]

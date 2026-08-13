@@ -7,7 +7,7 @@ function maskApiKey(key: string) {
   return `${prefix}••••••••••`;
 }
 
-export function ApiPage({ service }: PageProps) {
+export function ApiPage({ snapshot, service, refreshSnapshot }: PageProps) {
   const [config, setConfig] = useState<ApiConfig | null>(null);
   const [revealed, setRevealed] = useState(false);
   const [copied, setCopied] = useState<"url" | "key" | "curl" | "">("");
@@ -43,11 +43,18 @@ export function ApiPage({ service }: PageProps) {
     }
   }
   async function regenerate() {
+    if (snapshot.cluster.status === "running") {
+      const confirmed = window.confirm(
+        "Regenerating the API key stops the running cluster. Continue?",
+      );
+      if (!confirmed) return;
+    }
     setBusy(true);
     setError("");
     try {
       setConfig(await service.regenerateApiKey());
       setRevealed(true);
+      await refreshSnapshot();
     } catch (reason) {
       setError(describeAppError(reason, "The API key could not be regenerated."));
     } finally {

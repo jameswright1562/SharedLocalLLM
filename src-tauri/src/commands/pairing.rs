@@ -18,8 +18,8 @@ use crate::{
 };
 
 use lifecycle::start_peer_server;
-pub(crate) use network::require_private_network;
 use network::{close_firewall_lease, open_temporary_public_firewall_port, require_pairing_network};
+pub(crate) use network::{require_private_network, require_private_network_for};
 use session::cleanup_pairing_session;
 
 pub(super) const PAIRING_PORT: u16 = 49_158;
@@ -128,7 +128,7 @@ async fn pair_with_peer_inner(
     } else {
         if let Ok(endpoint) = std::env::var("SHARED_LOCAL_LLM_PEER_ENDPOINT") {
             if let Some(endpoint) = parse_manual_endpoint(Some(&endpoint))? {
-                endpoints.push(endpoint);
+                endpoints.push(reject_local_endpoint(endpoint, &local_ip_addresses()?)?);
             }
         }
         endpoints.extend(

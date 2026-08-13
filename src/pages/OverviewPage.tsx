@@ -3,10 +3,12 @@ import { ComputePath } from "../components/ComputePath";
 import { Meter, StatusPill } from "../components/Telemetry";
 import { fitLabels, formatGb } from "./pageFormat";
 
-export function OverviewPage({ snapshot, navigate }: PageProps) {
-  const combinedVram = snapshot.nodes.reduce((sum, node) => sum + node.gpu.vramAvailableGb, 0);
-  const combinedRam = snapshot.nodes.reduce((sum, node) => sum + node.ramAvailableGb, 0);
+export function OverviewPage({ snapshot, service, refreshSnapshot, navigate }: PageProps) {
+  const online = snapshot.nodes.filter((node) => node.online);
+  const combinedVram = online.reduce((sum, node) => sum + node.gpu.vramAvailableGb, 0);
+  const combinedRam = online.reduce((sum, node) => sum + node.ramAvailableGb, 0);
   const clusterModel = snapshot.models.find((model) => model.id === snapshot.cluster.modelId);
+  const running = snapshot.cluster.status === "running" || snapshot.cluster.status === "loading";
 
   return (
     <div className="page">
@@ -16,9 +18,19 @@ export function OverviewPage({ snapshot, navigate }: PageProps) {
           <h1>Cluster overview</h1>
           <p>Live capacity and routing across this trusted pair.</p>
         </div>
-        <button className="button secondary" onClick={() => navigate("models")}>
-          Choose model
-        </button>
+        <div className="button-row flush">
+          {running && (
+            <button
+              className="button stop-button"
+              onClick={() => void service.stopCluster().then(() => refreshSnapshot())}
+            >
+              Stop cluster
+            </button>
+          )}
+          <button className="button secondary" onClick={() => navigate("models")}>
+            Choose model
+          </button>
+        </div>
       </header>
 
       {snapshot.cluster.error && (
@@ -38,13 +50,13 @@ export function OverviewPage({ snapshot, navigate }: PageProps) {
           <span>Usable GPU memory</span>
           <strong>{formatGb(combinedVram)}</strong>
           <small>
-            Across {snapshot.nodes.length} active {snapshot.nodes.length === 1 ? "node" : "nodes"}
+            Across {online.length} online {online.length === 1 ? "node" : "nodes"}
           </small>
         </div>
         <div>
           <span>Available system memory</span>
           <strong>{formatGb(combinedRam)}</strong>
-          <small>Safety reserve already excluded</small>
+          <small>Currently free on online computers</small>
         </div>
         <div>
           <span>Active model</span>
@@ -120,7 +132,7 @@ export function OverviewPage({ snapshot, navigate }: PageProps) {
             </span>
             <h3>Pair a second computer</h3>
             <p>Add another node to combine GPU memory or move work to the faster machine.</p>
-            <button className="button secondary" onClick={() => navigate("settings")}>
+            <button className="button secondary" onClick={() => navigate("nodes")}>
               Open pairing
             </button>
           </article>

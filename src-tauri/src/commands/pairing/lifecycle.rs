@@ -9,8 +9,8 @@ use tauri::{AppHandle, Manager};
 use crate::{
     pairing::{now, PeerRecord},
     peer::{
-        discover, DiscoveryAnnouncement, DiscoveryBroadcaster, PeerPairingEvent, PeerServer,
-        PeerServerConfig, TrustedPeer,
+        discover, DiscoveryAnnouncement, DiscoveryBroadcaster, PeerClient, PeerPairingEvent,
+        PeerServer, PeerServerConfig, TrustedPeer,
     },
     runtime, secrets,
     state::{peer_secret_path, AppState},
@@ -23,10 +23,21 @@ pub(super) async fn start_peer_server(
     state: &AppState,
     pairing_code: Option<String>,
 ) -> Result<(PeerServer, DiscoveryBroadcaster), ErrorPayload> {
-    let (local, peers) = {
+    let (local, peers, api_key, api_port, catalogue) = {
         let inner = state.lock()?;
-        (inner.local.clone(), inner.peers.clone())
+        let mut local = inner.local.clone();
+        local.cluster_status = Some(inner.cluster.status.clone());
+        local.cluster_model_id = inner.cluster.model_id.clone();
+        (
+            local,
+            inner.peers.clone(),
+            inner.api_key.clone(),
+            inner.api_port,
+            serde_json::to_value(&inner.models).unwrap_or_default(),
+        )
     };
+    let capabilities = serde_json::to_value(&local)
+        .map_err(|error| ErrorPayload::new("capabilities_encode", error.to_string(), None))?;
     let mut trusted_peers = Vec::new();
     for peer in peers {
         match secrets::load(&peer_secret_path(&peer.id))? {
@@ -52,29 +63,22 @@ pub(super) async fn start_peer_server(
     let rpc_path = runtime::runtime_root()
         .join("current")
         .join("ggml-rpc-server.exe");
-    let rpc_command = rpc_path.is_file().then(|| {
-        vec![
-            rpc_path.to_string_lossy().into_owned(),
-            "--host".into(),
-            "127.0.0.1".into(),
-            "--port".into(),
-            "50052".into(),
-        ]
-    });
     let server = PeerServer::start(PeerServerConfig {
         bind: SocketAddr::from((Ipv4Addr::UNSPECIFIED, PAIRING_PORT)),
         device_id: local.id.clone(),
         device_name: local.name.clone(),
-        capabilities: serde_json::to_value(&local)
-            .map_err(|error| ErrorPayload::new("capabilities_encode", error.to_string(), None))?,
+        capabilities,
         pairing_code,
         trusted_peers,
-        rpc_target: SocketAddr::from((Ipv4Addr::LOCALHOST, 50052)),
-        rpc_command,
+        rpc_binary: rpc_path.is_file().then_some(rpc_path),
+        rpc_override: None,
+        catalogue,
+        api_key,
+        api_port,
     })
     .await?;
     let broadcaster = DiscoveryBroadcaster::start(DiscoveryAnnouncement {
-        protocol_version: 2,
+        protocol_version: 3,
         device_id: local.id,
         device_name: local.name,
         peer_port: server.address().port(),
@@ -215,12 +219,17 @@ async fn connect_and_refresh(
         else {
             return Err(first_error);
         };
+        let discovered = Arc::new(PeerClient::trusted(
+            endpoint,
+            client.channel_key().to_owned(),
+            state.lock()?.local.id.clone(),
+        ));
+        discovered.heartbeat().await?;
         if let Some(saved) = state.lock()?.peers.first_mut() {
             saved.address = Some(endpoint.to_string());
         }
         state.persist()?;
-        client = state.peer_client().await?;
-        client.heartbeat().await?;
+        client = discovered;
     }
     let mut capabilities: NodeCapabilities = serde_json::from_value(client.capabilities().await?)
         .map_err(|error| {

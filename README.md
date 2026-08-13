@@ -95,12 +95,13 @@ The intended installed flow is the same on both computers:
    pairing or timeout. The app still will not launch a cluster until the profile is Private or
    domain-authenticated.
 5. Allow SharedLocalLLM through Windows Firewall for **Private networks only**.
-6. Open **Models**. Use the detected LM Studio catalogue or choose **Add folder** for any other GGUF
-   directory on either computer.
-7. Open **Network**, run the bidirectional test, and review the result. Then select a model and inspect
-   its fit/recommendation before launching it.
-8. Use **Chat** from either computer, or copy the localhost API details from **API**. Stop the cluster
-   from the app when finished so its managed processes are cleaned up.
+6. Open **Models**. This computer indexes its own GGUF files. A paired peer can report model names,
+   but launch still requires a local file. Use detected LM Studio folders or **Add folder**.
+7. Open **Network**, run the encrypted-channel test, and review the result. Then select a model and
+   inspect its fit/recommendation before launching it.
+8. Use **Chat** on the computer that launched the model, or from the worker after the peer reports a
+   running cluster. Copy localhost API details from **API**. Stop the cluster from the app when
+   finished so its managed processes are cleaned up.
 
 Version 0.1.2 replaces the old shared `local-node` placeholder with a unique per-install identity.
 After upgrading from 0.1.1, open **Nodes**, choose **Forget** for the old peer if it is still listed,

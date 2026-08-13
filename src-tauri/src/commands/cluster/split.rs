@@ -27,7 +27,11 @@ pub(super) fn cluster_nodes(
     peer: Option<&crate::pairing::PeerRecord>,
 ) -> Vec<NodeCapabilities> {
     let mut nodes = vec![local.clone()];
-    if let Some(peer) = peer {
+    if let Some(peer) = peer.filter(|peer| {
+        peer.capabilities
+            .as_ref()
+            .is_some_and(|capabilities| capabilities.online)
+    }) {
         nodes.push(
             peer.capabilities
                 .clone()

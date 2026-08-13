@@ -35,9 +35,9 @@ pub enum NetworkClass {
 }
 
 pub fn classify_network(metrics: NetworkMetrics) -> NetworkClass {
-    if metrics.throughput_mbps >= 800.0 && metrics.latency_p95_ms <= 3.0 {
+    if metrics.latency_p95_ms <= 3.0 {
         NetworkClass::Good
-    } else if metrics.throughput_mbps >= 200.0 && metrics.latency_p95_ms <= 10.0 {
+    } else if metrics.latency_p95_ms <= 10.0 {
         NetworkClass::Usable
     } else {
         NetworkClass::Poor

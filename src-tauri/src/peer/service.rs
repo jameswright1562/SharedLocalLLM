@@ -1,5 +1,6 @@
 mod auth;
 mod connection;
+mod worker;
 
 use std::{net::SocketAddr, sync::Arc};
 
@@ -29,8 +30,11 @@ pub struct PeerServerConfig {
     pub capabilities: Value,
     pub pairing_code: Option<String>,
     pub trusted_peers: Vec<TrustedPeer>,
-    pub rpc_target: SocketAddr,
-    pub rpc_command: Option<Vec<String>>,
+    pub rpc_binary: Option<std::path::PathBuf>,
+    pub rpc_override: Option<SocketAddr>,
+    pub catalogue: Value,
+    pub api_key: String,
+    pub api_port: u16,
 }
 
 #[derive(Clone, Debug)]
@@ -47,25 +51,20 @@ pub struct PeerServer {
     pairing_completed: watch::Receiver<Option<PeerPairingEvent>>,
     stop: Option<oneshot::Sender<()>>,
     task: JoinHandle<()>,
+    state: Arc<connection::ServerState>,
 }
 
 impl PeerServer {
     pub async fn start(config: PeerServerConfig) -> Result<Self, ErrorPayload> {
-        if !config.rpc_target.ip().is_loopback() {
-            return Err(ErrorPayload::new(
-                "rpc_target_rejected",
-                "The worker RPC target must be loopback.",
-                None,
-            ));
-        }
         let listener = TcpListener::bind(config.bind)
             .await
             .map_err(protocol::io_error)?;
         let address = listener.local_addr().map_err(protocol::io_error)?;
         let (stop, mut stopped) = oneshot::channel();
         let (pairing_completed_tx, pairing_completed) = watch::channel(None);
-        let config = Arc::new(ServerState::new(config, pairing_completed_tx));
+        let state = Arc::new(ServerState::new(config, pairing_completed_tx));
         let connections = Arc::new(tokio::sync::Semaphore::new(32));
+        let accept_state = state.clone();
         let task = tokio::spawn(async move {
             let mut tasks = tokio::task::JoinSet::new();
             loop {
@@ -73,9 +72,9 @@ impl PeerServer {
                     _ = &mut stopped => break,
                     accepted = listener.accept() => {
                         let Ok((socket, _)) = accepted else { break };
-                        let config = config.clone();
+                        let accept_state = accept_state.clone();
                         let Ok(permit) = connections.clone().try_acquire_owned() else { continue };
-                        tasks.spawn(async move { let _permit = permit; let _ = handle_connection(socket, config).await; });
+                        tasks.spawn(async move { let _permit = permit; let _ = handle_connection(socket, accept_state).await; });
                     }
                 }
             }
@@ -86,6 +85,7 @@ impl PeerServer {
             pairing_completed,
             stop: Some(stop),
             task,
+            state,
         })
     }
     pub fn address(&self) -> SocketAddr {
@@ -93,6 +93,18 @@ impl PeerServer {
     }
     pub fn pairing_completion(&self) -> watch::Receiver<Option<PeerPairingEvent>> {
         self.pairing_completed.clone()
+    }
+    pub async fn set_capabilities(&self, value: Value) {
+        self.state.set_capabilities(value).await;
+    }
+    pub async fn set_catalogue(&self, value: Value) {
+        self.state.set_catalogue(value).await;
+    }
+    pub async fn set_api(&self, api_key: String, api_port: u16) {
+        self.state.set_api(api_key, api_port).await;
+    }
+    pub async fn stop_local_worker(&self) {
+        self.state.stop_local_worker().await;
     }
     pub async fn shutdown(mut self) {
         if let Some(stop) = self.stop.take() {

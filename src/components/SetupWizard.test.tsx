@@ -18,7 +18,10 @@ describe("SetupWizard", () => {
     render(
       <SetupWizard
         snapshot={snapshot}
-        service={serviceWith(snapshot, { installRuntime })}
+        service={serviceWith(snapshot, {
+          installRuntime,
+          refreshHardware: vi.fn().mockResolvedValue(snapshot),
+        })}
         onComplete={vi.fn()}
       />,
     );

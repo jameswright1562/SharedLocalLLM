@@ -4,7 +4,7 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use crate::types::ErrorPayload;
 
-pub const PROTOCOL_VERSION: u16 = 2;
+pub const PROTOCOL_VERSION: u16 = 3;
 pub const MAX_FRAME: usize = 1024 * 1024;
 
 pub fn check_version(version: u16) -> Result<(), ErrorPayload> {
@@ -34,9 +34,16 @@ pub enum Request {
     },
     Capabilities,
     Benchmark {
-        payload: Vec<u8>,
+        size: u32,
     },
     RpcTunnel,
+    StopWorker,
+    Models,
+    ProxyChat {
+        messages: serde_json::Value,
+        settings: serde_json::Value,
+        images: Vec<String>,
+    },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -59,9 +66,16 @@ pub enum Response {
         value: Value,
     },
     Benchmark {
-        payload: Vec<u8>,
+        size: u32,
     },
     RpcReady,
+    WorkerStopped,
+    Models {
+        models: Value,
+    },
+    ProxyChat {
+        content: String,
+    },
     Error {
         code: String,
         message: String,

@@ -11,7 +11,7 @@ use tokio::{
     net::TcpListener,
 };
 
-async fn start_peer(code: &str, rpc_target: SocketAddr) -> PeerServer {
+async fn start_peer(code: &str, rpc_override: Option<SocketAddr>) -> PeerServer {
     PeerServer::start(PeerServerConfig {
         bind: SocketAddr::from((Ipv4Addr::LOCALHOST, 0)),
         device_id: "worker-id".into(),
@@ -19,8 +19,11 @@ async fn start_peer(code: &str, rpc_target: SocketAddr) -> PeerServer {
         capabilities: json!({"gpu":"test"}),
         pairing_code: Some(code.into()),
         trusted_peers: vec![],
-        rpc_target,
-        rpc_command: None,
+        rpc_binary: None,
+        rpc_override,
+        catalogue: json!([]),
+        api_key: "test-key".into(),
+        api_port: 11435,
     })
     .await
     .unwrap()
@@ -28,8 +31,7 @@ async fn start_peer(code: &str, rpc_target: SocketAddr) -> PeerServer {
 
 #[tokio::test]
 async fn rejects_wrong_pairing_code_and_accepts_correct_code() {
-    let unavailable_rpc = SocketAddr::from((Ipv4Addr::LOCALHOST, 9));
-    let peer = start_peer("482916", unavailable_rpc).await;
+    let peer = start_peer("482916", None).await;
     let mut pairing_completion = peer.pairing_completion();
 
     assert!(PeerClient::pair(
@@ -66,7 +68,7 @@ async fn rejects_wrong_pairing_code_and_accepts_correct_code() {
 
 #[tokio::test]
 async fn benchmarks_encrypted_bidirectional_messages() {
-    let peer = start_peer("123456", SocketAddr::from((Ipv4Addr::LOCALHOST, 9))).await;
+    let peer = start_peer("123456", None).await;
     let client = PeerClient::pair(
         peer.address(),
         "123456",
@@ -100,7 +102,7 @@ async fn rpc_tunnel_preserves_bytes_and_cleans_up_after_disconnect() {
             socket.write_all(&buffer[..count]).await.unwrap();
         }
     });
-    let peer = start_peer("654321", echo_address).await;
+    let peer = start_peer("654321", Some(echo_address)).await;
     let client = Arc::new(
         PeerClient::pair(
             peer.address(),
@@ -133,7 +135,7 @@ async fn rpc_tunnel_preserves_bytes_and_cleans_up_after_disconnect() {
 
 #[tokio::test]
 async fn trusted_peer_reconnects_after_the_worker_listener_restarts() {
-    let first = start_peer("741852", SocketAddr::from((Ipv4Addr::LOCALHOST, 9))).await;
+    let first = start_peer("741852", None).await;
     let paired = PeerClient::pair(
         first.address(),
         "741852",
@@ -157,8 +159,11 @@ async fn trusted_peer_reconnects_after_the_worker_listener_restarts() {
             device_name: "Client".into(),
             channel_key: channel_key.clone(),
         }],
-        rpc_target: SocketAddr::from((Ipv4Addr::LOCALHOST, 9)),
-        rpc_command: None,
+        rpc_binary: None,
+        rpc_override: None,
+        catalogue: json!([]),
+        api_key: "test-key".into(),
+        api_port: 11435,
     })
     .await
     .unwrap();

@@ -81,6 +81,7 @@ export function ModelsPage({ snapshot, service, refreshSnapshot }: PageProps) {
         setMessage("No folder selected.");
         return;
       }
+      setDiscoveredModels(null);
       await refreshSnapshot();
       setMessage("Model folder added.");
     } catch (reason) {
@@ -97,7 +98,7 @@ export function ModelsPage({ snapshot, service, refreshSnapshot }: PageProps) {
     try {
       await service.startCluster(selected.id, {
         contextSize,
-        gpuLayers: manualSplit ? gpuLayers : [],
+        gpuLayers: selected.layerCount ? gpuLayers : [],
       });
       setMessage(
         `${selected.name} is loading with ${manualSplit ? "the selected GPU layer split" : "automatic allocation"}.`,
@@ -127,7 +128,10 @@ export function ModelsPage({ snapshot, service, refreshSnapshot }: PageProps) {
         <div>
           <p className="section-kicker">Catalogue</p>
           <h1>Model library</h1>
-          <p>GGUF models indexed across both computers. Source files stay where they are.</p>
+          <p>
+            GGUF models on this computer, plus names reported by a paired peer. Launch requires a
+            local file. Source files stay where they are.
+          </p>
         </div>
         <div className="button-row flush">
           <button
@@ -137,6 +141,15 @@ export function ModelsPage({ snapshot, service, refreshSnapshot }: PageProps) {
           >
             {busy === "refresh" ? "Indexing…" : "Refresh"}
           </button>
+          {(snapshot.cluster.status === "running" || snapshot.cluster.status === "loading") && (
+            <button
+              className="button stop-button"
+              disabled={!!busy}
+              onClick={() => void service.stopCluster().then(() => refreshSnapshot())}
+            >
+              Stop cluster
+            </button>
+          )}
           <button className="button primary" disabled={!!busy} onClick={() => void addFolder()}>
             Add folder
           </button>

@@ -56,9 +56,10 @@ fn groups_split_shards_and_associates_projector() {
     touch(&root.path().join("vision/model-00002-of-00002.gguf"));
     touch(&root.path().join("vision/mmproj-model-f16.gguf"));
 
-    let records = discover_gguf_models(&[root.path().to_path_buf()]).unwrap();
+    let records = discover_gguf_models(&[root.path().to_path_buf()], "test-node").unwrap();
 
     assert_eq!(records.len(), 1);
+    assert_eq!(records[0].locations[0].node_id, "test-node");
     assert_eq!(records[0].shard_paths.len(), 2);
     assert!(records[0].projector.is_some());
     assert!(records[0].vision_capable);
@@ -69,8 +70,11 @@ fn deduplicates_nested_custom_roots() {
     let root = tempfile::tempdir().unwrap();
     touch(&root.path().join("models/tiny.gguf"));
 
-    let records =
-        discover_gguf_models(&[root.path().to_path_buf(), root.path().join("models")]).unwrap();
+    let records = discover_gguf_models(
+        &[root.path().to_path_buf(), root.path().join("models")],
+        "test-node",
+    )
+    .unwrap();
 
     assert_eq!(records.len(), 1);
 }
@@ -81,7 +85,7 @@ fn reads_layer_and_attention_metadata_for_split_planning() {
     let model = root.path().join("model.gguf");
     write_model_metadata(&model);
 
-    let records = discover_gguf_models(&[root.path().to_path_buf()]).unwrap();
+    let records = discover_gguf_models(&[root.path().to_path_buf()], "test-node").unwrap();
 
     assert_eq!(records[0].layer_count, Some(40));
     assert_eq!(records[0].context_length, 32_768);
@@ -144,7 +148,7 @@ fn recommends_single_distributed_spill_and_rejection_without_gpu_models() {
 }
 
 #[test]
-fn classifies_network_using_sustained_bandwidth_and_p95_latency() {
+fn classifies_network_using_p95_latency() {
     assert_eq!(
         classify_network(NetworkMetrics::new(900.0, 2.5, 0.4, 0.0)),
         NetworkClass::Good
@@ -155,6 +159,10 @@ fn classifies_network_using_sustained_bandwidth_and_p95_latency() {
     );
     assert_eq!(
         classify_network(NetworkMetrics::new(199.0, 2.0, 0.0, 0.0)),
+        NetworkClass::Good
+    );
+    assert_eq!(
+        classify_network(NetworkMetrics::new(900.0, 12.0, 0.0, 0.0)),
         NetworkClass::Poor
     );
 }

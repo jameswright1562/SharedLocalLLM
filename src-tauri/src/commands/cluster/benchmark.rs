@@ -3,12 +3,13 @@ use std::time::Instant;
 use tauri::State;
 
 use crate::{
+    commands::pairing::require_private_network,
     runtime,
     state::AppState,
     types::{ErrorPayload, InferenceBenchmark, ModelLoadConfig},
 };
 
-use super::{require_private_network, split};
+use super::split;
 
 #[tauri::command]
 pub async fn run_inference_benchmark(
@@ -140,6 +141,7 @@ pub async fn run_inference_benchmark(
         memory_peak_gb: 0.0,
         recommended: true,
         ran_at: format!("{}", crate::pairing::now()),
+        error: None,
     };
     state.lock()?.benchmarks.push(result.clone());
     state.persist()?;

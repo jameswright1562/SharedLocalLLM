@@ -76,8 +76,8 @@ specific products into application logic.
 - Run a distributed benchmark and record the displayed per-computer GPU layer counts. Confirm both
   GPUs allocate memory while `llama-bench` runs and the result is labelled `distributed`; a browser
   demo or command-construction test is not physical acceptance.
-- Exercise Ethernet, Wi-Fi, manual IP, Private/Public profile behavior, firewall repair, occupied API
-  port, runtime mismatch, failed runtime update, and rollback.
+- Exercise Ethernet, Wi-Fi, manual IP, Private/Public profile behavior, occupied API port, runtime
+  mismatch, and failed runtime update or repair.
 - Confirm model directories are unchanged after indexing, benchmarking, chat, and uninstall.
 
 Keep failures visible. A benchmark failure record must preserve the actionable error and command

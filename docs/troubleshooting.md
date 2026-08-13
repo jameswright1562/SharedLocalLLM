@@ -79,9 +79,9 @@ delete models or conversations.
 
 ## Firewall or connection failure
 
-Choose **Settings > Network > Repair firewall access** on both computers and accept the elevation
-prompt. The repair action creates a program rule for Private profiles only. Do not create a broad
-port rule and do not enable Public access.
+Open Windows **Settings > Network & internet** and set the trusted LAN to Private. Pairing on a
+Public profile requires the in-app override and a temporary firewall rule. Do not create a broad
+port rule and do not enable permanent Public access.
 
 Inspect the app's rules after repair:
 
@@ -173,7 +173,7 @@ your installations.
 
 ## Models are missing
 
-1. Open **Models > Sources** on the computer that actually stores the files and refresh it.
+1. Open **Settings > Model sources** on the computer that actually stores the files and refresh it.
 2. If LM Studio is installed, launch it once. CLI discovery follows LM Studio's configured catalogue;
    its folder does not have to be the default.
 3. Add any custom parent directory with **Add folder**. The source is local to that computer.
@@ -199,8 +199,8 @@ SharedLocalLLM never moves, renames, deletes, or downloads into a configured mod
 ## LM Studio is already using VRAM
 
 SharedLocalLLM reports material VRAM use rather than terminating another application. Check LM
-Studio's loaded models, save any work, and use the app's explicit **Unload from LM Studio** action or
-run the command yourself. This unloads models from memory; it does not delete them.
+Studio's loaded models, save any work, and unload them from LM Studio (`lms unload --all`) if you
+approve freeing that VRAM. This unloads models from memory; it does not delete them.
 
 **Computer A (Desktop)—inspect LM Studio first:**
 
@@ -234,8 +234,8 @@ Do not end the LM Studio process in Task Manager. Refresh hardware status before
 
 Open **Settings > Runtime** and read the exact stage: manifest, download, size, digest, extraction,
 inventory, or health check. Never bypass a digest mismatch. Retry only after checking the system
-clock, available disk space, and access to `github.com`. **Rollback** activates the previous verified
-runtime without deleting the failed diagnostic record.
+clock, available disk space, and access to `github.com`. Repair reinstalls the pinned runtime; a
+previous verified copy remains in the runtime `previous` folder when an install replaces `current`.
 
 If security software quarantined an executable, verify the installer and runtime release provenance
 before restoring it. Do not download replacement DLLs or executables from third-party DLL sites.
@@ -243,7 +243,8 @@ before restoring it. Do not download replacement DLLs or executables from third-
 ## API port 11435 is occupied
 
 SharedLocalLLM does not choose a new port silently. Find the listener, decide whether it is expected,
-then use **API > Change port**. Do not terminate an unknown process merely to reclaim the default.
+then use **Settings > General** to change the local API port. Do not terminate an unknown process
+merely to reclaim the default.
 
 **Computer A (Desktop)—inspect only:**
 
@@ -278,6 +279,7 @@ rather than omitting the result. Export diagnostics if that information is absen
 
 The current request cannot migrate. Wait for both apps to show **Ready**, then retry. A single-node
 retry appears only when the selected model fits one machine. If either app still reports a running
-cluster, use **Stop cluster**, wait for cleanup, and inspect Diagnostics before launching again.
+cluster, use **Stop cluster** on Overview, Models, or Chat, wait for cleanup, and inspect
+**Settings > Logs** before launching again.
 
 Do not manually start `llama-server.exe` or `ggml-rpc-server.exe` on LAN interfaces as a workaround.
