@@ -42,7 +42,7 @@ fn build(code: &str, initiator: bool) -> Result<HandshakeState, ErrorPayload> {
         .parse()
         .map_err(|error| ErrorPayload::new("noise_pattern", format!("{error}"), None))?;
     let key = psk(code)?;
-    let builder = Builder::new(params).psk(0, &key);
+    let builder = Builder::new(params).psk(0, &key).map_err(noise_error)?;
     let result = if initiator {
         builder.build_initiator()
     } else {
