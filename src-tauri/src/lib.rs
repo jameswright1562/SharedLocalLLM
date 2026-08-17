@@ -1,3 +1,4 @@
+pub mod inference;
 pub mod autostart;
 pub mod capacity;
 pub mod commands;
@@ -25,6 +26,8 @@ pub fn run() {
     tauri::Builder::default()
         .manage(AppState::new())
         .setup(|app| {
+            inference::rpc_worker::start_rpc_worker()
+                .map_err(|error| error.to_string())?;
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 commands::pairing::lifecycle::start_persistent_peer_service(handle).await;

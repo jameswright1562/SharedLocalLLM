@@ -85,13 +85,14 @@ pub async fn start_cluster(
             normalized_config,
         )
     };
-    if runtime::status().status != "ready" {
-        return Err(ErrorPayload::new(
-            "runtime_missing",
-            "The pinned llama.cpp runtime is not ready.",
-            Some("Install it from Settings or first-run setup.".into()),
-        ));
-    }
+    // Runtime check removed - using embedded llama.cpp via inference engine
+    // if runtime::status().status != "ready" {
+    //     return Err(ErrorPayload::new(
+    //         "runtime_missing",
+    //         "The pinned llama.cpp runtime is not ready.",
+    //         Some("Install it from Settings or first-run setup.".into()),
+    //     ));
+    // }
     let peer_layers = peer_record.as_ref().is_some_and(|peer| {
         normalized_config
             .gpu_layers
@@ -149,28 +150,35 @@ pub async fn start_cluster(
     } else {
         None
     };
-    state
-        .processes
-        .lock()
-        .map_err(|_| {
-            ErrorPayload::new(
-                "process_state",
-                "The runtime process manager is unavailable.",
-                None,
-            )
-        })?
-        .start(
-            &model,
-            &normalized_config,
-            &api_key,
-            use_peer,
-            rpc_endpoint,
-            api_port,
-        )?;
-    if let Err(error) = control::wait_for_health(api_port, &api_key, &state).await {
-        control::halt(&state).await;
-        state.log("ERROR", "cluster_health_failed", &error.to_string());
-        return Err(error);
+    // Use the embedded InferenceEngine
+    if let Some(inference) = state.inference.as_ref() {
+        let rpc_ep = rpc_endpoint.clone();
+        let gpu_layers = normalized_config.gpu_layers.clone();
+        
+        state.log(
+            "DEBUG",
+            "loading_model_embedded",
+            &format!("Loading {} with {} GPU layers", model.id, gpu_layers.iter().map(|a| a.layers).sum::<u32>()),
+        );
+        
+        inference.load(
+            model.shard_paths[0].clone(),
+            normalized_config.context_size,
+            gpu_layers,
+            rpc_ep,
+        ).await?;
+        
+        state.log(
+            "INFO",
+            "model_loaded_embedded",
+            "Model loaded successfully in the embedded inference engine",
+        );
+    } else {
+        return Err(ErrorPayload::new(
+            "inference_unavailable",
+            "The embedded inference engine failed to initialize.",
+            Some("Check the application logs for details.".into()),
+        ));
     }
     let session = ClusterSession {
         status: "running".into(),

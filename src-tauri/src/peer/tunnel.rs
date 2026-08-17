@@ -14,6 +14,7 @@ use super::{client::PeerClient, protocol};
 use crate::types::ErrorPayload;
 
 const TUNNEL_CHUNK: usize = 32 * 1024;
+const RPC_FORWARD_PORT: u16 = 50053;
 
 pub struct RpcForwarder {
     local_address: SocketAddr,
@@ -22,8 +23,9 @@ pub struct RpcForwarder {
 }
 
 impl RpcForwarder {
-    pub(crate) async fn start(client: Arc<PeerClient>) -> Result<Self, ErrorPayload> {
-        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+    pub(crate) async fn start(client: Arc<PeerClient>, use_new_library: bool) -> Result<Self, ErrorPayload> {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST,
+            if use_new_library { RPC_FORWARD_PORT } else {0}))
             .await
             .map_err(protocol::io_error)?;
         let _ = listener.set_ttl(64);

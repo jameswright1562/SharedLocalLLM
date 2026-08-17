@@ -80,6 +80,10 @@ pub(super) async fn handle_benchmark(
 }
 
 async fn ensure_worker(state: &ServerState) -> Result<SocketAddr, ErrorPayload> {
+    // Use the embedded llama.cpp RPC server instead of external ggml-rpc-server
+    // The RPC worker is already started in lib.rs via start_rpc_worker()
+    // and listens on a fixed loopback endpoint
+    
     let mut worker = state.worker.lock().await;
     let running = match worker.as_mut() {
         Some(child) => child
@@ -98,38 +102,28 @@ async fn ensure_worker(state: &ServerState) -> Result<SocketAddr, ErrorPayload> 
         *state.rpc_target.lock().await = Some(target);
         return Ok(target);
     }
-    *worker = None;
-    *state.rpc_target.lock().await = None;
-    let Some(binary) = state.rpc_binary.clone() else {
-        return Err(ErrorPayload::new(
-            "rpc_worker_missing",
-            "The pinned ggml-rpc-server is not installed.",
-            Some("Install the runtime on this computer.".into()),
-        ));
-    };
-    let listener = TcpListener::bind(SocketAddr::from((Ipv4Addr::LOCALHOST, 0)))
-        .await
-        .map_err(protocol::io_error)?;
-    let target = listener.local_addr().map_err(protocol::io_error)?;
-    drop(listener);
-    let job = ProcessJob::new();
-    let mut child = Command::new(&binary)
-        .args(["--host", "127.0.0.1", "--port", &target.port().to_string()])
-        .spawn()
-        .map_err(protocol::io_error)?;
-    if let Some(job) = job.as_ref() {
-        job.assign(&child)?;
+    
+    // The embedded RPC worker is started at application startup
+    // and listens on 127.0.0.1:50052
+    let target = SocketAddr::from(([127, 0, 0, 1], 50052));
+    
+    // Try to connect to the embedded RPC server
+    match TcpStream::connect(target).await {
+        Ok(_) => {
+            // RPC server is ready
+            eprintln!("[INFO] Connected to embedded RPC worker at {}", target);
+            *state.rpc_target.lock().await = Some(target);
+            Ok(target)
+        }
+        Err(e) => {
+            // RPC server not ready or not started
+            Err(ErrorPayload::new(
+                "rpc_worker_unavailable",
+                "The embedded RPC worker is not available.",
+                Some(format!("Failed to connect to {} : {}", target, e)),
+            ))
+        }
     }
-    if child.try_wait().map_err(protocol::io_error)?.is_some() {
-        return Err(ErrorPayload::new(
-            "rpc_worker_exited",
-            "ggml-rpc-server exited before the tunnel opened.",
-            Some("Inspect the runtime logs and retry.".into()),
-        ));
-    }
-    *worker = Some(ManagedChild { child, _job: job });
-    *state.rpc_target.lock().await = Some(target);
-    Ok(target)
 }
 
 async fn connect_rpc(target: SocketAddr) -> Result<TcpStream, ErrorPayload> {

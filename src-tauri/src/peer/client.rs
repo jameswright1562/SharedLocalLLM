@@ -174,7 +174,7 @@ impl PeerClient {
     }
 
     pub async fn start_rpc_forwarder(self: &Arc<Self>) -> Result<RpcForwarder, ErrorPayload> {
-        RpcForwarder::start(self.clone()).await
+        RpcForwarder::start(self.clone(), false).await
     }
 
     pub(crate) async fn open_rpc_stream(&self) -> Result<TcpStream, ErrorPayload> {

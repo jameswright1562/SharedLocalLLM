@@ -11,6 +11,7 @@ pub use persistence::{data_root, directory_for, logs_root, regenerate_key};
 use persistence::{new_api_key, read_settings, save_settings, secrets_path, PersistedSettings};
 
 use crate::{
+    inference::InferenceEngine,
     hardware,
     models::{
         default_lm_studio_roots, discover_gguf_models, expand_lm_studio_roots, lms_catalog_roots,
@@ -30,6 +31,7 @@ pub struct AppState {
     pub inner: Mutex<InnerState>,
     pub processes: Mutex<ProcessManager>,
     pub peer: tokio::sync::Mutex<PeerRuntime>,
+    pub inference: Option<std::sync::Arc<InferenceEngine>>,
     pub chat_cancel: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
     pub benchmark_cancel: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
     pub cluster_lock: tokio::sync::Mutex<()>,
@@ -123,7 +125,18 @@ impl AppState {
         if let Some(error) = secret_log {
             logs.push(error);
         }
+        let inference = match crate::inference::InferenceEngine::start() {
+            Ok(engine) => {
+                eprintln!("[INFO] InferenceEngine started successfully");
+                Some(std::sync::Arc::new(engine))
+            }
+            Err(error) => {
+                eprintln!("[WARN] Failed to start InferenceEngine: {}", error);
+                None
+            }
+        };
         let state = Self {
+            inference,
             inner: Mutex::new(InnerState {
                 local,
                 peers: persisted.peers,

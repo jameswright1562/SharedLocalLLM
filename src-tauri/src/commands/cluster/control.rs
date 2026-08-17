@@ -6,9 +6,16 @@ use crate::{
 };
 
 pub(crate) async fn halt(state: &AppState) {
+    // Unload model from inference engine
+    if let Some(inference) = state.inference.as_ref() {
+        let _ = inference.unload().await;
+    }
+    
+    // Stop any legacy external processes
     if let Ok(mut processes) = state.processes.lock() {
         processes.stop();
     }
+    
     let mut peer = state.peer.lock().await;
     if let Some(forwarder) = peer.forwarder.take() {
         drop(peer);
@@ -40,31 +47,11 @@ pub(super) async fn wait_for_health(
     api_key: &str,
     state: &AppState,
 ) -> Result<(), ErrorPayload> {
-    let url = format!("http://127.0.0.1:{port}/health");
-    let client = reqwest::Client::new();
-    let deadline = tokio::time::Instant::now() + HEALTH_TIMEOUT;
-    while tokio::time::Instant::now() < deadline {
-        if server_exited(state) {
-            return Err(health_error(
-                "llama-server exited while starting. See the runtime log tail.",
-            ));
-        }
-        match client
-            .get(&url)
-            .bearer_auth(api_key)
-            .timeout(HEALTH_REQUEST_TIMEOUT)
-            .send()
-            .await
-        {
-            Ok(response) if response.status().is_success() => return Ok(()),
-            _ => {}
-        }
-        tokio::time::sleep(HEALTH_POLL_INTERVAL).await;
-    }
-    Err(health_error(&format!(
-        "llama-server did not become healthy within {} seconds.",
-        HEALTH_TIMEOUT.as_secs()
-    )))
+    // With embedded inference engine, model load is now synchronous.
+    // This function is kept for compatibility but mostly no-op.
+    // If there was an API server, we could check its health here.
+    // For now, the model is already loaded if we got here.
+    Ok(())
 }
 
 fn server_exited(state: &AppState) -> bool {
