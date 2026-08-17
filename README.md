@@ -24,7 +24,7 @@ the network is fast enough, and keeping the RPC service off the open LAN are all
 
 SharedLocalLLM puts that setup behind one desktop interface:
 
-- Pair exactly two computers over Ethernet, Wi-Fi, or a direct cable.
+- Connect exactly two computers over Ethernet, Wi-Fi, or a direct cable.
 - Discover hardware and current free VRAM/RAM instead of relying on hardcoded specifications.
 - Find LM Studio models automatically or index user-selected read-only folders.
 - Recognize normal GGUF files, split GGUF models, and nearby `mmproj` vision projectors.
@@ -68,7 +68,7 @@ full security model.
 ## What you need
 
 - Two Windows 10/11 x64 computers on the same network. The Windows Public/Private network category
-  is informational only and does not affect pairing or launch.
+  is informational only and does not affect connection or launch.
 - An NVIDIA GPU and compatible driver on each computer for the pinned CUDA 12 runtime.
 - A GGUF model stored on at least one computer.
 - Enough combined VRAM and RAM for the chosen model and context.
@@ -84,35 +84,34 @@ The intended installed flow is the same on both computers:
 2. Install the pinned `llama.cpp` runtime from the first-run wizard. The runtime manager checks the
    official origin, archive size, SHA-256 digest, archive contents, and required executables.
 3. Give each computer a friendly name.
-4. Start pairing on one computer. If discovery does not find a direct Ethernet peer, run `ipconfig`
-   on the computer showing the code and enter its Ethernet IPv4 address in the other computer's
-   **Ethernet IPv4 address** field. SharedLocalLLM uses TCP port `49158` automatically; you may also
-   enter `address:port` when testing a non-default development build. Confirm the six-digit code. The
+4. Connect the two computers. On one computer, click **Connect** to auto-discover the other over the
+   LAN. For a direct Ethernet cable with no router, run `ipconfig` on the other computer and enter its
+   Ethernet IPv4 address in the **Ethernet IPv4 address** field. SharedLocalLLM uses TCP port `49158`
+   automatically; you may also enter `address:port` when testing a non-default development build. The
    app prompts once for administrator approval (UAC) to create a program-scoped Windows Firewall rule
    automatically, so no manual firewall or network-profile change is needed.
-5. Open **Models**. This computer indexes its own GGUF files. A paired peer can report model names,
+5. Open **Models**. This computer indexes its own GGUF files. A connected peer can report model names,
    but launch still requires a local file. Use detected LM Studio folders or **Add folder**.
-6. Open **Network**, run the encrypted-channel test, and review the result. Then select a model and
-   inspect its fit/recommendation before launching it.
+6. Open **Network**, run the network test, and review the result. Then select a model and inspect its
+   fit/recommendation before launching it.
 7. Use **Chat** on the computer that launched the model, or from the worker after the peer reports a
    running cluster. Copy localhost API details from **API**. Stop the cluster from the app when
    finished so its managed processes are cleaned up.
 
 Version 0.1.2 replaces the old shared `local-node` placeholder with a unique per-install identity.
 After upgrading from 0.1.1, open **Nodes**, choose **Forget** for the old peer if it is still listed,
-then pair once more. This removes only peer trust and its protected channel key; model directories
-and model files are unchanged. After re-pairing, each app keeps an authenticated listener available
-and refreshes peer health periodically so a trusted computer can reconnect after reopening.
+then connect once more. This removes only the saved peer record; model directories and model files
+are unchanged. Each app keeps a listener available and refreshes peer health periodically so a
+connected computer can reconnect after reopening.
 
 For a cable connected directly between two computers with no router or DHCP server, set a static
 address on each side so the two computers can see each other, for example `10.10.10.1/24` on one
 computer and `10.10.10.2/24` on the other, with no gateway and no DNS. Windows may instead assign
-automatic `169.254.x.x` link-local addresses; that is also valid. In both cases, enter the
-code-showing computer's Ethernet IPv4 address manually. Both computers still need to run this same
-app version.
+automatic `169.254.x.x` link-local addresses; that is also valid. In both cases, enter the other
+computer's Ethernet IPv4 address manually. Both computers still need to run this same app version.
 
 There is not yet a published, physically validated installer release. Contributors can build the
-current preview from source using the steps below. If pairing or launch fails, use the
+current preview from source using the steps below. If connection or launch fails, use the
 [two-computer troubleshooting guide](docs/troubleshooting.md); every manual command there is clearly
 labelled by computer.
 

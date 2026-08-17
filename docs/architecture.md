@@ -14,14 +14,14 @@ not encoded in separate builds.
 - **Coordinator runtime:** `llama-server.exe` owns the selected model and connects to the local and
   remote GPU devices using layer split.
 - **Worker runtime:** `ggml-rpc-server.exe` listens on an ephemeral loopback port. It is reachable
-  only through the Rust process's authenticated peer tunnel.
-- **Local API:** binds to `127.0.0.1`. Chat from the worker is proxied over the authenticated peer
-  channel to the computer that launched `llama-server`.
+  only through the Rust process's peer tunnel.
+- **Local API:** binds to `127.0.0.1`. Chat from the worker is proxied over the peer channel to the
+  computer that launched `llama-server`.
 
 ## Session lifecycle
 
 ```text
-unpaired -> paired -> measuring -> ready -> loading -> running -> draining -> stopped
+unconnected -> connected -> measuring -> ready -> loading -> running -> draining -> stopped
                                       |          |
                                       +-> failed <-+
 ```

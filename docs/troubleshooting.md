@@ -1,6 +1,6 @@
 # Two-computer troubleshooting
 
-Use the in-app diagnostics first: **Settings > Logs** shows redacted pairing, reconnect, cluster,
+Use the in-app diagnostics first: **Settings > Logs** shows redacted connection, reconnect, cluster,
 network, and benchmark events. **Open logs folder** opens the persistent
 `shared-local-llm.log`. Logs omit prompts, images, credentials, and personal path prefixes.
 
@@ -10,8 +10,8 @@ PowerShell normally unless a step explicitly says **Run as administrator**.
 
 ## The peer does not appear
 
-1. On both computers, confirm the same SharedLocalLLM version is open. The authenticated peer
-   listener and private-LAN discovery broadcaster run while the app is open.
+1. On both computers, confirm the same SharedLocalLLM version is open. The peer listener and
+   discovery broadcaster run while the app is open.
 2. Confirm both are on the same network (Ethernet, Wi-Fi, or a direct cable), with client isolation
    disabled on the router or access point if one is present.
 3. Check the Windows network category on each computer.
@@ -28,18 +28,18 @@ Get-NetConnectionProfile | Format-Table Name, InterfaceAlias, NetworkCategory, I
 Get-NetConnectionProfile | Format-Table Name, InterfaceAlias, NetworkCategory, IPv4Connectivity
 ```
 
-The network category (Public/Private) is informational only; SharedLocalLLM pairs and launches
+The network category (Public/Private) is informational only; SharedLocalLLM connects and launches
 identically on every category. No profile change is required.
 
-4. On the computer entering the six-digit code, fill in **Ethernet IPv4 address (optional)** with the
-   address of the computer showing the code. The normal port is `49158`, so an address such as
-   `192.168.1.20` or `169.254.20.8` is enough. Never forward this port on the router.
+4. On the connecting computer, fill in **Ethernet IPv4 address (optional)** with the address of the
+   other computer. The normal port is `49158`, so an address such as `192.168.1.20` or `169.254.20.8`
+   is enough. Never forward this port on the router.
 5. Confirm both installations run the same application and peer-protocol version.
 
 If either computer was paired with version 0.1.1, upgrade both to 0.1.2. On each computer that still
-lists the old peer, open **Nodes**, choose **Forget**, confirm the warning, and pair again. The reset
-does not remove model sources or model files. After re-pairing, close one app, reopen it, and allow
-one health-refresh interval for its status to return to Reachable.
+lists the old peer, open **Nodes**, choose **Forget**, confirm the warning, and connect again. The
+reset does not remove model sources or model files. After reconnecting, close one app, reopen it, and
+allow one health-refresh interval for its status to return to Reachable.
 
 The persistent log is at
 `%LOCALAPPDATA%\SharedLocalLLM\logs\shared-local-llm.log`. Look for
@@ -83,12 +83,11 @@ Manual entry skips UDP discovery and connects directly to TCP port `49158`.
 > win the "fastest link" pick. The app now skips virtual adapters (Hyper-V, WSL, loopback, VPN, TAP)
 > when choosing the network path, so the physical Ethernet adapter is reported instead.
 
-## Pairing codes do not match
+## The computers will not connect
 
-Cancel on both computers. Do not approve either identity. Restart pairing from one computer and
-compare the newly generated six-digit code in person. A mismatch can mean you selected a different
-peer or traffic was intercepted. Deleting a trusted peer requires pairing it again; it does not
-delete models or conversations.
+Confirm both computers run the same SharedLocalLLM version and are on the same network (Ethernet,
+Wi-Fi, or a direct cable). For a direct cable, enter the other computer's Ethernet IPv4 address
+manually. Check **Settings > Logs** for `peer_listener_ready`, `peer_connected`, or a redacted error.
 
 ## Firewall or connection failure
 
