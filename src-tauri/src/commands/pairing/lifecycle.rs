@@ -1,7 +1,6 @@
 use std::{
     net::{Ipv4Addr, SocketAddr},
     sync::Arc,
-    time::Duration,
 };
 
 use tauri::{AppHandle, Manager};
@@ -9,8 +8,8 @@ use tauri::{AppHandle, Manager};
 use crate::{
     pairing::{now, PeerRecord},
     peer::{
-        discover, DiscoveryAnnouncement, DiscoveryBroadcaster, PeerClient, PeerPairingEvent,
-        PeerServer, PeerServerConfig, TrustedPeer, DISCOVERY_PORT,
+        DiscoveryAnnouncement, DiscoveryBroadcaster, PeerPairingEvent, PeerServer,
+        PeerServerConfig, TrustedPeer, DISCOVERY_PORT,
     },
     runtime, secrets,
     state::{peer_secret_path, AppState},
@@ -212,28 +211,8 @@ async fn connect_and_refresh(
     state: &AppState,
     peer: &PeerRecord,
 ) -> Result<NodeCapabilities, ErrorPayload> {
-    let mut client = state.peer_client().await?;
-    if let Err(first_error) = client.heartbeat().await {
-        state.peer.lock().await.client = None;
-        let Some((_, endpoint)) = discover(Duration::from_millis(900))
-            .await?
-            .into_iter()
-            .find(|(announcement, _)| announcement.device_id == peer.id)
-        else {
-            return Err(first_error);
-        };
-        let discovered = Arc::new(PeerClient::trusted(
-            endpoint,
-            client.channel_key().to_owned(),
-            state.lock()?.local.id.clone(),
-        ));
-        discovered.heartbeat().await?;
-        if let Some(saved) = state.lock()?.peers.first_mut() {
-            saved.address = Some(endpoint.to_string());
-        }
-        state.persist()?;
-        client = discovered;
-    }
+    let client = state.peer_client().await?;
+    client.heartbeat().await?;
     let mut capabilities: NodeCapabilities = serde_json::from_value(client.capabilities().await?)
         .map_err(|error| {
         ErrorPayload::new("peer_capabilities_invalid", error.to_string(), None)
