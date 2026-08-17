@@ -19,9 +19,6 @@ async fn merge_peer_catalogue(state: &AppState) {
     let Ok(client) = state.peer_client().await else {
         return;
     };
-    if client.heartbeat().await.is_err() {
-        return;
-    }
     let Ok(value) = client.remote_models().await else {
         return;
     };
