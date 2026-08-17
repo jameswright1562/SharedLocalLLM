@@ -121,6 +121,9 @@ function IdentityStep({ snapshot, deviceName, setDeviceName, setStep }: SetupSte
         </small>
       </div>
       <div className="button-row">
+        <button className="button secondary" onClick={() => setStep(0)}>
+          Back
+        </button>
         <button className="button primary" disabled={!valid} onClick={() => setStep(2)}>
           Continue
         </button>
@@ -162,6 +165,9 @@ function PairStep({
         onContinue={() => setStep(3)}
       />
       <div className="button-row">
+        <button className="button secondary" onClick={() => setStep(1)}>
+          Back
+        </button>
         <button className="button secondary" onClick={() => setStep(3)}>
           Skip and use this computer only
         </button>

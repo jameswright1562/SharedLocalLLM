@@ -21,6 +21,7 @@ use tauri::{
 };
 
 pub fn run() {
+    crate::firewall::ensure_firewall_elevation();
     tauri::Builder::default()
         .manage(AppState::new())
         .setup(|app| {

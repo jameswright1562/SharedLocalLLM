@@ -8,8 +8,10 @@
 //! (Public, Private, Domain), making the network category irrelevant to
 //! operation. They never disable Windows Firewall and never open a broad port.
 //!
-//! SharedLocalLLM runs elevated, so the rules are created with a direct
-//! `New-NetFirewallRule` call and no UAC re-prompt is required.
+//! On startup SharedLocalLLM checks whether the rules already exist. If they
+//! are missing and the process is not elevated, it relaunches itself with a UAC
+//! prompt so the rules can be created; once present, later launches run without
+//! elevation.
 
 use std::path::Path;
 
@@ -91,6 +93,66 @@ fn firewall_rule_script(name: &str, protocol: &str, port: u16, executable: &Path
 #[cfg(windows)]
 fn powershell_literal(value: &str) -> String {
     format!("'{}'", value.replace('\'', "''"))
+}
+
+/// True when both peer firewall rules already exist (no elevation needed).
+#[cfg(windows)]
+pub fn peer_firewall_rules_exist() -> bool {
+    powershell_bool(
+        "@(Get-NetFirewallRule -DisplayName 'SharedLocalLLM' -ErrorAction SilentlyContinue).Count -gt 0 -and @(Get-NetFirewallRule -DisplayName 'SharedLocalLLM Discovery' -ErrorAction SilentlyContinue).Count -gt 0",
+    )
+}
+
+/// True when the current process holds an elevated Windows token.
+#[cfg(windows)]
+pub fn is_elevated() -> bool {
+    powershell_bool(
+        "([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)",
+    )
+}
+
+/// Relaunch the process elevated if the peer firewall rules are missing and the
+/// process is not already elevated. The elevated instance creates the rules
+/// during peer-service startup; this instance exits immediately. If the user
+/// declines the UAC prompt the app continues unprivileged and logs a warning
+/// when rule creation is later attempted.
+pub fn ensure_firewall_elevation() {
+    #[cfg(windows)]
+    {
+        if peer_firewall_rules_exist() || is_elevated() {
+            return;
+        }
+        let Ok(executable) = std::env::current_exe() else {
+            return;
+        };
+        let exe = executable.to_string_lossy();
+        let launch = format!(
+            "Start-Process -FilePath {} -Verb RunAs",
+            powershell_literal(&exe)
+        );
+        let relaunched = std::process::Command::new("powershell.exe")
+            .args(["-NoProfile", "-NonInteractive", "-Command", &launch])
+            .status()
+            .map(|status| status.success())
+            .unwrap_or(false);
+        if relaunched {
+            std::process::exit(0);
+        }
+    }
+}
+
+#[cfg(windows)]
+fn powershell_bool(command: &str) -> bool {
+    let Ok(output) = std::process::Command::new("powershell.exe")
+        .args(["-NoProfile", "-NonInteractive", "-Command", command])
+        .output()
+    else {
+        return false;
+    };
+    output.status.success()
+        && String::from_utf8_lossy(&output.stdout)
+            .trim()
+            .eq_ignore_ascii_case("True")
 }
 
 #[cfg(test)]

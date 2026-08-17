@@ -125,6 +125,6 @@ pub fn io_error(error: std::io::Error) -> ErrorPayload {
     ErrorPayload::new(
         "peer_io",
         error.to_string(),
-        Some("Confirm both computers remain connected to the private network.".into()),
+        Some("Confirm both computers remain connected and reachable on the same network.".into()),
     )
 }
