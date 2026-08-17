@@ -178,10 +178,11 @@ describe("dashboard pages", () => {
     const pageProps = props(snapshot, { addModelDirectory, startCluster });
     render(<ModelsPage {...pageProps} />);
 
-    await user.selectOptions(screen.getByLabelText(/requested context/i), "16384");
+    await user.clear(screen.getByLabelText("Requested context"));
+    await user.type(screen.getByLabelText("Requested context"), "12288");
     await user.click(screen.getByRole("button", { name: /launch orchid/i }));
     expect(startCluster).toHaveBeenCalledWith("model-text", {
-      contextSize: 16384,
+      contextSize: 12288,
       gpuLayers: expect.any(Array),
       force: false,
     });

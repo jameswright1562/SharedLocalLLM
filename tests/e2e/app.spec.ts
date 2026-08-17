@@ -44,7 +44,7 @@ test.describe("browser demo", () => {
   test("accepts a chat prompt through the accessible composer", async ({ page }) => {
     await page.getByRole("button", { name: "Models", exact: true }).click();
     await page.getByRole("button", { name: /launch meridian 12b instruct/i }).click();
-    await expect(page.getByRole("status")).toContainText(/is loading/i);
+    await expect(page.locator(".toast-message")).toContainText(/is loading/i);
 
     await page.getByRole("button", { name: "Chat", exact: true }).click();
     await expect(page.getByRole("heading", { name: "Cluster chat", exact: true })).toBeVisible();

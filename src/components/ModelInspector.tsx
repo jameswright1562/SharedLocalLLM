@@ -1,5 +1,8 @@
+import { useState } from "react";
 import type { GpuLayerAllocation, ModelRecord, NodeCapabilities, SplitEstimate } from "../types";
 import { fitLabels, formatContext } from "../pages/pageFormat";
+
+const MIN_CONTEXT = 4096;
 
 interface ModelInspectorProps {
   selected?: ModelRecord;
@@ -78,20 +81,11 @@ export function ModelInspector({
         </div>
       </dl>
       <FitExplanation model={selected} />
-      <label className="field-label" htmlFor="context-select">
-        Requested context
-      </label>
-      <select
-        id="context-select"
-        value={String(contextSize)}
-        onChange={(event) => setContextSize(Number(event.target.value))}
-      >
-        {contextOptions(selected.contextLength, contextSize).map((value) => (
-          <option key={value} value={String(value)}>
-            {value.toLocaleString()} tokens
-          </option>
-        ))}
-      </select>
+      <ContextSizeControl
+        contextSize={contextSize}
+        setContextSize={setContextSize}
+        maxContext={selected.contextLength}
+      />
       {selected.layerCount ? (
         <GpuAllocation
           selected={selected}
@@ -141,6 +135,75 @@ export function ModelInspector({
         </p>
       )}
     </aside>
+  );
+}
+
+function ContextSizeControl({
+  contextSize,
+  setContextSize,
+  maxContext,
+}: {
+  contextSize: number;
+  setContextSize: (value: number) => void;
+  maxContext: number;
+}) {
+  const max = Math.max(MIN_CONTEXT, maxContext);
+  const [draft, setDraft] = useState(String(contextSize));
+  const [previousContextSize, setPreviousContextSize] = useState(contextSize);
+
+  if (contextSize !== previousContextSize) {
+    setPreviousContextSize(contextSize);
+    setDraft(String(contextSize));
+  }
+
+  function commit(value: number) {
+    const clamped = Math.max(MIN_CONTEXT, Math.min(max, Math.round(value)));
+    setContextSize(clamped);
+    setDraft(String(clamped));
+  }
+
+  return (
+    <section className="context-control">
+      <label className="field-label" htmlFor="context-size-input">
+        Requested context
+      </label>
+      <input
+        type="range"
+        id="context-size-slider"
+        min={MIN_CONTEXT}
+        max={max}
+        step={1024}
+        value={Math.max(MIN_CONTEXT, Math.min(max, contextSize))}
+        onChange={(event) => commit(Number(event.target.value))}
+        aria-label="Requested context slider"
+      />
+      <div className="context-value-row">
+        <input
+          type="number"
+          id="context-size-input"
+          min={MIN_CONTEXT}
+          max={max}
+          value={draft}
+          onChange={(event) => {
+            const value = Number(event.target.value);
+            if (event.target.value === "") {
+              setDraft("");
+            } else if (Number.isFinite(value)) {
+              setDraft(event.target.value);
+            }
+          }}
+          onBlur={(event) => {
+            const value = Number(event.target.value);
+            if (event.target.value === "") {
+              setDraft(String(contextSize));
+            } else if (Number.isFinite(value)) {
+              commit(value);
+            }
+          }}
+        />
+        <span>{contextSize.toLocaleString()} tokens</span>
+      </div>
+    </section>
   );
 }
 
@@ -287,14 +350,6 @@ function VramEstimate({
       )}
     </div>
   );
-}
-
-function contextOptions(max: number, current: number) {
-  const presets = [4096, 8192, 16384, 32768, 65536, max, current].filter(
-    (value, index, all) =>
-      value > 0 && value <= Math.max(max, current) && all.indexOf(value) === index,
-  );
-  return presets.sort((left, right) => left - right);
 }
 
 function formatMib(value: number) {
