@@ -60,10 +60,11 @@ Security invariants:
 These controls reduce exposure; they do not turn upstream experimental RPC into a safe service for
 untrusted networks. A direct RPC socket must be treated as a security defect.
 
-SharedLocalLLM runs elevated and idempotently creates program-scoped Windows Firewall rules
-(Profile Any) for the peer ports: TCP `49158` and UDP `49157`. Only the SharedLocalLLM executable
-is permitted by these rules; `ggml-rpc-server.exe` and `llama-server.exe` are never opened to the
-LAN.
+SharedLocalLLM idempotently creates program-scoped Windows Firewall rules (Profile Any) for the
+peer ports: TCP `49158` and UDP `49157`. On startup it checks whether the rules exist; if they are
+missing and the process is not elevated, it relaunches itself with a UAC prompt so the rules can be
+created. Only the SharedLocalLLM executable is permitted by these rules; `ggml-rpc-server.exe` and
+`llama-server.exe` are never opened to the LAN.
 
 ## Model and inference data flow
 

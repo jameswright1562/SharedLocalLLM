@@ -59,6 +59,6 @@ pub fn noise_error(error: snow::Error) -> ErrorPayload {
     ErrorPayload::new(
         "peer_crypto",
         format!("Encrypted peer channel failed: {error}"),
-        Some("Verify the pairing code and try again.".into()),
+        Some("Re-pair the computers (Forget the peer, then pair again) to refresh the shared channel key.".into()),
     )
 }

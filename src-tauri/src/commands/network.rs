@@ -25,7 +25,9 @@ pub async fn run_network_test(
         NetworkClass::Usable => "usable",
         NetworkClass::Poor => "poor",
     };
-    let adapter = state.lock()?.local.adapter.name.clone();
+    let peer_ip = client.endpoint().ip().to_string();
+    let fallback = state.lock()?.local.adapter.name.clone();
+    let adapter = crate::network::peer_route_adapter(&peer_ip).unwrap_or(fallback);
     let benchmark = NetworkBenchmark {
         down_mbps: result.throughput_mbps,
         up_mbps: result.throughput_mbps,

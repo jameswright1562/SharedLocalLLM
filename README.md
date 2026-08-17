@@ -88,7 +88,8 @@ The intended installed flow is the same on both computers:
    on the computer showing the code and enter its Ethernet IPv4 address in the other computer's
    **Ethernet IPv4 address** field. SharedLocalLLM uses TCP port `49158` automatically; you may also
    enter `address:port` when testing a non-default development build. Confirm the six-digit code. The
-   app runs elevated and creates a program-scoped Windows Firewall rule automatically.
+   app prompts once for administrator approval (UAC) to create a program-scoped Windows Firewall rule
+   automatically, so no manual firewall or network-profile change is needed.
 5. Open **Models**. This computer indexes its own GGUF files. A paired peer can report model names,
    but launch still requires a local file. Use detected LM Studio folders or **Add folder**.
 6. Open **Network**, run the encrypted-channel test, and review the result. Then select a model and

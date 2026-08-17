@@ -19,6 +19,38 @@ pub fn windows_network_profile() -> Option<String> {
     None
 }
 
+/// Resolve the Windows adapter actually used to reach a peer address, so the
+/// diagnostics report the real route (Ethernet) instead of the fastest physical
+/// adapter (often Wi-Fi). Informational only; routing is left to the OS.
+#[cfg(windows)]
+pub fn peer_route_adapter(peer_address: &str) -> Option<String> {
+    crate::hardware::output_with_timeout(
+        "powershell.exe",
+        &[
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            &peer_route_adapter_script(peer_address),
+        ],
+        std::time::Duration::from_secs(4),
+    )
+    .map(|value| value.trim().to_string())
+    .filter(|value| !value.is_empty())
+}
+
+#[cfg(not(windows))]
+pub fn peer_route_adapter(_peer_address: &str) -> Option<String> {
+    None
+}
+
+#[cfg(windows)]
+fn peer_route_adapter_script(peer_address: &str) -> String {
+    format!(
+        "$route = Find-NetRoute -RemoteIPAddress '{}' -ErrorAction SilentlyContinue | Select-Object -First 1; if ($null -eq $route) {{ '' }} else {{ $route.InterfaceAlias }}",
+        peer_address.replace('\'', "''")
+    )
+}
+
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct NetworkMetrics {
     pub throughput_mbps: f64,

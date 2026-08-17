@@ -103,6 +103,13 @@ pub(super) async fn handle_connection(
                 ErrorPayload::new("peer_timeout", "The peer handshake timed out.", None)
             })??;
     let source = socket.peer_addr().map_err(protocol::io_error)?;
+    eprintln!(
+        "{} INFO peer_hello: device={} pairing={} from={}",
+        crate::pairing::now(),
+        hello.device_id,
+        hello.pairing,
+        source
+    );
     let credential = credential_for(&state, &hello).await?;
     let mut handshake = crypto::responder(&credential)?;
     let incoming: Vec<u8> = protocol::read_plain(&mut socket).await?;

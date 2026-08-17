@@ -205,6 +205,9 @@ function SourcesStep({ snapshot, addFolder, setStep }: SetupStepContentProps) {
         <span aria-hidden="true">→</span>
       </button>
       <div className="button-row">
+        <button className="button secondary" onClick={() => setStep(2)}>
+          Back
+        </button>
         <button className="button secondary" onClick={() => setStep(4)}>
           Use detected sources
         </button>
@@ -250,7 +253,14 @@ function NetworkStep({ network, busy, testNetwork, setStep }: SetupStepContentPr
   );
 }
 
-function ReadyStep({ pairedNode, snapshot, network, busy, finish }: SetupStepContentProps) {
+function ReadyStep({
+  pairedNode,
+  snapshot,
+  network,
+  busy,
+  finish,
+  setStep,
+}: SetupStepContentProps) {
   return (
     <section>
       <p className="section-kicker">Ready</p>
@@ -274,6 +284,9 @@ function ReadyStep({ pairedNode, snapshot, network, busy, finish }: SetupStepCon
         </div>
       </div>
       <div className="button-row">
+        <button className="button secondary" onClick={() => setStep(4)}>
+          Back
+        </button>
         <button className="button primary" disabled={busy} onClick={() => void finish()}>
           {busy ? "Saving setup…" : "Open dashboard"}
         </button>

@@ -72,6 +72,15 @@ impl PeerServer {
                     _ = &mut stopped => break,
                     accepted = listener.accept() => {
                         let Ok((socket, _)) = accepted else { break };
+                        let source = socket
+                            .peer_addr()
+                            .map(|address| address.to_string())
+                            .unwrap_or_else(|_| "unknown".into());
+                        eprintln!(
+                            "{} INFO peer_connection: accepted from {}",
+                            crate::pairing::now(),
+                            source
+                        );
                         let accept_state = accept_state.clone();
                         let Ok(permit) = connections.clone().try_acquire_owned() else { continue };
                         tasks.spawn(async move { let _permit = permit; let _ = handle_connection(socket, accept_state).await; });

@@ -80,6 +80,57 @@ describe("SetupWizard", () => {
     expect(generatePairingCode).toHaveBeenCalledWith();
   });
 
+  it("lets the user navigate back through every setup step", async () => {
+    const user = userEvent.setup();
+    const snapshot = cloneSnapshot();
+    snapshot.nodes = snapshot.nodes.slice(0, 1);
+    render(
+      <SetupWizard snapshot={snapshot} service={serviceWith(snapshot)} onComplete={vi.fn()} />,
+    );
+
+    // Step 1 -> 2
+    await user.type(screen.getByLabelText(/device name/i), "Back tester");
+    await user.click(screen.getByRole("button", { name: /continue/i }));
+    expect(screen.getByRole("heading", { name: /pair the second computer/i })).toBeInTheDocument();
+
+    // Step 2 -> 1
+    await user.click(screen.getByRole("button", { name: /^back$/i }));
+    expect(screen.getByRole("heading", { name: /name this computer/i })).toBeInTheDocument();
+
+    // Step 1 -> 2 -> 3
+    await user.click(screen.getByRole("button", { name: /continue/i }));
+    await user.click(screen.getByRole("button", { name: /skip and use this computer only/i }));
+    expect(screen.getByRole("heading", { name: /choose where models live/i })).toBeInTheDocument();
+
+    // Step 3 -> 2
+    await user.click(screen.getByRole("button", { name: /^back$/i }));
+    expect(screen.getByRole("heading", { name: /pair the second computer/i })).toBeInTheDocument();
+
+    // Step 2 -> 3 -> 4
+    await user.click(screen.getByRole("button", { name: /skip and use this computer only/i }));
+    await user.click(screen.getByRole("button", { name: /use detected sources/i }));
+    expect(
+      screen.getByRole("heading", { name: /measure the path between nodes/i }),
+    ).toBeInTheDocument();
+
+    // Step 4 -> 3
+    await user.click(screen.getByRole("button", { name: /^back$/i }));
+    expect(screen.getByRole("heading", { name: /choose where models live/i })).toBeInTheDocument();
+
+    // Step 3 -> 4 -> 5
+    await user.click(screen.getByRole("button", { name: /use detected sources/i }));
+    await user.click(screen.getByRole("button", { name: /run network test/i }));
+    expect(
+      await screen.findByRole("heading", { name: /compute link is ready/i }),
+    ).toBeInTheDocument();
+
+    // Step 5 -> 4
+    await user.click(screen.getByRole("button", { name: /^back$/i }));
+    expect(
+      screen.getByRole("heading", { name: /measure the path between nodes/i }),
+    ).toBeInTheDocument();
+  });
+
   it("handles code generation and pairing failures, then completes every setup step", async () => {
     const user = userEvent.setup();
     const snapshot = cloneSnapshot();
