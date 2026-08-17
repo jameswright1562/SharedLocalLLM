@@ -2,6 +2,23 @@ use serde::{Deserialize, Serialize};
 
 use crate::types::{ErrorPayload, NetworkBenchmark};
 
+#[cfg(windows)]
+pub fn windows_network_profile() -> Option<String> {
+    let script = "@(Get-NetConnectionProfile | Where-Object IPv4Connectivity -ne 'Disconnected' | Select-Object -ExpandProperty NetworkCategory | Sort-Object -Unique) -join ', '";
+    crate::hardware::output_with_timeout(
+        "powershell.exe",
+        &["-NoProfile", "-NonInteractive", "-Command", script],
+        std::time::Duration::from_secs(4),
+    )
+    .map(|value| value.trim().to_string())
+    .filter(|value| !value.is_empty())
+}
+
+#[cfg(not(windows))]
+pub fn windows_network_profile() -> Option<String> {
+    None
+}
+
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct NetworkMetrics {
     pub throughput_mbps: f64,
@@ -65,7 +82,7 @@ pub async fn benchmark_peer(
         ErrorPayload::new(
             "network_timeout",
             "The peer did not answer within three seconds.",
-            Some("Check the private network and firewall settings.".into()),
+            Some("Check the link and firewall settings.".into()),
         )
     })?
     .map_err(|e| {
@@ -87,5 +104,6 @@ pub async fn benchmark_peer(
         packet_loss_percent: 0.0,
         classification: format!("{:?}", classify_network(metrics)).to_lowercase(),
         adapter: format!("{adapter} · connectivity-only probe; throughput agent unavailable"),
+        windows_profile: windows_network_profile(),
     })
 }

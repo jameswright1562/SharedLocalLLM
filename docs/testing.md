@@ -76,9 +76,18 @@ specific products into application logic.
 - Run a distributed benchmark and record the displayed per-computer GPU layer counts. Confirm both
   GPUs allocate memory while `llama-bench` runs and the result is labelled `distributed`; a browser
   demo or command-construction test is not physical acceptance.
-- Exercise Ethernet, Wi-Fi, manual IP, Private/Public profile behavior, occupied API port, runtime
-  mismatch, and failed runtime update or repair.
+- Exercise Ethernet, Wi-Fi, manual IP, static direct Ethernet (`10.10.10.x`), automatic link-local
+  (`169.254.x.x`), operation while Windows reports the network as Public (which must now work without
+  any profile change), multiple simultaneous adapters (Wi-Fi + Ethernet) with a stable
+  manually-selected peer route, and Windows network-category changing while connected (the session
+  must not terminate).
 - Confirm model directories are unchanged after indexing, benchmarking, chat, and uninstall.
+
+Windows network-category enforcement has been removed: the Public/Private category is informational
+only, and the app pairs and launches identically on every category. The automated suite covers
+firewall-rule construction (program-scoped, Profile Any) and endpoint parsing for static and
+link-local addresses, but Public-profile and multi-adapter behaviour still needs physical two-PC
+validation.
 
 Keep failures visible. A benchmark failure record must preserve the actionable error and command
 context after secret/path redaction; it must not silently disappear from recommendation results.

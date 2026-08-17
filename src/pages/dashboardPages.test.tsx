@@ -85,7 +85,7 @@ describe("dashboard pages", () => {
     expect(await screen.findByText("111 222")).toBeInTheDocument();
     await user.type(screen.getByLabelText(/enter code/i), "111222");
     await user.click(screen.getByRole("button", { name: /pair computers/i }));
-    expect(pairWithPeer).toHaveBeenCalledWith("111222", false);
+    expect(pairWithPeer).toHaveBeenCalledWith("111222");
   });
 
   it("forgets a paired worker only after explicit confirmation", async () => {

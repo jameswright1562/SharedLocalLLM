@@ -102,6 +102,7 @@ export interface NetworkBenchmark {
   packetLossPercent: number;
   classification: "good" | "usable" | "poor";
   adapter: string;
+  windowsProfile?: string;
 }
 
 export interface InferenceBenchmark {
@@ -185,15 +186,8 @@ export interface AppService {
   addModelDirectory(): Promise<ModelDirectory | null>;
   removeModelDirectory(id: string): Promise<void>;
   runNetworkTest(): Promise<NetworkBenchmark>;
-  generatePairingCode(allowPublicNetwork?: boolean): Promise<{
-    code: string;
-    expiresInSeconds: number;
-  }>;
-  pairWithPeer(
-    code: string,
-    allowPublicNetwork?: boolean,
-    manualEndpoint?: string,
-  ): Promise<NodeCapabilities>;
+  generatePairingCode(): Promise<{ code: string; expiresInSeconds: number }>;
+  pairWithPeer(code: string, manualEndpoint?: string): Promise<NodeCapabilities>;
   resetPairing(): Promise<AppSnapshot>;
   estimateModelSplit(modelId: string, loadConfig: ModelLoadConfig): Promise<SplitEstimate>;
   startCluster(modelId: string, loadConfig: ModelLoadConfig): Promise<ClusterSession>;

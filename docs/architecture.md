@@ -36,7 +36,7 @@ terminates the process tree. Normal window close hides to the tray while a sessi
 
 ## Peer protocol and trust
 
-Discovery uses a small UDP announcement on private interfaces. Manual private IPv4 entry reaches
+Discovery uses a small UDP announcement on local interfaces. Manual private IPv4 entry reaches
 the same pairing flow. One computer shows a six-digit pairing code; the other enters it. The code
 host also advances once the incoming pair is persisted. Confirmation stores each peer identity and
 channel key through Windows DPAPI.
@@ -50,13 +50,20 @@ Security invariants:
 
 - Raw RPC binds only to `127.0.0.1` and is never advertised, firewall-opened, or routed to the LAN.
 - Local API binds only to `127.0.0.1`; it requires a per-install bearer key.
-- Public Windows network profiles cannot launch or accept a cluster.
+- The Windows network category (Public/Private/Domain) is informational only; the app operates
+  identically on all profiles, with a program-scoped firewall rule permitting only the
+  SharedLocalLLM executable on the peer ports.
 - Peer certificates, pairing material, and API keys are DPAPI-protected, not stored in SQLite.
 - Logs redact secrets, prompts, image content, and personal path prefixes.
 - `llama-server` filesystem, shell, MCP, and agent tools stay disabled.
 
 These controls reduce exposure; they do not turn upstream experimental RPC into a safe service for
 untrusted networks. A direct RPC socket must be treated as a security defect.
+
+SharedLocalLLM runs elevated and idempotently creates program-scoped Windows Firewall rules
+(Profile Any) for the peer ports: TCP `49158` and UDP `49157`. Only the SharedLocalLLM executable
+is permitted by these rules; `ggml-rpc-server.exe` and `llama-server.exe` are never opened to the
+LAN.
 
 ## Model and inference data flow
 

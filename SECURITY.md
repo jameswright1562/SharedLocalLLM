@@ -10,6 +10,7 @@ internet or used as a multi-tenant service.
 
 The upstream `llama.cpp` RPC backend is experimental and explicitly unsuitable for open or
 untrusted networks. SharedLocalLLM's raw RPC process must remain bound to loopback behind the
-authenticated application tunnel. A LAN-reachable raw RPC port, a non-loopback inference API, use
-on a Public Windows network profile, or execution of a runtime whose digest was not verified should
-be treated as a security defect and the cluster should be stopped immediately.
+authenticated application tunnel. A LAN-reachable raw RPC port, a non-loopback inference API, or
+execution of a runtime whose digest was not verified should be treated as a security defect and the
+cluster should be stopped immediately. The Windows network category (Public/Private/Domain) is
+informational only and is not itself a security defect.

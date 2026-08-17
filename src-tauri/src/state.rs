@@ -41,7 +41,6 @@ pub struct PeerRuntime {
     pub server: Option<PeerServer>,
     pub discovery: Option<DiscoveryBroadcaster>,
     pub pairing_session_id: Option<String>,
-    pub public_firewall_lease: Option<PathBuf>,
     pub client: Option<std::sync::Arc<PeerClient>>,
     pub forwarder: Option<RpcForwarder>,
 }

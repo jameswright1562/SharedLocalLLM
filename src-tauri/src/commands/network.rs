@@ -35,6 +35,7 @@ pub async fn run_network_test(
         packet_loss_percent: -1.0,
         classification: classification.into(),
         adapter: format!("{adapter} · encrypted peer channel (round-trip)"),
+        windows_profile: crate::network::windows_network_profile(),
     };
     state.lock()?.network = Some(benchmark.clone());
     state.log(

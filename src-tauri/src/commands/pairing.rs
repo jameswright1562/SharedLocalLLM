@@ -1,5 +1,4 @@
 pub(crate) mod lifecycle;
-mod network;
 pub(crate) mod reset;
 mod session;
 
@@ -18,32 +17,24 @@ use crate::{
 };
 
 use lifecycle::start_peer_server;
-use network::{close_firewall_lease, open_temporary_public_firewall_port, require_pairing_network};
-pub(crate) use network::{require_private_network, require_private_network_for};
 use session::cleanup_pairing_session;
 
 pub(super) const PAIRING_PORT: u16 = 49_158;
 
 #[tauri::command]
 pub async fn generate_pairing_code(
-    allow_public_network: bool,
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<PairingCode, ErrorPayload> {
-    let public_override = require_pairing_network(allow_public_network)?;
     let code = state
         .pairing
         .lock()
         .map_err(|_| ErrorPayload::new("pairing_state", "Pairing state is unavailable.", None))?
         .generate();
-    let (previous_discovery, previous_server, previous_lease) = {
+    let (previous_discovery, previous_server) = {
         let mut peer = state.peer.lock().await;
         peer.pairing_session_id = None;
-        (
-            peer.discovery.take(),
-            peer.server.take(),
-            peer.public_firewall_lease.take(),
-        )
+        (peer.discovery.take(), peer.server.take())
     };
     if let Some(previous) = previous_discovery {
         previous.shutdown().await;
@@ -51,19 +42,7 @@ pub async fn generate_pairing_code(
     if let Some(previous) = previous_server {
         previous.shutdown().await;
     }
-    close_firewall_lease(previous_lease.as_deref());
     let (server, broadcaster) = start_peer_server(&state, Some(code.clone())).await?;
-    let firewall_lease = if public_override {
-        match open_temporary_public_firewall_port(server.address().port()).await {
-            Ok(lease) => Some(lease),
-            Err(error) => {
-                server.shutdown().await;
-                return Err(error);
-            }
-        }
-    } else {
-        None
-    };
     let mut pairing_completion = server.pairing_completion();
     let session_id = uuid::Uuid::new_v4().to_string();
     {
@@ -71,7 +50,6 @@ pub async fn generate_pairing_code(
         peer.pairing_session_id = Some(session_id.clone());
         peer.server = Some(server);
         peer.discovery = Some(broadcaster);
-        peer.public_firewall_lease = firewall_lease;
     }
     tokio::spawn(async move {
         let completed = tokio::select! {
@@ -96,19 +74,11 @@ pub async fn generate_pairing_code(
 #[tauri::command]
 pub async fn pair_with_peer(
     code: String,
-    allow_public_network: bool,
     manual_endpoint: Option<String>,
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<NodeCapabilities, ErrorPayload> {
-    let public_override = require_pairing_network(allow_public_network)?;
-    let firewall_lease = if public_override {
-        Some(open_temporary_public_firewall_port(PAIRING_PORT).await?)
-    } else {
-        None
-    };
     let result = pair_with_peer_inner(code, manual_endpoint, &state).await;
-    close_firewall_lease(firewall_lease.as_deref());
     if result.is_ok() {
         lifecycle::start_persistent_peer_service(app).await;
     }
@@ -262,6 +232,13 @@ mod tests {
                 PAIRING_PORT
             )))
         );
+        assert_eq!(
+            parse_manual_endpoint(Some("10.10.10.2")).unwrap(),
+            Some(SocketAddr::from((
+                Ipv4Addr::new(10, 10, 10, 2),
+                PAIRING_PORT
+            )))
+        );
     }
 
     #[test]
@@ -280,5 +257,25 @@ mod tests {
         let local_addresses = [IpAddr::V4(Ipv4Addr::new(169, 254, 179, 236))];
         let error = reject_local_endpoint(endpoint, &local_addresses).unwrap_err();
         assert_eq!(error.code, "manual_peer_endpoint_is_local");
+    }
+
+    #[test]
+    fn manual_endpoint_accepts_a_remote_address() {
+        let endpoint = SocketAddr::from((Ipv4Addr::new(10, 10, 10, 2), PAIRING_PORT));
+        let local_addresses = [IpAddr::V4(Ipv4Addr::new(10, 10, 10, 1))];
+        assert_eq!(
+            reject_local_endpoint(endpoint, &local_addresses).unwrap(),
+            endpoint
+        );
+    }
+
+    #[test]
+    fn manual_endpoint_accepts_a_remote_link_local_address() {
+        let endpoint = SocketAddr::from((Ipv4Addr::new(169, 254, 20, 8), PAIRING_PORT));
+        let local_addresses = [IpAddr::V4(Ipv4Addr::new(169, 254, 179, 236))];
+        assert_eq!(
+            reject_local_endpoint(endpoint, &local_addresses).unwrap(),
+            endpoint
+        );
     }
 }

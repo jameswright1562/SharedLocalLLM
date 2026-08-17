@@ -153,28 +153,3 @@
 .form-error > p {
   margin: 0;
 }
-.network-profile-help {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 18px;
-  margin-top: 12px;
-  padding: 13px 14px;
-  color: var(--muted);
-  background: #0a1622;
-  border-left: 2px solid var(--cyan);
-}
-.network-profile-help p {
-  max-width: 430px;
-  margin: 0;
-  font-size: 0.7rem;
-}
-.network-profile-help .button {
-  flex: 0 0 auto;
-}
-.network-profile-actions {
-  display: flex;
-  flex: 0 0 auto;
-  align-items: center;
-  gap: 10px;
-}

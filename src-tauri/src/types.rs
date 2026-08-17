@@ -106,6 +106,8 @@ pub struct NetworkBenchmark {
     pub packet_loss_percent: f64,
     pub classification: String,
     pub adapter: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub windows_profile: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]

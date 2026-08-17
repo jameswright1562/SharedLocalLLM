@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { PairingPanel } from "../components/PairingPanel";
-import { decodeAppError, describeAppError } from "../services/errors";
+import { describeAppError } from "../services/errors";
 import type { PageProps } from "../types";
 import { StatusPill } from "../components/Telemetry";
 import { formatGb } from "./pageFormat";
@@ -12,7 +12,6 @@ export function NodesPage({ snapshot, service, refreshSnapshot }: PageProps) {
   const [pairCode, setPairCode] = useState("");
   const [manualEndpoint, setManualEndpoint] = useState("");
   const [generatedCode, setGeneratedCode] = useState("");
-  const [publicRetry, setPublicRetry] = useState<"create-code" | "pair">();
   async function refresh() {
     setRefreshing(true);
     setMessage("");
@@ -39,32 +38,30 @@ export function NodesPage({ snapshot, service, refreshSnapshot }: PageProps) {
       setRefreshing(false);
     }
   }
-  async function createCode(allowPublicNetwork = false) {
+  async function createCode() {
     setRefreshing(true);
     setMessage("");
     try {
-      setGeneratedCode((await service.generatePairingCode(allowPublicNetwork)).code);
+      setGeneratedCode((await service.generatePairingCode()).code);
     } catch (reason) {
       setMessage(describeAppError(reason, "Could not create a pairing code."));
-      if (decodeAppError(reason).code === "private_network_required") setPublicRetry("create-code");
     } finally {
       setRefreshing(false);
     }
   }
-  async function pair(allowPublicNetwork = false) {
+  async function pair() {
     if (pairCode.replace(/\s/g, "").length !== 6) return;
     setRefreshing(true);
     setMessage("");
     try {
       const endpoint = manualEndpoint.trim();
       await (endpoint
-        ? service.pairWithPeer(pairCode.replace(/\s/g, ""), allowPublicNetwork, endpoint)
-        : service.pairWithPeer(pairCode.replace(/\s/g, ""), allowPublicNetwork));
+        ? service.pairWithPeer(pairCode.replace(/\s/g, ""), endpoint)
+        : service.pairWithPeer(pairCode.replace(/\s/g, "")));
       await refreshSnapshot();
       setMessage("Paired with the other computer.");
     } catch (reason) {
       setMessage(describeAppError(reason, "Pairing failed."));
-      if (decodeAppError(reason).code === "private_network_required") setPublicRetry("pair");
     } finally {
       setRefreshing(false);
     }
@@ -178,8 +175,8 @@ export function NodesPage({ snapshot, service, refreshSnapshot }: PageProps) {
             setManualEndpoint={setManualEndpoint}
             pairedNode={null}
             busy={refreshing}
-            createCode={() => void createCode(publicRetry === "create-code")}
-            pair={() => void pair(publicRetry === "pair")}
+            createCode={() => void createCode()}
+            pair={() => void pair()}
           />
         )}
       </div>

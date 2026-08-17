@@ -2,7 +2,7 @@ use tauri::{AppHandle, Emitter, Manager};
 
 use crate::{peer::PeerPairingEvent, state::AppState};
 
-use super::{lifecycle, network::close_firewall_lease};
+use super::lifecycle;
 
 pub(super) async fn cleanup_pairing_session(
     app: &AppHandle,
@@ -24,11 +24,7 @@ pub(super) async fn cleanup_pairing_session(
             return;
         }
         peer.pairing_session_id = None;
-        (
-            peer.discovery.take(),
-            peer.server.take(),
-            peer.public_firewall_lease.take(),
-        )
+        (peer.discovery.take(), peer.server.take())
     };
     if let Some(discovery) = cleanup.0 {
         discovery.shutdown().await;
@@ -36,7 +32,6 @@ pub(super) async fn cleanup_pairing_session(
     if let Some(server) = cleanup.1 {
         server.shutdown().await;
     }
-    close_firewall_lease(cleanup.2.as_deref());
     if !paired {
         state.log(
             "INFO",

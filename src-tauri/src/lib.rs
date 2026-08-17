@@ -1,6 +1,7 @@
 pub mod autostart;
 pub mod capacity;
 pub mod commands;
+pub mod firewall;
 pub mod gguf;
 pub mod hardware;
 pub mod models;

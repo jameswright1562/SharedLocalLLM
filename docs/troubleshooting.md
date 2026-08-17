@@ -12,8 +12,8 @@ PowerShell normally unless a step explicitly says **Run as administrator**.
 
 1. On both computers, confirm the same SharedLocalLLM version is open. The authenticated peer
    listener and private-LAN discovery broadcaster run while the app is open.
-2. Confirm both are on the same trusted home/work network, with client isolation disabled on the
-   router or access point.
+2. Confirm both are on the same network (Ethernet, Wi-Fi, or a direct cable), with client isolation
+   disabled on the router or access point if one is present.
 3. Check the Windows network category on each computer.
 
 **Computer A (Desktop)—inspect only:**
@@ -28,13 +28,8 @@ Get-NetConnectionProfile | Format-Table Name, InterfaceAlias, NetworkCategory, I
 Get-NetConnectionProfile | Format-Table Name, InterfaceAlias, NetworkCategory, IPv4Connectivity
 ```
 
-If the active trusted connection says `Public`, change it in Windows **Settings > Network & internet
-
-> Properties > Network profile type > Private**. SharedLocalLLM deliberately refuses a distributed
-> session on a Public profile. The setup wizard's **Use this public network** option permits a
-> confirmed five-minute pairing session only. When showing a code, approve the temporary Windows
-> firewall rule; it is restricted to the app and TCP port `49158`, then removed after pairing or
-> timeout. The override does not permit cluster launch or raw RPC exposure.
+The network category (Public/Private) is informational only; SharedLocalLLM pairs and launches
+identically on every category. No profile change is required.
 
 4. On the computer entering the six-digit code, fill in **Ethernet IPv4 address (optional)** with the
    address of the computer showing the code. The normal port is `49158`, so an address such as
@@ -70,33 +65,19 @@ On a direct cable with no router, a `169.254.x.x` address is expected. Use the a
 the Ethernet interface, not a Wi-Fi, VPN, loopback, or virtual-machine adapter. Manual entry skips
 UDP discovery and connects directly to TCP port `49158`.
 
-## Pairing keeps requiring a Private profile (direct Ethernet cable)
+## Direct Ethernet cable (two computers, no router)
 
-A direct cable between two computers has no router or DHCP server, so Windows gives the adapter a
-link-local `169.254.x.x` address and labels the network **"Unidentified network"**. Windows forces an
-unidentified network to **Public** and forgets a manual Private setting after each reconnect, which is
-why pairing asks for the profile again every time.
+A direct cable between two computers has no router or DHCP server. Two address schemes work, and
+neither requires a Windows network-profile change:
 
-Make it stick once. On Windows 11 Pro/Enterprise (the Home-edition equivalent is the Group
-Policy/registry version of the same setting):
+- **Static addressing:** set `10.10.10.1/24` on one computer and `10.10.10.2/24` on the other, with
+  no gateway and no DNS. Then use the manual IPv4 entry field with the code-showing computer's
+  `10.10.10.x` address.
+- **Automatic link-local:** with no DHCP server, Windows assigns each adapter a `169.254.x.x`
+  link-local address. That is valid; enter the code-showing computer's `169.254.x.x` Ethernet
+  address manually.
 
-1. Open `secpol.msc` as administrator.
-2. Go to **Security Settings > Network List Manager Policies**.
-3. Double-click **Unidentified Networks**, set **Location type** to **Private**, and OK.
-4. Apply it to the currently connected cable immediately (administrator PowerShell):
-
-```powershell
-Set-NetConnectionProfile -InterfaceAlias Ethernet -NetworkCategory Private
-```
-
-Confirm the result and the adapter name:
-
-```powershell
-Get-NetConnectionProfile | Format-Table Name, InterfaceAlias, NetworkCategory, IPv4Connectivity
-```
-
-This policy only tells Windows to treat an _unidentified_ (unroutable, directly cabled) link as your
-trusted private LAN; the app still refuses cluster launch on a genuinely Public profile.
+Manual entry skips UDP discovery and connects directly to TCP port `49158`.
 
 > WSL/Hyper-V note: virtual adapters such as `vEthernet (WSL)` advertise a fake 10 Gbps and used to
 > win the "fastest link" pick. The app now skips virtual adapters (Hyper-V, WSL, loopback, VPN, TAP)
@@ -111,9 +92,9 @@ delete models or conversations.
 
 ## Firewall or connection failure
 
-Open Windows **Settings > Network & internet** and set the trusted LAN to Private. Pairing on a
-Public profile requires the in-app override and a temporary firewall rule. Do not create a broad
-port rule and do not enable permanent Public access.
+SharedLocalLLM runs elevated and creates a program-scoped Windows Firewall rule for TCP `49158` and
+UDP `49157` across all network profiles (Profile Any). No network-profile change is needed. Do not
+create a broad port rule manually.
 
 Inspect the app's rules after repair:
 
@@ -131,9 +112,8 @@ Get-NetFirewallRule -DisplayName '*SharedLocalLLM*' |
   Format-Table DisplayName, Enabled, Profile, Direction, Action
 ```
 
-If endpoint security blocks the executable, allow the signed SharedLocalLLM application for the
-Private profile through that product's UI. Do not allow `ggml-rpc-server.exe`: it must remain
-loopback-only.
+If endpoint security blocks the executable, allow the signed SharedLocalLLM application through that
+product's UI. Do not allow `ggml-rpc-server.exe`: it must remain loopback-only.
 
 ## Verify raw RPC is not exposed
 

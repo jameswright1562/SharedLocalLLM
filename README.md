@@ -24,8 +24,7 @@ the network is fast enough, and keeping the RPC service off the open LAN are all
 
 SharedLocalLLM puts that setup behind one desktop interface:
 
-- Pair exactly two computers on a trusted Windows Private network by default, with an explicit
-  temporary pairing override for a Public profile.
+- Pair exactly two computers over Ethernet, Wi-Fi, or a direct cable.
 - Discover hardware and current free VRAM/RAM instead of relying on hardcoded specifications.
 - Find LM Studio models automatically or index user-selected read-only folders.
 - Recognize normal GGUF files, split GGUF models, and nearby `mmproj` vision projectors.
@@ -68,8 +67,8 @@ full security model.
 
 ## What you need
 
-- Two Windows 10/11 x64 computers on the same trusted network. A Private profile is required to
-  launch a cluster.
+- Two Windows 10/11 x64 computers on the same network. The Windows Public/Private network category
+  is informational only and does not affect pairing or launch.
 - An NVIDIA GPU and compatible driver on each computer for the pinned CUDA 12 runtime.
 - A GGUF model stored on at least one computer.
 - Enough combined VRAM and RAM for the chosen model and context.
@@ -88,18 +87,13 @@ The intended installed flow is the same on both computers:
 4. Start pairing on one computer. If discovery does not find a direct Ethernet peer, run `ipconfig`
    on the computer showing the code and enter its Ethernet IPv4 address in the other computer's
    **Ethernet IPv4 address** field. SharedLocalLLM uses TCP port `49158` automatically; you may also
-   enter `address:port` when testing a non-default development build. Confirm the six-digit code. If
-   Windows classifies a trusted LAN as Public, the
-   wizard can permit a temporary five-minute pairing session after a native warning. Showing a code
-   also requires approval for an app-and-port-specific Public firewall rule, which is removed after
-   pairing or timeout. The app still will not launch a cluster until the profile is Private or
-   domain-authenticated.
-5. Allow SharedLocalLLM through Windows Firewall for **Private networks only**.
-6. Open **Models**. This computer indexes its own GGUF files. A paired peer can report model names,
+   enter `address:port` when testing a non-default development build. Confirm the six-digit code. The
+   app runs elevated and creates a program-scoped Windows Firewall rule automatically.
+5. Open **Models**. This computer indexes its own GGUF files. A paired peer can report model names,
    but launch still requires a local file. Use detected LM Studio folders or **Add folder**.
-7. Open **Network**, run the encrypted-channel test, and review the result. Then select a model and
+6. Open **Network**, run the encrypted-channel test, and review the result. Then select a model and
    inspect its fit/recommendation before launching it.
-8. Use **Chat** on the computer that launched the model, or from the worker after the peer reports a
+7. Use **Chat** on the computer that launched the model, or from the worker after the peer reports a
    running cluster. Copy localhost API details from **API**. Stop the cluster from the app when
    finished so its managed processes are cleaned up.
 
@@ -109,10 +103,12 @@ then pair once more. This removes only peer trust and its protected channel key;
 and model files are unchanged. After re-pairing, each app keeps an authenticated listener available
 and refreshes peer health periodically so a trusted computer can reconnect after reopening.
 
-For a cable connected directly between two computers, Windows may assign `169.254.x.x` link-local
-addresses when there is no router or DHCP server. That is valid: enter the code-showing computer's
-`169.254.x.x` Ethernet address manually. Both computers still need to run this same app version, and
-the Ethernet network profile must be **Private** before a distributed cluster can launch.
+For a cable connected directly between two computers with no router or DHCP server, set a static
+address on each side so the two computers can see each other, for example `10.10.10.1/24` on one
+computer and `10.10.10.2/24` on the other, with no gateway and no DNS. Windows may instead assign
+automatic `169.254.x.x` link-local addresses; that is also valid. In both cases, enter the
+code-showing computer's Ethernet IPv4 address manually. Both computers still need to run this same
+app version.
 
 There is not yet a published, physically validated installer release. Contributors can build the
 current preview from source using the steps below. If pairing or launch fails, use the
@@ -236,7 +232,7 @@ SSE streaming. Keep the bearer key out of logs, screenshots, and issue reports.
 
 ## Safety and current limits
 
-- Use only two computers you control on a trusted Windows Private network. Do not expose this app to
+- Use only two computers you control on a trusted network. Do not expose this app to
   the internet, an untrusted LAN, or a multi-tenant environment.
 - V1 supports Windows x64 NVIDIA computers and layer splitting. WAN clustering, more than two nodes,
   and LAN tensor parallelism are out of scope.

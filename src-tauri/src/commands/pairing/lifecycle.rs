@@ -10,14 +10,14 @@ use crate::{
     pairing::{now, PeerRecord},
     peer::{
         discover, DiscoveryAnnouncement, DiscoveryBroadcaster, PeerClient, PeerPairingEvent,
-        PeerServer, PeerServerConfig, TrustedPeer,
+        PeerServer, PeerServerConfig, TrustedPeer, DISCOVERY_PORT,
     },
     runtime, secrets,
     state::{peer_secret_path, AppState},
     types::{ErrorPayload, NodeCapabilities},
 };
 
-use super::{network::close_firewall_lease, PAIRING_PORT};
+use super::PAIRING_PORT;
 
 pub(super) async fn start_peer_server(
     state: &AppState,
@@ -89,13 +89,17 @@ pub(super) async fn start_peer_server(
 
 pub async fn start_persistent_peer_service(app: AppHandle) {
     let state = app.state::<AppState>();
+    if let Ok(executable) = std::env::current_exe() {
+        if let Err(error) =
+            crate::firewall::ensure_peer_firewall_rules(&executable, PAIRING_PORT, DISCOVERY_PORT)
+                .await
+        {
+            state.log("WARN", "firewall_rule_failed", &error);
+        }
+    }
     let previous = {
         let mut peer = state.peer.lock().await;
-        (
-            peer.discovery.take(),
-            peer.server.take(),
-            peer.public_firewall_lease.take(),
-        )
+        (peer.discovery.take(), peer.server.take())
     };
     if let Some(discovery) = previous.0 {
         discovery.shutdown().await;
@@ -103,7 +107,6 @@ pub async fn start_persistent_peer_service(app: AppHandle) {
     if let Some(server) = previous.1 {
         server.shutdown().await;
     }
-    close_firewall_lease(previous.2.as_deref());
     match start_peer_server(&state, None).await {
         Ok((server, broadcaster)) => {
             let address = server.address().to_string();

@@ -122,6 +122,12 @@ export function NetworkPage({ snapshot, service }: PageProps) {
             <Meter value={result.downMbps} max={Math.max(result.downMbps, 1000)} />
             <small>One measured direction; not separate up/down links.</small>
           </div>
+          {result.windowsProfile && (
+            <p className="network-profile-note">
+              Windows network profile: <b>{result.windowsProfile}</b> — informational only, it does
+              not affect operation.
+            </p>
+          )}
         </div>
       )}
       <section className="guidance-grid">
@@ -146,10 +152,13 @@ export function NetworkPage({ snapshot, service }: PageProps) {
           </div>
         </article>
         <article>
-          <span className="guidance-icon">!</span>
+          <span className="guidance-icon">⌁</span>
           <div>
-            <h3>Private networks only</h3>
-            <p>The app refuses cluster startup on a Windows Public network profile.</p>
+            <h3>Direct Ethernet cable</h3>
+            <p>
+              A cable directly between the two computers works with static 10.10.10.x addresses or
+              automatic 169.254.x.x link-local addresses — no router and no network-profile change.
+            </p>
           </div>
         </article>
       </section>

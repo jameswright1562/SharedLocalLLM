@@ -3,7 +3,6 @@ use std::time::Instant;
 use tauri::State;
 
 use crate::{
-    commands::pairing::require_private_network,
     runtime,
     state::AppState,
     types::{ErrorPayload, InferenceBenchmark, ModelLoadConfig},
@@ -70,7 +69,6 @@ pub async fn run_inference_benchmark(
     let allocations = fit_gpu_layers(&model, total_layers, &online_gpu_nodes)?;
     let distributed = allocations.len() == 2;
     let forwarder = if distributed {
-        require_private_network()?;
         let client = state.peer_client().await?;
         client.heartbeat().await?;
         Some(client.start_rpc_forwarder().await?)

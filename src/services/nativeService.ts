@@ -33,10 +33,8 @@ export const nativeService: AppService = {
   addModelDirectory: () => invoke("add_model_directory"),
   removeModelDirectory: (id) => invoke("remove_model_directory", { id }),
   runNetworkTest: () => invoke("run_network_test"),
-  generatePairingCode: (allowPublicNetwork = false) =>
-    invoke("generate_pairing_code", { allowPublicNetwork }),
-  pairWithPeer: (code, allowPublicNetwork = false, manualEndpoint) =>
-    invoke("pair_with_peer", { code, allowPublicNetwork, manualEndpoint }),
+  generatePairingCode: () => invoke("generate_pairing_code"),
+  pairWithPeer: (code, manualEndpoint) => invoke("pair_with_peer", { code, manualEndpoint }),
   resetPairing: () => invoke("reset_pairing"),
   estimateModelSplit: (modelId, loadConfig) =>
     invoke("estimate_model_split", { modelId, loadConfig }),

@@ -9,7 +9,6 @@ pub(crate) use control::{halt as halt_runtime, idle_session as idle_cluster};
 pub use split::estimate_model_split;
 
 use crate::{
-    commands::pairing::require_private_network_for,
     runtime,
     state::AppState,
     types::{ClusterSession, ErrorPayload, ModelLoadConfig},
@@ -23,7 +22,7 @@ pub async fn start_cluster(
 ) -> Result<ClusterSession, ErrorPayload> {
     let _guard = state.cluster_lock.lock().await;
     control::halt(&state).await;
-    let (model, api_key, api_port, coordinator, peer_record, mut normalized_config, peer_address) = {
+    let (model, api_key, api_port, coordinator, peer_record, mut normalized_config) = {
         let inner = state.lock()?;
         let model = inner
             .models
@@ -84,10 +83,8 @@ pub async fn start_cluster(
             inner.local.id.clone(),
             inner.peers.first().cloned(),
             normalized_config,
-            inner.peers.first().and_then(|peer| peer.address.clone()),
         )
     };
-    require_private_network_for(peer_address.as_deref())?;
     if runtime::status().status != "ready" {
         return Err(ErrorPayload::new(
             "runtime_missing",

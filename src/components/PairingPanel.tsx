@@ -36,7 +36,7 @@ export function PairingPanel({
               {generatedCode}
             </output>
           ) : (
-            <p>Valid for five minutes on this private network.</p>
+            <p>Valid for five minutes.</p>
           )}
           <button className="button secondary" disabled={busy} onClick={createCode}>
             {generatedCode ? "Create new code" : "Create pairing code"}
@@ -79,7 +79,7 @@ export function PairingPanel({
             {busy
               ? manualEndpoint.trim()
                 ? "Connecting over Ethernet…"
-                : "Searching private LAN…"
+                : "Searching local network…"
               : "Pair computers"}
           </button>
         </div>

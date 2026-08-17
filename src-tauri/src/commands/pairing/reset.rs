@@ -6,7 +6,7 @@ use crate::{
     types::{AppSnapshot, ClusterSession, ErrorPayload},
 };
 
-use super::{lifecycle, network::close_firewall_lease};
+use super::lifecycle;
 
 #[tauri::command]
 pub async fn reset_pairing(
@@ -26,7 +26,6 @@ pub async fn reset_pairing(
             peer.forwarder.take(),
             peer.discovery.take(),
             peer.server.take(),
-            peer.public_firewall_lease.take(),
         )
     };
     if let Some(forwarder) = runtime.0 {
@@ -38,7 +37,6 @@ pub async fn reset_pairing(
     if let Some(server) = runtime.2 {
         server.shutdown().await;
     }
-    close_firewall_lease(runtime.3.as_deref());
     let peer_ids = {
         let mut inner = state.lock()?;
         let ids = inner

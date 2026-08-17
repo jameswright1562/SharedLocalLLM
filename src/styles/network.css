@@ -102,6 +102,15 @@
 .throughput-detail b {
   color: var(--text);
 }
+.network-profile-note {
+  margin: 10px 0 0;
+  color: var(--muted);
+  font-size: 0.74rem;
+}
+.network-profile-note b {
+  color: var(--text);
+  font-weight: 600;
+}
 .guidance-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);

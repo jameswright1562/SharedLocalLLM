@@ -143,7 +143,7 @@ function PairStep({
 }: SetupStepContentProps) {
   return (
     <section>
-      <p className="section-kicker">Private peer channel</p>
+      <p className="section-kicker">Encrypted peer channel</p>
       <h2>Pair the second computer</h2>
       <p className="lede">
         Open SharedLocalLLM on the other computer. Create a code on either screen and enter it on

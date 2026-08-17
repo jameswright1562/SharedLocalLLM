@@ -116,6 +116,7 @@ const baseSnapshot: AppSnapshot = {
     packetLossPercent: 0,
     classification: "good",
     adapter: "Ethernet · full duplex",
+    windowsProfile: "Public",
   },
   cluster: {
     status: "ready",

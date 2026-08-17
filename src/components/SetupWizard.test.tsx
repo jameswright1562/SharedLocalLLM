@@ -52,25 +52,16 @@ describe("SetupWizard", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("Archive verification failed");
   });
 
-  it("explains the Private profile requirement and allows an explicit public-network retry", async () => {
+  it("creates a pairing code directly without a public-network prompt", async () => {
     const user = userEvent.setup();
     const snapshot = cloneSnapshot();
     const generatePairingCode = vi
       .fn()
-      .mockRejectedValueOnce({
-        code: "private_network_required",
-        message: "Pairing is available only on a Windows Private network profile.",
-        action: "Change the trusted LAN profile to Private in Windows Settings.",
-      })
       .mockResolvedValue({ code: "321 654", expiresInSeconds: 300 });
-    const openNetworkSettings = vi.fn().mockResolvedValue(undefined);
     render(
       <SetupWizard
         snapshot={snapshot}
-        service={serviceWith(snapshot, {
-          generatePairingCode,
-          openNetworkSettings,
-        })}
+        service={serviceWith(snapshot, { generatePairingCode })}
         onComplete={vi.fn()}
       />,
     );
@@ -78,50 +69,15 @@ describe("SetupWizard", () => {
     await user.click(screen.getByRole("button", { name: /continue/i }));
     await user.click(screen.getByRole("button", { name: /create pairing code/i }));
 
-    const alert = await screen.findByRole("alert");
-    expect(alert).toHaveTextContent(/home or work network you trust/i);
-    expect(alert).toHaveTextContent(/public networks can contain devices you do not trust/i);
-    expect(alert).toHaveTextContent(/cluster launch remains blocked/i);
-
-    await user.click(screen.getByRole("button", { name: /open windows network settings/i }));
-    expect(openNetworkSettings).toHaveBeenCalledTimes(1);
-
-    await user.click(screen.getByRole("button", { name: /use this public network/i }));
-
     expect(await screen.findByText("321 654")).toBeInTheDocument();
-    expect(generatePairingCode).toHaveBeenNthCalledWith(1, false);
-    expect(generatePairingCode).toHaveBeenNthCalledWith(2, true);
-  });
-
-  it("applies the public-network override when entering a peer code", async () => {
-    const user = userEvent.setup();
-    const snapshot = cloneSnapshot();
-    const pairWithPeer = vi
-      .fn()
-      .mockRejectedValueOnce({
-        code: "private_network_required",
-        message: "Pairing is available only on a Windows Private network profile.",
-      })
-      .mockResolvedValue(cloneSnapshot().nodes[1]);
-    render(
-      <SetupWizard
-        snapshot={snapshot}
-        service={serviceWith(snapshot, { pairWithPeer })}
-        onComplete={vi.fn()}
-      />,
-    );
-
-    await user.click(screen.getByRole("button", { name: /continue/i }));
-    await user.type(screen.getByLabelText(/enter code/i), "123456");
-    await user.type(screen.getByLabelText(/ethernet ipv4 address/i), "192.168.50.2");
-    await user.click(screen.getByRole("button", { name: /pair computers/i }));
-    await user.click(await screen.findByRole("button", { name: /use this public network/i }));
-
     expect(
-      await screen.findByRole("heading", { name: /choose where models live/i }),
-    ).toBeInTheDocument();
-    expect(pairWithPeer).toHaveBeenNthCalledWith(1, "123456", false, "192.168.50.2");
-    expect(pairWithPeer).toHaveBeenNthCalledWith(2, "123456", true, "192.168.50.2");
+      screen.queryByRole("button", { name: /use this public network/i }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /open windows network settings/i }),
+    ).not.toBeInTheDocument();
+    expect(generatePairingCode).toHaveBeenCalledTimes(1);
+    expect(generatePairingCode).toHaveBeenCalledWith();
   });
 
   it("handles code generation and pairing failures, then completes every setup step", async () => {
