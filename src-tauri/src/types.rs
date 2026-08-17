@@ -219,13 +219,6 @@ pub struct ChatResponse {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct PairingCode {
-    pub code: String,
-    pub expires_in_seconds: u64,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
 pub struct AppSettings {
     pub device_name: String,
     pub api_port: u16,

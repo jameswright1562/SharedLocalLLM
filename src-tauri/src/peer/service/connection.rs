@@ -1,27 +1,12 @@
-use std::{
-    collections::HashMap,
-    net::SocketAddr,
-    path::PathBuf,
-    sync::Arc,
-    time::{Duration, Instant},
-};
+use std::{net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 
-use rand::{distributions::Alphanumeric, Rng};
 use serde_json::Value;
-use tokio::{
-    net::TcpStream,
-    sync::{watch, Mutex},
-};
+use tokio::{net::TcpStream, sync::Mutex};
 
-use super::auth::{credential_for, ensure_trusted};
 use super::worker::{self, ManagedChild};
-use super::{PeerPairingEvent, PeerServerConfig};
+use super::{PeerConnectedEvent, PeerServerConfig};
 use crate::{
-    peer::{
-        channel::{receive_encrypted, send_encrypted},
-        crypto,
-        protocol::{self, ClientHello, Request, Response},
-    },
+    peer::protocol::{self, ClientHello, Request, Response},
     types::ErrorPayload,
 };
 
@@ -29,11 +14,7 @@ pub(super) struct ServerState {
     device_id: String,
     device_name: String,
     pub(super) capabilities: Mutex<Value>,
-    pub(super) pairing_code: Mutex<Option<String>>,
-    pub(super) pairing_expires_at: Instant,
-    pairing_completed: watch::Sender<Option<PeerPairingEvent>>,
-    pending_pairing: Mutex<Option<PeerPairingEvent>>,
-    pub(super) trusted: Mutex<HashMap<String, String>>,
+    connected: std::sync::Mutex<Vec<PeerConnectedEvent>>,
     pub(super) rpc_binary: Option<PathBuf>,
     pub(super) rpc_override: Option<SocketAddr>,
     pub(super) rpc_target: Mutex<Option<SocketAddr>>,
@@ -44,25 +25,12 @@ pub(super) struct ServerState {
 }
 
 impl ServerState {
-    pub(super) fn new(
-        config: PeerServerConfig,
-        pairing_completed: watch::Sender<Option<PeerPairingEvent>>,
-    ) -> Self {
+    pub(super) fn new(config: PeerServerConfig) -> Self {
         Self {
             device_id: config.device_id,
             device_name: config.device_name,
             capabilities: Mutex::new(config.capabilities),
-            pairing_code: Mutex::new(config.pairing_code),
-            pairing_expires_at: Instant::now() + Duration::from_secs(300),
-            pairing_completed,
-            pending_pairing: Mutex::new(None),
-            trusted: Mutex::new(
-                config
-                    .trusted_peers
-                    .into_iter()
-                    .map(|peer| (peer.device_id, peer.channel_key))
-                    .collect(),
-            ),
+            connected: std::sync::Mutex::new(Vec::new()),
             rpc_binary: config.rpc_binary,
             rpc_override: config.rpc_override,
             rpc_target: Mutex::new(config.rpc_override),
@@ -89,6 +57,10 @@ impl ServerState {
     pub(super) async fn stop_local_worker(&self) {
         worker::stop_worker(self).await;
     }
+
+    pub(super) fn take_connected(&self) -> Vec<PeerConnectedEvent> {
+        std::mem::take(&mut *self.connected.lock().unwrap())
+    }
 }
 
 pub(super) async fn handle_connection(
@@ -104,145 +76,107 @@ pub(super) async fn handle_connection(
             })??;
     let source = socket.peer_addr().map_err(protocol::io_error)?;
     eprintln!(
-        "{} INFO peer_hello: device={} pairing={} from={}",
+        "{} INFO peer_hello: device={} from={}",
         crate::pairing::now(),
         hello.device_id,
-        hello.pairing,
         source
     );
-    let credential = credential_for(&state, &hello).await?;
-    let mut handshake = crypto::responder(&credential)?;
-    let incoming: Vec<u8> = protocol::read_plain(&mut socket).await?;
-    handshake
-        .read_message(&incoming, &mut [])
-        .map_err(crypto::noise_error)?;
-    let mut outgoing = [0_u8; 1024];
-    let count = handshake
-        .write_message(&[], &mut outgoing)
-        .map_err(crypto::noise_error)?;
-    protocol::write_plain(&mut socket, &outgoing[..count].to_vec()).await?;
-    let mut noise = crypto::transport(handshake)?;
-    let request: Request = receive_encrypted(&mut socket, &mut noise).await?;
-    match request {
-        Request::Pair {
+    let request: Request = protocol::read_plain(&mut socket).await?;
+    eprintln!(
+        "{} INFO peer_request: device={} request={} from={}",
+        crate::pairing::now(),
+        hello.device_id,
+        request_kind(&request),
+        source
+    );
+    let result = match request {
+        Request::Connect {
             version,
             device_id,
             device_name,
             capabilities,
         } => {
-            pair(
+            connect(
                 &mut socket,
-                &mut noise,
-                state,
-                PairAttempt {
-                    hello,
-                    version,
-                    device_id,
-                    device_name,
-                    capabilities,
-                    source,
-                },
+                &state,
+                version,
+                device_id,
+                device_name,
+                capabilities,
+                source,
             )
             .await
         }
-        Request::Heartbeat { version, device_id } => {
+        Request::Heartbeat { version, .. } => {
             protocol::check_version(version)?;
-            ensure_trusted(&state, &device_id).await?;
-            send_encrypted(&mut socket, &mut noise, &Response::Heartbeat).await
+            protocol::write_plain(&mut socket, &Response::Heartbeat).await
         }
-        Request::Capabilities => capabilities(&mut socket, &mut noise, &state, &hello).await,
-        Request::Benchmark { size } => {
-            worker::handle_benchmark(&mut socket, &mut noise, &state, &hello.device_id, size).await
-        }
-        Request::RpcTunnel => worker::rpc_tunnel(socket, noise, state, &hello.device_id).await,
-        Request::StopWorker => {
-            worker::handle_stop_worker(&mut socket, &mut noise, &state, &hello.device_id).await
-        }
-        Request::Models => {
-            worker::handle_models(&mut socket, &mut noise, &state, &hello.device_id).await
-        }
+        Request::Capabilities => capabilities(&mut socket, &state).await,
+        Request::Benchmark { size } => worker::handle_benchmark(&mut socket, size).await,
+        Request::RpcTunnel => worker::rpc_tunnel(socket, state).await,
+        Request::StopWorker => worker::handle_stop_worker(&mut socket, &state).await,
+        Request::Models => worker::handle_models(&mut socket, &state).await,
         request @ Request::ProxyChat { .. } => {
-            worker::handle_proxy_chat(&mut socket, &mut noise, &state, &hello.device_id, request)
-                .await
+            worker::handle_proxy_chat(&mut socket, &state, request).await
         }
+    };
+    if let Err(error) = &result {
+        eprintln!(
+            "{} WARN peer_request_failed: device={} error={}",
+            crate::pairing::now(),
+            hello.device_id,
+            error
+        );
+    }
+    result
+}
+
+fn request_kind(request: &Request) -> &'static str {
+    match request {
+        Request::Connect { .. } => "connect",
+        Request::Heartbeat { .. } => "heartbeat",
+        Request::Capabilities => "capabilities",
+        Request::Benchmark { .. } => "benchmark",
+        Request::RpcTunnel => "rpc_tunnel",
+        Request::StopWorker => "stop_worker",
+        Request::Models => "models",
+        Request::ProxyChat { .. } => "proxy_chat",
     }
 }
 
-struct PairAttempt {
-    hello: ClientHello,
+#[allow(clippy::too_many_arguments)]
+async fn connect(
+    socket: &mut TcpStream,
+    state: &ServerState,
     version: u16,
     device_id: String,
     device_name: String,
     capabilities: Value,
     source: SocketAddr,
-}
-
-async fn pair(
-    socket: &mut TcpStream,
-    noise: &mut snow::TransportState,
-    state: Arc<ServerState>,
-    attempt: PairAttempt,
 ) -> Result<(), ErrorPayload> {
-    protocol::check_version(attempt.version)?;
-    if !attempt.hello.pairing || attempt.hello.device_id != attempt.device_id {
-        return Err(ErrorPayload::new(
-            "pairing_identity_mismatch",
-            "The pairing identity changed during authentication.",
-            None,
-        ));
-    }
-    let channel_key: String = rand::thread_rng()
-        .sample_iter(&Alphanumeric)
-        .take(64)
-        .map(char::from)
-        .collect();
-    send_encrypted(
+    protocol::check_version(version)?;
+    state.connected.lock().unwrap().push(PeerConnectedEvent {
+        device_id: device_id.clone(),
+        device_name,
+        capabilities,
+        source,
+    });
+    protocol::write_plain(
         socket,
-        noise,
-        &Response::Paired {
+        &Response::Connected {
             device_id: state.device_id.clone(),
             device_name: state.device_name.clone(),
-            channel_key: channel_key.clone(),
         },
     )
-    .await?;
-    state
-        .trusted
-        .lock()
-        .await
-        .insert(attempt.device_id.clone(), channel_key.clone());
-    *state.pairing_code.lock().await = None;
-    *state.pending_pairing.lock().await = Some(PeerPairingEvent {
-        device_id: attempt.device_id,
-        device_name: attempt.device_name,
-        channel_key,
-        capabilities: attempt.capabilities,
-        source: attempt.source,
-    });
-    Ok(())
+    .await
 }
 
-async fn capabilities(
-    socket: &mut TcpStream,
-    noise: &mut snow::TransportState,
-    state: &ServerState,
-    hello: &ClientHello,
-) -> Result<(), ErrorPayload> {
-    ensure_trusted(state, &hello.device_id).await?;
-    send_encrypted(
+async fn capabilities(socket: &mut TcpStream, state: &ServerState) -> Result<(), ErrorPayload> {
+    protocol::write_plain(
         socket,
-        noise,
         &Response::Capabilities {
             value: state.capabilities.lock().await.clone(),
         },
     )
-    .await?;
-    let mut pending = state.pending_pairing.lock().await;
-    if pending
-        .as_ref()
-        .is_some_and(|event| event.device_id == hello.device_id)
-    {
-        let _ = state.pairing_completed.send(pending.take());
-    }
-    Ok(())
+    .await
 }

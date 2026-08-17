@@ -36,15 +36,16 @@ terminates the process tree. Normal window close hides to the tray while a sessi
 
 ## Peer protocol and trust
 
-Discovery uses a small UDP announcement on local interfaces. Manual private IPv4 entry reaches
-the same pairing flow. One computer shows a six-digit pairing code; the other enters it. The code
-host also advances once the incoming pair is persisted. Confirmation stores each peer identity and
-channel key through Windows DPAPI.
+Discovery uses a small UDP announcement on local interfaces. Manual IPv4 entry reaches the same
+connect flow: a computer connects to the peer (discovered or by explicit IP) and exchanges a plain,
+versioned `Connect` handshake that carries each side's device identity and capabilities. Both sides
+then keep a peer record.
 
-All later peer traffic uses a Noise-encrypted, versioned application handshake. One private-network
-TCP listener multiplexes control messages, the bounded RPC byte tunnel, network tests, catalogue
-metadata, worker stop, and proxied chat. Incompatible protocol versions fail before launch with
-upgrade guidance. Stronger production-grade authentication remains deferred.
+All later peer traffic uses a plain, length-prefixed application protocol. One TCP listener on port
+`49158` multiplexes control messages, the bounded RPC byte tunnel, network tests, catalogue metadata,
+worker stop, and proxied chat. Incompatible protocol versions fail before launch with upgrade
+guidance. There is no pairing code and no application-layer encryption: this is a trusted-private-LAN
+design, not production-hardened peer identity or authorization.
 
 Security invariants:
 
@@ -53,7 +54,7 @@ Security invariants:
 - The Windows network category (Public/Private/Domain) is informational only; the app operates
   identically on all profiles, with a program-scoped firewall rule permitting only the
   SharedLocalLLM executable on the peer ports.
-- Peer certificates, pairing material, and API keys are DPAPI-protected, not stored in SQLite.
+- API keys are DPAPI-protected, not stored in SQLite.
 - Logs redact secrets, prompts, image content, and personal path prefixes.
 - `llama-server` filesystem, shell, MCP, and agent tools stay disabled.
 

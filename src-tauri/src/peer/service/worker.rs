@@ -1,6 +1,7 @@
 use std::{
     net::{Ipv4Addr, SocketAddr},
     process::Command,
+    sync::Arc,
     time::Duration,
 };
 
@@ -9,9 +10,8 @@ use tokio::net::{TcpListener, TcpStream};
 use super::connection::ServerState;
 use crate::{
     peer::{
-        channel::{send_encrypted, send_encrypted_bytes},
         protocol::{self, Request, Response},
-        tunnel::serve_rpc,
+        tunnel::bridge,
     },
     runtime::ProcessJob,
     types::ErrorPayload,
@@ -30,19 +30,15 @@ impl Drop for ManagedChild {
 }
 
 pub(super) async fn rpc_tunnel(
-    socket: TcpStream,
-    mut noise: snow::TransportState,
-    state: std::sync::Arc<ServerState>,
-    device_id: &str,
+    mut socket: TcpStream,
+    state: Arc<ServerState>,
 ) -> Result<(), ErrorPayload> {
-    super::auth::ensure_trusted(&state, device_id).await?;
     let target = ensure_worker(&state).await?;
     let rpc = connect_rpc(target).await?;
-    let mut socket = socket;
     let _ = socket.set_nodelay(true);
     let _ = rpc.set_nodelay(true);
-    send_encrypted(&mut socket, &mut noise, &Response::RpcReady).await?;
-    serve_rpc(socket, noise, rpc).await
+    protocol::write_plain(&mut socket, &Response::RpcReady).await?;
+    bridge(socket, rpc).await
 }
 
 pub(super) async fn stop_worker(state: &ServerState) {
@@ -52,37 +48,27 @@ pub(super) async fn stop_worker(state: &ServerState) {
 
 pub(super) async fn handle_stop_worker(
     socket: &mut TcpStream,
-    noise: &mut snow::TransportState,
     state: &ServerState,
-    device_id: &str,
 ) -> Result<(), ErrorPayload> {
-    super::auth::ensure_trusted(state, device_id).await?;
     stop_worker(state).await;
-    send_encrypted(socket, noise, &Response::WorkerStopped).await
+    protocol::write_plain(socket, &Response::WorkerStopped).await
 }
 
 pub(super) async fn handle_models(
     socket: &mut TcpStream,
-    noise: &mut snow::TransportState,
     state: &ServerState,
-    device_id: &str,
 ) -> Result<(), ErrorPayload> {
-    super::auth::ensure_trusted(state, device_id).await?;
     let models = state.catalogue.lock().await.clone();
-    send_encrypted(socket, noise, &Response::Models { models }).await
+    protocol::write_plain(socket, &Response::Models { models }).await
 }
 
 pub(super) async fn handle_benchmark(
     socket: &mut TcpStream,
-    noise: &mut snow::TransportState,
-    state: &ServerState,
-    device_id: &str,
     size: u32,
 ) -> Result<(), ErrorPayload> {
-    super::auth::ensure_trusted(state, device_id).await?;
     let size = size.clamp(4 * 1024, 512 * 1024) as usize;
-    send_encrypted(socket, noise, &Response::Benchmark { size: size as u32 }).await?;
-    let incoming = crate::peer::channel::receive_encrypted_bytes(socket, noise).await?;
+    protocol::write_plain(socket, &Response::Benchmark { size: size as u32 }).await?;
+    let incoming = protocol::read_bytes(socket).await?;
     if incoming.len() != size {
         return Err(ErrorPayload::new(
             "benchmark_size",
@@ -90,7 +76,7 @@ pub(super) async fn handle_benchmark(
             None,
         ));
     }
-    send_encrypted_bytes(socket, noise, &incoming).await
+    protocol::write_bytes(socket, &incoming).await
 }
 
 async fn ensure_worker(state: &ServerState) -> Result<SocketAddr, ErrorPayload> {
@@ -168,12 +154,9 @@ async fn connect_rpc(target: SocketAddr) -> Result<TcpStream, ErrorPayload> {
 
 pub(super) async fn handle_proxy_chat(
     socket: &mut TcpStream,
-    noise: &mut snow::TransportState,
     state: &ServerState,
-    device_id: &str,
     request: Request,
 ) -> Result<(), ErrorPayload> {
-    super::auth::ensure_trusted(state, device_id).await?;
     let Request::ProxyChat {
         messages,
         settings,
@@ -194,5 +177,5 @@ pub(super) async fn handle_proxy_chat(
     let content =
         crate::commands::chat::complete_local(api_port, &api_key, messages, settings, images)
             .await?;
-    send_encrypted(socket, noise, &Response::ProxyChat { content }).await
+    protocol::write_plain(socket, &Response::ProxyChat { content }).await
 }

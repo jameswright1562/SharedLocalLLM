@@ -38,7 +38,14 @@ impl RpcForwarder {
                         let _ = local.set_nodelay(true);
                         let client = client.clone();
                         tokio::spawn(async move {
-                            if let Ok((peer, noise)) = client.open_rpc_stream().await { let _ = client_bridge(local, peer, noise).await; }
+                            match client.open_rpc_stream().await {
+                                Ok(peer) => { let _ = bridge(peer, local).await; }
+                                Err(error) => eprintln!(
+                                    "{} WARN rpc_tunnel_open_failed: {}",
+                                    crate::pairing::now(),
+                                    error
+                                ),
+                            }
                         });
                     }
                 }
@@ -50,9 +57,11 @@ impl RpcForwarder {
             task,
         })
     }
+
     pub fn local_address(&self) -> SocketAddr {
         self.local_address
     }
+
     pub async fn shutdown(mut self) {
         if let Some(stop) = self.stop.take() {
             let _ = stop.send(());
@@ -61,69 +70,34 @@ impl RpcForwarder {
     }
 }
 
-async fn client_bridge(
-    mut local: TcpStream,
-    mut peer: TcpStream,
-    mut noise: snow::TransportState,
-) -> Result<(), ErrorPayload> {
-    let _ = local.set_nodelay(true);
-    let _ = peer.set_nodelay(true);
-    let (mut local_read, mut local_write) = local.split();
-    let (mut peer_read, mut peer_write) = peer.split();
-    let mut from_local = [0_u8; TUNNEL_CHUNK];
-    let mut encrypted = vec![0_u8; TUNNEL_CHUNK + 16];
-    let mut from_peer = vec![0_u8; TUNNEL_CHUNK + 64];
+/// Bidirectionally stream length-prefixed byte frames between two sockets.
+pub(crate) async fn bridge(mut left: TcpStream, mut right: TcpStream) -> Result<(), ErrorPayload> {
+    let _ = left.set_nodelay(true);
+    let _ = right.set_nodelay(true);
+    let (mut left_read, mut left_write) = left.split();
+    let (mut right_read, mut right_write) = right.split();
+    let mut buffer = vec![0_u8; TUNNEL_CHUNK];
     loop {
         tokio::select! {
-            count = local_read.read(&mut from_local) => {
+            frame_size = left_read.read_u32() => {
+                let frame_size = frame_size.map_err(protocol::io_error)? as usize;
+                if frame_size > TUNNEL_CHUNK {
+                    return Err(ErrorPayload::new(
+                        "tunnel_frame_large",
+                        "RPC tunnel frame exceeded its safety limit.",
+                        None,
+                    ));
+                }
+                left_read.read_exact(&mut buffer[..frame_size]).await.map_err(protocol::io_error)?;
+                right_write.write_all(&buffer[..frame_size]).await.map_err(protocol::io_error)?;
+                right_write.flush().await.map_err(protocol::io_error)?;
+            }
+            count = right_read.read(&mut buffer) => {
                 let count = count.map_err(protocol::io_error)?;
                 if count == 0 { break; }
-                let encrypted_count = noise.write_message(&from_local[..count], &mut encrypted).map_err(super::crypto::noise_error)?;
-                peer_write.write_u32(encrypted_count as u32).await.map_err(protocol::io_error)?;
-                peer_write.write_all(&encrypted[..encrypted_count]).await.map_err(protocol::io_error)?;
-                peer_write.flush().await.map_err(protocol::io_error)?;
-            }
-            frame_size = peer_read.read_u32() => {
-                let frame_size = frame_size.map_err(protocol::io_error)? as usize;
-                if frame_size > TUNNEL_CHUNK + 16 { return Err(ErrorPayload::new("tunnel_frame_large", "RPC tunnel frame exceeded its safety limit.", None)); }
-                peer_read.read_exact(&mut from_peer[..frame_size]).await.map_err(protocol::io_error)?;
-                let plain_count = noise.read_message(&from_peer[..frame_size], &mut from_local).map_err(super::crypto::noise_error)?;
-                local_write.write_all(&from_local[..plain_count]).await.map_err(protocol::io_error)?;
-                local_write.flush().await.map_err(protocol::io_error)?;
-            }
-        }
-    }
-    Ok(())
-}
-
-pub(crate) async fn serve_rpc(
-    mut peer: TcpStream,
-    mut noise: snow::TransportState,
-    mut rpc: TcpStream,
-) -> Result<(), ErrorPayload> {
-    let _ = peer.set_nodelay(true);
-    let _ = rpc.set_nodelay(true);
-    let (mut peer_read, mut peer_write) = peer.split();
-    let (mut rpc_read, mut rpc_write) = rpc.split();
-    let mut encrypted = vec![0_u8; TUNNEL_CHUNK + 16];
-    let mut plain = [0_u8; TUNNEL_CHUNK];
-    loop {
-        tokio::select! {
-            frame_size = peer_read.read_u32() => {
-                let frame_size = frame_size.map_err(protocol::io_error)? as usize;
-                if frame_size > encrypted.len() { return Err(ErrorPayload::new("tunnel_frame_large", "RPC tunnel frame exceeded its safety limit.", None)); }
-                peer_read.read_exact(&mut encrypted[..frame_size]).await.map_err(protocol::io_error)?;
-                let count = noise.read_message(&encrypted[..frame_size], &mut plain).map_err(super::crypto::noise_error)?;
-                rpc_write.write_all(&plain[..count]).await.map_err(protocol::io_error)?;
-                rpc_write.flush().await.map_err(protocol::io_error)?;
-            }
-            count = rpc_read.read(&mut plain) => {
-                let count = count.map_err(protocol::io_error)?;
-                if count == 0 { break; }
-                let encrypted_count = noise.write_message(&plain[..count], &mut encrypted).map_err(super::crypto::noise_error)?;
-                peer_write.write_u32(encrypted_count as u32).await.map_err(protocol::io_error)?;
-                peer_write.write_all(&encrypted[..encrypted_count]).await.map_err(protocol::io_error)?;
-                peer_write.flush().await.map_err(protocol::io_error)?;
+                left_write.write_u32(count as u32).await.map_err(protocol::io_error)?;
+                left_write.write_all(&buffer[..count]).await.map_err(protocol::io_error)?;
+                left_write.flush().await.map_err(protocol::io_error)?;
             }
         }
     }

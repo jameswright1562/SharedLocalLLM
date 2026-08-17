@@ -17,9 +17,7 @@ export function SetupWizard({ snapshot, service, onComplete }: SetupWizardProps)
   const initialStep = snapshot.runtime.status === "ready" ? 1 : 0;
   const [step, setStep] = useState(initialStep);
   const [deviceName, setDeviceName] = useState(snapshot.deviceName || "Local node");
-  const [pairCode, setPairCode] = useState("");
   const [manualEndpoint, setManualEndpoint] = useState("");
-  const [generatedCode, setGeneratedCode] = useState("");
   const [pairedNode, setPairedNode] = useState<NodeCapabilities | null>(snapshot.nodes[1] ?? null);
   const [network, setNetwork] = useState<NetworkBenchmark | undefined>(snapshot.network);
   const [busy, setBusy] = useState(false);
@@ -74,14 +72,16 @@ export function SetupWizard({ snapshot, service, onComplete }: SetupWizardProps)
     }
   }
 
-  async function createCode() {
+  async function connect() {
     setBusy(true);
     clearError();
     try {
-      const result = await service.generatePairingCode();
-      setGeneratedCode(result.code);
+      const endpoint = manualEndpoint.trim();
+      const node = endpoint ? await service.connectPeer(endpoint) : await service.connectPeer();
+      setPairedNode(node);
+      setStep(3);
     } catch (reason) {
-      reportError(reason, "Could not create a pairing code.");
+      reportError(reason, "Could not connect to the other computer.");
     } finally {
       setBusy(false);
     }
@@ -96,25 +96,6 @@ export function SetupWizard({ snapshot, service, onComplete }: SetupWizardProps)
       setStep(1);
     } catch (reason) {
       reportError(reason, "The runtime could not be installed.");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function pair() {
-    if (!pairCode.trim()) return;
-    setBusy(true);
-    clearError();
-    try {
-      const normalizedCode = pairCode.replace(/\s/g, "");
-      const endpoint = manualEndpoint.trim();
-      const node = endpoint
-        ? await service.pairWithPeer(normalizedCode, endpoint)
-        : await service.pairWithPeer(normalizedCode);
-      setPairedNode(node);
-      setStep(3);
-    } catch (reason) {
-      reportError(reason, "Pairing failed. Check the code and the connection.");
     } finally {
       setBusy(false);
     }
@@ -198,19 +179,15 @@ export function SetupWizard({ snapshot, service, onComplete }: SetupWizardProps)
           service={service}
           deviceName={deviceName}
           setDeviceName={setDeviceName}
-          pairCode={pairCode}
-          setPairCode={setPairCode}
           manualEndpoint={manualEndpoint}
           setManualEndpoint={setManualEndpoint}
-          generatedCode={generatedCode}
           pairedNode={pairedNode}
           network={network}
           busy={busy}
           runtimeProgress={runtimeProgress}
           installRuntime={installRuntime}
           checkAgain={checkAgain}
-          createCode={createCode}
-          pair={pair}
+          connect={connect}
           addFolder={addFolder}
           testNetwork={testNetwork}
           setStep={setStep}

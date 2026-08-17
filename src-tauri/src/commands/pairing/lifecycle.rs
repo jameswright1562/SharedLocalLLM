@@ -8,11 +8,11 @@ use tauri::{AppHandle, Manager};
 use crate::{
     pairing::{now, PeerRecord},
     peer::{
-        DiscoveryAnnouncement, DiscoveryBroadcaster, PeerPairingEvent, PeerServer,
-        PeerServerConfig, TrustedPeer, DISCOVERY_PORT,
+        DiscoveryAnnouncement, DiscoveryBroadcaster, PeerConnectedEvent, PeerServer,
+        PeerServerConfig, DISCOVERY_PORT,
     },
-    runtime, secrets,
-    state::{peer_secret_path, AppState},
+    runtime,
+    state::AppState,
     types::{ErrorPayload, NodeCapabilities},
 };
 
@@ -20,16 +20,14 @@ use super::PAIRING_PORT;
 
 pub(super) async fn start_peer_server(
     state: &AppState,
-    pairing_code: Option<String>,
 ) -> Result<(PeerServer, DiscoveryBroadcaster), ErrorPayload> {
-    let (local, peers, api_key, api_port, catalogue) = {
+    let (local, api_key, api_port, catalogue) = {
         let inner = state.lock()?;
         let mut local = inner.local.clone();
         local.cluster_status = Some(inner.cluster.status.clone());
         local.cluster_model_id = inner.cluster.model_id.clone();
         (
             local,
-            inner.peers.clone(),
             inner.api_key.clone(),
             inner.api_port,
             serde_json::to_value(&inner.models).unwrap_or_default(),
@@ -37,28 +35,6 @@ pub(super) async fn start_peer_server(
     };
     let capabilities = serde_json::to_value(&local)
         .map_err(|error| ErrorPayload::new("capabilities_encode", error.to_string(), None))?;
-    let mut trusted_peers = Vec::new();
-    for peer in peers {
-        match secrets::load(&peer_secret_path(&peer.id))? {
-            Some(bytes) => match String::from_utf8(bytes) {
-                Ok(channel_key) => trusted_peers.push(TrustedPeer {
-                    device_id: peer.id,
-                    device_name: peer.name,
-                    channel_key,
-                }),
-                Err(_) => state.log(
-                    "ERROR",
-                    "peer_secret_invalid",
-                    "A protected peer credential is not valid UTF-8",
-                ),
-            },
-            None => state.log(
-                "WARN",
-                "peer_secret_missing",
-                "A saved peer cannot reconnect until it is paired again",
-            ),
-        }
-    }
     let rpc_path = runtime::runtime_root()
         .join("current")
         .join("ggml-rpc-server.exe");
@@ -67,8 +43,6 @@ pub(super) async fn start_peer_server(
         device_id: local.id.clone(),
         device_name: local.name.clone(),
         capabilities,
-        pairing_code,
-        trusted_peers,
         rpc_binary: rpc_path.is_file().then_some(rpc_path),
         rpc_override: None,
         catalogue,
@@ -106,7 +80,7 @@ pub async fn start_persistent_peer_service(app: AppHandle) {
     if let Some(server) = previous.1 {
         server.shutdown().await;
     }
-    match start_peer_server(&state, None).await {
+    match start_peer_server(&state).await {
         Ok((server, broadcaster)) => {
             let address = server.address().to_string();
             let mut peer = state.peer.lock().await;
@@ -123,20 +97,31 @@ pub async fn start_persistent_peer_service(app: AppHandle) {
     }
 }
 
-pub(super) fn persist_incoming_pair(
-    state: &AppState,
-    event: PeerPairingEvent,
-) -> Result<(), ErrorPayload> {
-    let mut capabilities: NodeCapabilities = serde_json::from_value(event.capabilities)
-        .map_err(|error| ErrorPayload::new("peer_capabilities_invalid", error.to_string(), None))?;
+pub async fn drain_peer_connects(state: &AppState) {
+    let events = {
+        let peer = state.peer.lock().await;
+        match peer.server.as_ref() {
+            Some(server) => server.take_connected(),
+            None => Vec::new(),
+        }
+    };
+    for event in events {
+        persist_connected_peer(state, event);
+    }
+}
+
+fn persist_connected_peer(state: &AppState, event: PeerConnectedEvent) {
+    let mut capabilities: NodeCapabilities = match serde_json::from_value(event.capabilities) {
+        Ok(capabilities) => capabilities,
+        Err(error) => {
+            state.log("WARN", "peer_capabilities_invalid", &error.to_string());
+            return;
+        }
+    };
     capabilities.id = event.device_id.clone();
     capabilities.name = event.device_name.clone();
     capabilities.online = true;
     capabilities.role = "worker".into();
-    secrets::store(
-        &peer_secret_path(&event.device_id),
-        event.channel_key.as_bytes(),
-    )?;
     let endpoint = SocketAddr::new(event.source.ip(), PAIRING_PORT);
     let record = PeerRecord {
         id: event.device_id,
@@ -145,21 +130,17 @@ pub(super) fn persist_incoming_pair(
         trusted_at: now(),
         capabilities: Some(capabilities),
     };
-    {
-        let mut inner = state.lock()?;
+    if let Ok(mut inner) = state.lock() {
         inner.peers.clear();
         inner.peers.push(record);
     }
-    state.persist()?;
+    if let Err(error) = state.persist() {
+        state.log("WARN", "peer_persist_failed", &error.to_string());
+    }
     if let Err(error) = state.refresh_models_shared() {
         state.log("WARN", "model_fit_refresh_failed", &error.to_string());
     }
-    state.log(
-        "INFO",
-        "pairing_accepted",
-        "Saved the trusted peer on the code host",
-    );
-    Ok(())
+    state.log("INFO", "peer_connected", "The other computer connected");
 }
 
 pub async fn refresh_peer_status(state: &AppState) {
@@ -185,7 +166,7 @@ pub async fn refresh_peer_status(state: &AppState) {
                 state.log(
                     "INFO",
                     "peer_reconnected",
-                    "The trusted peer answered a heartbeat",
+                    "The other computer answered a heartbeat",
                 );
             }
         }

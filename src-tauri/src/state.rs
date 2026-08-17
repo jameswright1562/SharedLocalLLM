@@ -7,7 +7,7 @@ use std::{
     sync::{Mutex, MutexGuard},
 };
 
-pub use persistence::{data_root, directory_for, logs_root, peer_secret_path, regenerate_key};
+pub use persistence::{data_root, directory_for, logs_root, regenerate_key};
 use persistence::{new_api_key, read_settings, save_settings, secrets_path, PersistedSettings};
 
 use crate::{
@@ -15,7 +15,7 @@ use crate::{
     models::{
         default_lm_studio_roots, discover_gguf_models, expand_lm_studio_roots, lms_catalog_roots,
     },
-    pairing::{PairingManager, PeerRecord},
+    pairing::PeerRecord,
     peer::{DiscoveryBroadcaster, PeerClient, PeerServer, RpcForwarder},
     runtime::{self, ProcessManager},
     secrets,
@@ -28,7 +28,6 @@ pub fn redact_diagnostic(value: &str) -> String {
 
 pub struct AppState {
     pub inner: Mutex<InnerState>,
-    pub pairing: Mutex<PairingManager>,
     pub processes: Mutex<ProcessManager>,
     pub peer: tokio::sync::Mutex<PeerRuntime>,
     pub chat_cancel: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
@@ -40,7 +39,6 @@ pub struct AppState {
 pub struct PeerRuntime {
     pub server: Option<PeerServer>,
     pub discovery: Option<DiscoveryBroadcaster>,
-    pub pairing_session_id: Option<String>,
     pub client: Option<std::sync::Arc<PeerClient>>,
     pub forwarder: Option<RpcForwarder>,
 }
@@ -140,7 +138,6 @@ impl AppState {
                 api_port: persisted.api_port.unwrap_or(11435),
                 autostart: persisted.autostart,
             }),
-            pairing: Mutex::new(PairingManager::default()),
             processes: Mutex::new(ProcessManager::default()),
             peer: tokio::sync::Mutex::new(PeerRuntime::default()),
             chat_cancel: Mutex::new(None),
@@ -241,7 +238,7 @@ impl AppState {
             (inner.local.id.clone(), inner.peers.first().cloned())
         };
         let peer = peer.ok_or_else(|| {
-            ErrorPayload::new("peer_unavailable", "Pair another computer first.", None)
+            ErrorPayload::new("peer_unavailable", "Connect another computer first.", None)
         })?;
         let endpoint = peer
             .address
@@ -249,8 +246,8 @@ impl AppState {
             .ok_or_else(|| {
                 ErrorPayload::new(
                     "peer_endpoint_missing",
-                    "The paired computer has no saved endpoint.",
-                    Some("Pair the computers again.".into()),
+                    "The connected computer has no saved endpoint.",
+                    Some("Connect the computers again.".into()),
                 )
             })?
             .parse()
@@ -258,19 +255,10 @@ impl AppState {
                 ErrorPayload::new(
                     "peer_endpoint_invalid",
                     "The saved peer endpoint is invalid.",
-                    Some("Pair the computers again.".into()),
+                    Some("Connect the computers again.".into()),
                 )
             })?;
-        let channel_key = secrets::load(&peer_secret_path(&peer.id))?
-            .and_then(|bytes| String::from_utf8(bytes).ok())
-            .ok_or_else(|| {
-                ErrorPayload::new(
-                    "peer_secret_missing",
-                    "The protected peer credential is unavailable.",
-                    Some("Pair the computers again.".into()),
-                )
-            })?;
-        let client = std::sync::Arc::new(PeerClient::trusted(endpoint, channel_key, local_id));
+        let client = std::sync::Arc::new(PeerClient::new(endpoint, local_id));
         self.peer.lock().await.client = Some(client.clone());
         Ok(client)
     }

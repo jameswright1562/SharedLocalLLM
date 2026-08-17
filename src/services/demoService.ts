@@ -67,11 +67,7 @@ export const demoService: AppService = {
     await delay(850);
     return structuredClone(demoSnapshot.network as NetworkBenchmark);
   },
-  async generatePairingCode() {
-    await delay();
-    return { code: "482 916", expiresInSeconds: 300 };
-  },
-  async pairWithPeer() {
+  async connectPeer() {
     await delay(620);
     const peerNode = demoNodes[1]!;
     if (!demoSnapshot.nodes.some((node) => node.id === "peer-node"))

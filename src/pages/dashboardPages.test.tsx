@@ -64,28 +64,23 @@ describe("dashboard pages", () => {
 
     snapshot.nodes = snapshot.nodes.slice(0, 1);
     rerender(<NodesPage {...props(snapshot)} />);
-    expect(screen.getByText(/no worker paired/i)).toBeInTheDocument();
+    expect(screen.getByText(/no worker connected/i)).toBeInTheDocument();
   });
 
-  it("pairs a worker from the nodes page after a refresh error", async () => {
+  it("connects a worker from the nodes page after a refresh error", async () => {
     const user = userEvent.setup();
     const snapshot = cloneSnapshot();
     snapshot.nodes = snapshot.nodes.slice(0, 1);
     const refreshHardware = vi.fn().mockRejectedValue("probe failed");
-    const generatePairingCode = vi
-      .fn()
-      .mockResolvedValue({ code: "111 222", expiresInSeconds: 300 });
-    const pairWithPeer = vi.fn().mockResolvedValue(cloneSnapshot().nodes[1]);
-    const pageProps = props(snapshot, { refreshHardware, generatePairingCode, pairWithPeer });
+    const connectPeer = vi.fn().mockResolvedValue(cloneSnapshot().nodes[1]);
+    const pageProps = props(snapshot, { refreshHardware, connectPeer });
     render(<NodesPage {...pageProps} />);
 
     await user.click(screen.getByRole("button", { name: /refresh hardware/i }));
     expect(await screen.findByRole("status")).toHaveTextContent("probe failed");
-    await user.click(screen.getByRole("button", { name: /create pairing code/i }));
-    expect(await screen.findByText("111 222")).toBeInTheDocument();
-    await user.type(screen.getByLabelText(/enter code/i), "111222");
-    await user.click(screen.getByRole("button", { name: /pair computers/i }));
-    expect(pairWithPeer).toHaveBeenCalledWith("111222");
+    await user.type(screen.getByLabelText(/ethernet ipv4 address/i), "10.10.10.2");
+    await user.click(screen.getByRole("button", { name: /^connect$/i }));
+    expect(connectPeer).toHaveBeenCalledWith("10.10.10.2");
   });
 
   it("forgets a paired worker only after explicit confirmation", async () => {

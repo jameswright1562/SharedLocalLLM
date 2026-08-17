@@ -10,6 +10,7 @@ use crate::{
 
 #[tauri::command]
 pub async fn get_app_snapshot(state: State<'_, AppState>) -> Result<AppSnapshot, ErrorPayload> {
+    crate::commands::pairing::lifecycle::drain_peer_connects(&state).await;
     crate::commands::pairing::lifecycle::refresh_peer_status(&state).await;
     merge_peer_catalogue(&state).await;
     state.snapshot()

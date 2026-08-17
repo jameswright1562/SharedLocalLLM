@@ -7,7 +7,6 @@ use shared_local_llm::{
     },
     models::discover_gguf_models,
     network::{classify_network, NetworkClass, NetworkMetrics},
-    pairing::PairingManager,
 };
 
 fn push_string(bytes: &mut Vec<u8>, value: &str) {
@@ -165,17 +164,4 @@ fn classifies_network_using_p95_latency() {
         classify_network(NetworkMetrics::new(900.0, 12.0, 0.0, 0.0)),
         NetworkClass::Poor
     );
-}
-
-#[test]
-fn pairing_codes_are_six_digit_single_use_and_expire() {
-    let mut manager = PairingManager::default();
-    let code = manager.generate_at(1_000);
-    assert_eq!(code.len(), 6);
-    assert!(code.chars().all(|c| c.is_ascii_digit()));
-    assert!(manager.consume_at(&code, 1_100).is_ok());
-    assert!(manager.consume_at(&code, 1_101).is_err());
-
-    let expired = manager.generate_at(2_000);
-    assert!(manager.consume_at(&expired, 2_301).is_err());
 }

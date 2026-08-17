@@ -155,28 +155,23 @@ describe("SharedLocalLLM app", () => {
     expect(await screen.findByText(/usable/i, { selector: ".classification" })).toBeInTheDocument();
   });
 
-  it("completes the pairing step with a generated code", async () => {
+  it("connects to the other computer during setup", async () => {
     const user = userEvent.setup();
     const setupSnapshot = {
       ...readySnapshot,
       setupComplete: false,
       nodes: readySnapshot.nodes.slice(0, 1),
     };
-    const generatePairingCode = vi
-      .fn()
-      .mockResolvedValue({ code: "481 209", expiresInSeconds: 300 });
-    const pairWithPeer = vi.fn().mockResolvedValue(readySnapshot.nodes[1]);
-    render(<App service={serviceWith(setupSnapshot, { generatePairingCode, pairWithPeer })} />);
+    const connectPeer = vi.fn().mockResolvedValue(readySnapshot.nodes[1]);
+    render(<App service={serviceWith(setupSnapshot, { connectPeer })} />);
 
     expect(await screen.findByRole("heading", { name: /name this computer/i })).toBeInTheDocument();
     await user.clear(screen.getByLabelText(/device name/i));
     await user.type(screen.getByLabelText(/device name/i), "Main node");
     await user.click(screen.getByRole("button", { name: /continue/i }));
-    await user.click(screen.getByRole("button", { name: /create pairing code/i }));
-    expect(await screen.findByText("481 209")).toBeInTheDocument();
-    await user.type(screen.getByLabelText(/enter code/i), "481209");
-    await user.click(screen.getByRole("button", { name: /^pair computers$/i }));
-    await waitFor(() => expect(pairWithPeer).toHaveBeenCalledWith("481209"));
+    await user.type(screen.getByLabelText(/ethernet ipv4 address/i), "10.10.10.2");
+    await user.click(screen.getByRole("button", { name: /^connect$/i }));
+    await waitFor(() => expect(connectPeer).toHaveBeenCalledWith("10.10.10.2"));
   });
 
   it("masks the API key and can reveal it", async () => {

@@ -22,7 +22,7 @@ pub fn check_version(version: u16) -> Result<(), ErrorPayload> {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Request {
-    Pair {
+    Connect {
         version: u16,
         device_id: String,
         device_name: String,
@@ -50,16 +50,14 @@ pub enum Request {
 #[serde(rename_all = "camelCase")]
 pub struct ClientHello {
     pub device_id: String,
-    pub pairing: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Response {
-    Paired {
+    Connected {
         device_id: String,
         device_name: String,
-        channel_key: String,
     },
     Heartbeat,
     Capabilities {
@@ -118,9 +116,43 @@ pub async fn read_plain<R: AsyncRead + Unpin, T: for<'de> Deserialize<'de>>(
     serde_json::from_slice(&payload).map_err(protocol_error)
 }
 
+pub async fn write_bytes<W: AsyncWrite + Unpin>(
+    writer: &mut W,
+    bytes: &[u8],
+) -> Result<(), ErrorPayload> {
+    if bytes.len() > MAX_FRAME {
+        return Err(ErrorPayload::new(
+            "peer_frame_large",
+            "Peer frame exceeds the one MiB safety limit.",
+            None,
+        ));
+    }
+    writer
+        .write_u32(bytes.len() as u32)
+        .await
+        .map_err(io_error)?;
+    writer.write_all(bytes).await.map_err(io_error)?;
+    writer.flush().await.map_err(io_error)
+}
+
+pub async fn read_bytes<R: AsyncRead + Unpin>(reader: &mut R) -> Result<Vec<u8>, ErrorPayload> {
+    let size = reader.read_u32().await.map_err(io_error)? as usize;
+    if size > MAX_FRAME {
+        return Err(ErrorPayload::new(
+            "peer_frame_large",
+            "Peer frame exceeds the one MiB safety limit.",
+            None,
+        ));
+    }
+    let mut payload = vec![0; size];
+    reader.read_exact(&mut payload).await.map_err(io_error)?;
+    Ok(payload)
+}
+
 fn protocol_error(error: serde_json::Error) -> ErrorPayload {
     ErrorPayload::new("peer_protocol", error.to_string(), None)
 }
+
 pub fn io_error(error: std::io::Error) -> ErrorPayload {
     ErrorPayload::new(
         "peer_io",

@@ -49,7 +49,7 @@ Local app/API                                            Local app/API
 127.0.0.1:11435                                          127.0.0.1:11435
       │                                                        │
       ▼                                                        │
-SharedLocalLLM coordinator ◀── encrypted peer channel ──▶ SharedLocalLLM worker
+SharedLocalLLM coordinator ◀── plain peer channel (TCP 49158) ──▶ SharedLocalLLM worker
       │                                                        │
       ▼                                                        ▼
 llama-server                                       ggml-rpc-server on 127.0.0.1
@@ -57,10 +57,10 @@ llama-server                                       ggml-rpc-server on 127.0.0.1
       └──────────── model layers use both compute devices ─────┘
 ```
 
-The raw RPC socket is **never meant to be exposed to the LAN**. Peer traffic uses an encrypted Noise
-channel protected by an expiring six-digit pairing code. This is a trusted-private-LAN preview, not
-production-hardened peer identity or authorization; stronger authentication is tracked in
-[`ideas.md`](ideas.md). The local model API also stays on `127.0.0.1` and requires a bearer key.
+The raw RPC socket is **never meant to be exposed to the LAN**. Peer traffic flows over a plain
+(unencrypted) TCP channel on a trusted private LAN; there is no pairing code and no application-layer
+authentication, so only use this on a network you control with two computers you trust. The local
+model API stays on `127.0.0.1` and requires a bearer key.
 
 Read [Architecture](docs/architecture.md) for component boundaries, lifecycle, persistence, and the
 full security model.

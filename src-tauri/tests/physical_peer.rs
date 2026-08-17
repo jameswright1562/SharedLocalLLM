@@ -12,12 +12,10 @@
 //!
 //! # Running
 //!
-//! On this PC, set the peer endpoint and (for the heartbeat test) the shared channel key shown by
-//! the app, then run:
+//! On this PC, set the peer endpoint, then run:
 //!
 //! ```text
 //! $env:SHARED_LOCAL_LLM_PEER_ENDPOINT = "10.10.10.2"
-//! $env:SHARED_LOCAL_LLM_PEER_CHANNEL_KEY = "<channel key shown by the app on the peer PC>"
 //! cargo test --manifest-path src-tauri/Cargo.toml --test physical_peer -- --ignored --nocapture
 //! ```
 //!
@@ -91,15 +89,9 @@ async fn peer_broadcasts_discovery_announcements() {
 
 #[tokio::test]
 #[ignore]
-async fn peer_channel_completes_a_heartbeat_with_a_shared_channel_key() {
+async fn peer_channel_completes_a_heartbeat() {
     let endpoint = peer_endpoint();
-    let channel_key = std::env::var("SHARED_LOCAL_LLM_PEER_CHANNEL_KEY").unwrap_or_else(|_| {
-        panic!(
-            "set SHARED_LOCAL_LLM_PEER_CHANNEL_KEY to the channel key shown by the app on the \
-             peer PC before running this test"
-        )
-    });
-    let client = PeerClient::trusted(endpoint, channel_key, "physical-test".into());
+    let client = PeerClient::new(endpoint, "physical-test".into());
     let healthy = client
         .heartbeat()
         .await

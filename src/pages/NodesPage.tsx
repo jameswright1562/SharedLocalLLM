@@ -9,9 +9,7 @@ export function NodesPage({ snapshot, service, refreshSnapshot }: PageProps) {
   const [refreshing, setRefreshing] = useState(false);
   const [confirmingReset, setConfirmingReset] = useState(false);
   const [message, setMessage] = useState("");
-  const [pairCode, setPairCode] = useState("");
   const [manualEndpoint, setManualEndpoint] = useState("");
-  const [generatedCode, setGeneratedCode] = useState("");
   async function refresh() {
     setRefreshing(true);
     setMessage("");
@@ -31,37 +29,23 @@ export function NodesPage({ snapshot, service, refreshSnapshot }: PageProps) {
       await service.resetPairing();
       await refreshSnapshot();
       setConfirmingReset(false);
-      setMessage("Paired node forgotten. Create a new pairing code to reconnect it.");
+      setMessage("Paired node forgotten. Connect again to rejoin the peer.");
     } catch (reason) {
       setMessage(describeAppError(reason, "The paired node could not be forgotten."));
     } finally {
       setRefreshing(false);
     }
   }
-  async function createCode() {
-    setRefreshing(true);
-    setMessage("");
-    try {
-      setGeneratedCode((await service.generatePairingCode()).code);
-    } catch (reason) {
-      setMessage(describeAppError(reason, "Could not create a pairing code."));
-    } finally {
-      setRefreshing(false);
-    }
-  }
-  async function pair() {
-    if (pairCode.replace(/\s/g, "").length !== 6) return;
+  async function connect() {
     setRefreshing(true);
     setMessage("");
     try {
       const endpoint = manualEndpoint.trim();
-      await (endpoint
-        ? service.pairWithPeer(pairCode.replace(/\s/g, ""), endpoint)
-        : service.pairWithPeer(pairCode.replace(/\s/g, "")));
+      await (endpoint ? service.connectPeer(endpoint) : service.connectPeer());
       await refreshSnapshot();
-      setMessage("Paired with the other computer.");
+      setMessage("Connected to the other computer.");
     } catch (reason) {
-      setMessage(describeAppError(reason, "Pairing failed."));
+      setMessage(describeAppError(reason, "Could not connect to the other computer."));
     } finally {
       setRefreshing(false);
     }
@@ -159,24 +143,21 @@ export function NodesPage({ snapshot, service, refreshSnapshot }: PageProps) {
           <div className="empty-state compact">
             <span>02</span>
             <div>
-              <h2>No worker paired</h2>
+              <h2>No worker connected</h2>
               <p>
-                The local node can still run models that fit. Create or enter a pairing code below.
+                The local node can still run models that fit. Enter a peer IP or let discovery find
+                the other computer.
               </p>
             </div>
           </div>
         )}
         {snapshot.nodes.length < 2 && (
           <PairingPanel
-            generatedCode={generatedCode}
-            pairCode={pairCode}
-            setPairCode={setPairCode}
             manualEndpoint={manualEndpoint}
             setManualEndpoint={setManualEndpoint}
             pairedNode={null}
             busy={refreshing}
-            createCode={() => void createCode()}
-            pair={() => void pair()}
+            connect={() => void connect()}
           />
         )}
       </div>

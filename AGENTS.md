@@ -19,9 +19,10 @@ documentation.
 - Keep model files in place. Never move, rename, overwrite, or delete them.
 - Raw `llama.cpp` RPC must bind to loopback only and must never be exposed to the LAN.
 - The inference API must bind to loopback only and require a per-install bearer key.
-- Peer traffic must use the authenticated application tunnel. The Windows network category
-  (Public, Private, Domain) is informational only and never blocks pairing, discovery, manual peer
-  connection, benchmarking, RPC tunnelling, or cluster launch.
+- Peer traffic uses a plain TCP tunnel over a trusted private LAN (no pairing code and no
+  application-layer encryption). The Windows network category (Public, Private, Domain) is
+  informational only and never blocks discovery, connection, benchmarking, RPC tunnelling, or
+  cluster launch.
 - Treat upstream RPC and multimodal support as experimental. Do not promise distributed speedups or
   untested physical-hardware compatibility.
 - Preserve actionable errors after redacting secrets, prompts, image content, and personal paths.

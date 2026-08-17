@@ -8,19 +8,15 @@ interface SetupStepContentProps {
   service: AppService;
   deviceName: string;
   setDeviceName: Dispatch<SetStateAction<string>>;
-  pairCode: string;
-  setPairCode: Dispatch<SetStateAction<string>>;
   manualEndpoint: string;
   setManualEndpoint: Dispatch<SetStateAction<string>>;
-  generatedCode: string;
   pairedNode: NodeCapabilities | null;
   network?: NetworkBenchmark;
   busy: boolean;
   runtimeProgress: { percent: number; status: string };
   installRuntime: () => Promise<void>;
   checkAgain: () => Promise<void>;
-  createCode: () => Promise<void>;
-  pair: () => Promise<void>;
+  connect: () => Promise<void>;
   addFolder: () => Promise<void>;
   testNetwork: () => Promise<void>;
   finish: () => Promise<void>;
@@ -133,35 +129,27 @@ function IdentityStep({ snapshot, deviceName, setDeviceName, setStep }: SetupSte
 }
 
 function PairStep({
-  generatedCode,
-  pairCode,
-  setPairCode,
   manualEndpoint,
   setManualEndpoint,
   pairedNode,
   busy,
-  createCode,
-  pair,
+  connect,
   setStep,
 }: SetupStepContentProps) {
   return (
     <section>
-      <p className="section-kicker">Encrypted peer channel</p>
-      <h2>Pair the second computer</h2>
+      <p className="section-kicker">Peer connection</p>
+      <h2>Connect the second computer</h2>
       <p className="lede">
-        Open SharedLocalLLM on the other computer. Create a code on either screen and enter it on
-        the other. You can finish setup with one computer and pair later from Nodes.
+        Open SharedLocalLLM on the other computer and connect from either screen. You can finish
+        setup with one computer and connect later from Nodes.
       </p>
       <PairingPanel
-        generatedCode={generatedCode}
-        pairCode={pairCode}
-        setPairCode={setPairCode}
         manualEndpoint={manualEndpoint}
         setManualEndpoint={setManualEndpoint}
         pairedNode={pairedNode}
         busy={busy}
-        createCode={() => void createCode()}
-        pair={() => void pair()}
+        connect={() => void connect()}
         onContinue={() => setStep(3)}
       />
       <div className="button-row">
