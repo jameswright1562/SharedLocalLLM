@@ -1,10 +1,10 @@
-pub mod inference;
 pub mod autostart;
 pub mod capacity;
 pub mod commands;
 pub mod firewall;
 pub mod gguf;
 pub mod hardware;
+pub mod inference;
 pub mod models;
 pub mod network;
 pub mod pairing;
@@ -26,8 +26,7 @@ pub fn run() {
     tauri::Builder::default()
         .manage(AppState::new())
         .setup(|app| {
-            inference::rpc_worker::start_rpc_worker()
-                .map_err(|error| error.to_string())?;
+            inference::rpc_worker::start_rpc_worker().map_err(|error| error.to_string())?;
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 commands::pairing::lifecycle::start_persistent_peer_service(handle).await;

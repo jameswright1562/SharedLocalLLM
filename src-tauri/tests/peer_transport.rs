@@ -11,14 +11,13 @@ use tokio::{
     net::TcpListener,
 };
 
-async fn start_peer(rpc_override: Option<SocketAddr>) -> PeerServer {
+async fn start_peer(rpc_target: Option<SocketAddr>) -> PeerServer {
     PeerServer::start(PeerServerConfig {
         bind: SocketAddr::from((Ipv4Addr::LOCALHOST, 0)),
         device_id: "worker-id".into(),
         device_name: "Worker".into(),
         capabilities: json!({"id":"worker-id","name":"Worker","gpu":{"name":"Worker GPU"}}),
-        rpc_binary: None,
-        rpc_override,
+        rpc_target: rpc_target.unwrap_or_else(|| SocketAddr::from((Ipv4Addr::LOCALHOST, 50052))),
         catalogue: json!([]),
         api_key: "test-key".into(),
         api_port: 11435,
@@ -86,15 +85,28 @@ async fn benchmark_handles_the_full_network_test_payload_size() {
 async fn rpc_tunnel_preserves_bytes_and_cleans_up_after_disconnect() {
     let echo = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
     let echo_address = echo.local_addr().unwrap();
+    let (stop_tx, mut stop_rx) = tokio::sync::oneshot::channel::<()>();
     let echo_task = tokio::spawn(async move {
-        let (mut socket, _) = echo.accept().await.unwrap();
-        let mut buffer = [0_u8; 256];
         loop {
-            let count = socket.read(&mut buffer).await.unwrap();
-            if count == 0 {
-                break;
+            tokio::select! {
+                _ = &mut stop_rx => break,
+                accepted = echo.accept() => {
+                    let Ok((mut socket, _)) = accepted else { break };
+                    tokio::spawn(async move {
+                        let mut buffer = [0_u8; 256];
+                        loop {
+                            match socket.read(&mut buffer).await {
+                                Ok(0) | Err(_) => break,
+                                Ok(count) => {
+                                    if socket.write_all(&buffer[..count]).await.is_err() {
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    });
+                }
             }
-            socket.write_all(&buffer[..count]).await.unwrap();
         }
     });
     let peer = start_peer(Some(echo_address)).await;
@@ -116,6 +128,7 @@ async fn rpc_tunnel_preserves_bytes_and_cleans_up_after_disconnect() {
 
     drop(local);
     tunnel.shutdown().await;
+    let _ = stop_tx.send(());
     tokio::time::timeout(Duration::from_secs(2), echo_task)
         .await
         .unwrap()

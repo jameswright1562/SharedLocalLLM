@@ -1,11 +1,6 @@
-use std::{
-    net::{Ipv4Addr, SocketAddr},
-    process::Command,
-    sync::Arc,
-    time::Duration,
-};
+use std::{net::SocketAddr, sync::Arc, time::Duration};
 
-use tokio::net::{TcpListener, TcpStream};
+use tokio::net::TcpStream;
 
 use super::connection::ServerState;
 use crate::{
@@ -83,7 +78,7 @@ async fn ensure_worker(state: &ServerState) -> Result<SocketAddr, ErrorPayload> 
     // Use the embedded llama.cpp RPC server instead of external ggml-rpc-server
     // The RPC worker is already started in lib.rs via start_rpc_worker()
     // and listens on a fixed loopback endpoint
-    
+
     let mut worker = state.worker.lock().await;
     let running = match worker.as_mut() {
         Some(child) => child
@@ -98,20 +93,22 @@ async fn ensure_worker(state: &ServerState) -> Result<SocketAddr, ErrorPayload> 
             return Ok(target);
         }
     }
-    if let Some(target) = state.rpc_override {
-        *state.rpc_target.lock().await = Some(target);
-        return Ok(target);
-    }
-    
     // The embedded RPC worker is started at application startup
-    // and listens on 127.0.0.1:50052
-    let target = SocketAddr::from(([127, 0, 0, 1], 50052));
-    
-    // Try to connect to the embedded RPC server
+    // and listens on 127.0.0.1:50052. Prefer a target that has already
+    // been configured, otherwise fall back to that fixed endpoint.
+    let target = state
+        .rpc_target
+        .lock()
+        .await
+        .as_ref()
+        .copied()
+        .unwrap_or_else(|| SocketAddr::from(([127, 0, 0, 1], 50052)));
+
+    // Try to connect to the RPC server
     match TcpStream::connect(target).await {
         Ok(_) => {
             // RPC server is ready
-            eprintln!("[INFO] Connected to embedded RPC worker at {}", target);
+            eprintln!("[INFO] Connected to RPC worker at {}", target);
             *state.rpc_target.lock().await = Some(target);
             Ok(target)
         }
@@ -119,7 +116,7 @@ async fn ensure_worker(state: &ServerState) -> Result<SocketAddr, ErrorPayload> 
             // RPC server not ready or not started
             Err(ErrorPayload::new(
                 "rpc_worker_unavailable",
-                "The embedded RPC worker is not available.",
+                "The RPC worker is not available.",
                 Some(format!("Failed to connect to {} : {}", target, e)),
             ))
         }

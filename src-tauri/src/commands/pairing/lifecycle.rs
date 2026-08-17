@@ -11,7 +11,6 @@ use crate::{
         DiscoveryAnnouncement, DiscoveryBroadcaster, PeerConnectedEvent, PeerServer,
         PeerServerConfig, DISCOVERY_PORT,
     },
-    runtime,
     state::AppState,
     types::{ErrorPayload, NodeCapabilities},
 };
@@ -36,33 +35,20 @@ pub(super) async fn start_peer_server(
     let capabilities = serde_json::to_value(&local)
         .map_err(|error| ErrorPayload::new("capabilities_encode", error.to_string(), None))?;
     let server = PeerServer::start(PeerServerConfig {
-            bind: SocketAddr::from((
-                Ipv4Addr::UNSPECIFIED,
-                PAIRING_PORT,
-            )),
+        bind: SocketAddr::from((Ipv4Addr::UNSPECIFIED, PAIRING_PORT)),
 
-            device_id: local.id.clone(),
-            device_name: local.name.clone(),
+        device_id: local.id.clone(),
+        device_name: local.name.clone(),
 
-            capabilities: serde_json::to_value(&local)
-                .map_err(|error| {
-                    ErrorPayload::new(
-                        "capabilities_encode",
-                        error.to_string(),
-                        None,
-                    )
-                })?,
+        capabilities,
 
-            pairing_code,
+        rpc_target: SocketAddr::from((Ipv4Addr::LOCALHOST, 50052)),
 
-            trusted_peers,
-
-            rpc_target: SocketAddr::from((
-                Ipv4Addr::LOCALHOST,
-                RPC_FORWARD_PORT
-            )),
-        })
-        .await?;
+        catalogue,
+        api_key,
+        api_port,
+    })
+    .await?;
     let broadcaster = DiscoveryBroadcaster::start(DiscoveryAnnouncement {
         protocol_version: 3,
         device_id: local.id,

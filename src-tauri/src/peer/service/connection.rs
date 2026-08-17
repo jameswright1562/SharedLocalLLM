@@ -1,4 +1,4 @@
-use std::{net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
+use std::{net::SocketAddr, sync::Arc, time::Duration};
 
 use serde_json::Value;
 use tokio::{net::TcpStream, sync::Mutex};
@@ -29,7 +29,7 @@ impl ServerState {
             device_name: config.device_name,
             capabilities: Mutex::new(config.capabilities),
             connected: std::sync::Mutex::new(Vec::new()),
-            rpc_target: Mutex::new(config.rpc_override),
+            rpc_target: Mutex::new(Some(config.rpc_target)),
             worker: Mutex::new(None),
             catalogue: Mutex::new(config.catalogue),
             api_key: Mutex::new(config.api_key),

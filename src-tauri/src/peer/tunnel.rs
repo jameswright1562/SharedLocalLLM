@@ -23,11 +23,16 @@ pub struct RpcForwarder {
 }
 
 impl RpcForwarder {
-    pub(crate) async fn start(client: Arc<PeerClient>, use_new_library: bool) -> Result<Self, ErrorPayload> {
-        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST,
-            if use_new_library { RPC_FORWARD_PORT } else {0}))
-            .await
-            .map_err(protocol::io_error)?;
+    pub(crate) async fn start(
+        client: Arc<PeerClient>,
+        use_new_library: bool,
+    ) -> Result<Self, ErrorPayload> {
+        let listener = TcpListener::bind((
+            Ipv4Addr::LOCALHOST,
+            if use_new_library { RPC_FORWARD_PORT } else { 0 },
+        ))
+        .await
+        .map_err(protocol::io_error)?;
         let _ = listener.set_ttl(64);
         let local_address = listener.local_addr().map_err(protocol::io_error)?;
         let (stop, mut stopped) = oneshot::channel();

@@ -191,6 +191,13 @@ Run the real Tauri desktop shell when working on native commands:
 pnpm tauri dev
 ```
 
+> [!NOTE]
+> Run the desktop shell from an **administrator** PowerShell. The app creates a program-scoped
+> Windows Firewall rule for the peer ports on startup; when the process is not elevated,
+> `New-NetFirewallRule` fails with "Access is denied" and the peers cannot connect through the
+> firewall. Launching the terminal as administrator keeps development behaviour identical to the
+> installed app.
+
 ### 4. Run the checks
 
 ```powershell

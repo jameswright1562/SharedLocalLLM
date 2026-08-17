@@ -9,7 +9,6 @@ pub(crate) use control::{halt as halt_runtime, idle_session as idle_cluster};
 pub use split::estimate_model_split;
 
 use crate::{
-    runtime,
     state::AppState,
     types::{ClusterSession, ErrorPayload, ModelLoadConfig},
 };
@@ -22,7 +21,7 @@ pub async fn start_cluster(
 ) -> Result<ClusterSession, ErrorPayload> {
     let _guard = state.cluster_lock.lock().await;
     control::halt(&state).await;
-    let (model, api_key, api_port, coordinator, peer_record, mut normalized_config) = {
+    let (model, _api_key, _api_port, coordinator, peer_record, mut normalized_config) = {
         let inner = state.lock()?;
         let model = inner
             .models
@@ -154,20 +153,26 @@ pub async fn start_cluster(
     if let Some(inference) = state.inference.as_ref() {
         let rpc_ep = rpc_endpoint.clone();
         let gpu_layers = normalized_config.gpu_layers.clone();
-        
+
         state.log(
             "DEBUG",
             "loading_model_embedded",
-            &format!("Loading {} with {} GPU layers", model.id, gpu_layers.iter().map(|a| a.layers).sum::<u32>()),
+            &format!(
+                "Loading {} with {} GPU layers",
+                model.id,
+                gpu_layers.iter().map(|a| a.layers).sum::<u32>()
+            ),
         );
-        
-        inference.load(
-            model.shard_paths[0].clone(),
-            normalized_config.context_size,
-            gpu_layers,
-            rpc_ep,
-        ).await?;
-        
+
+        inference
+            .load(
+                model.shard_paths[0].clone(),
+                normalized_config.context_size,
+                gpu_layers,
+                rpc_ep,
+            )
+            .await?;
+
         state.log(
             "INFO",
             "model_loaded_embedded",

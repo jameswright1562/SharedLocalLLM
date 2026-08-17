@@ -3789,6 +3789,7 @@ dependencies = [
  "hex",
  "ico",
  "llama-cpp-4",
+ "llama-cpp-sys-4",
  "rand 0.8.7",
  "regex",
  "reqwest 0.12.28",

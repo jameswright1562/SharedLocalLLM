@@ -37,7 +37,8 @@ tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "process"
 uuid = { version = "1", features = ["v4", "serde"] }
 walkdir = "2"
 zip = { version = "8", default-features = false, features = ["deflate"] }
-llama-cpp-4 = {version = "0.5.1", features = ["cuda", "openmp", "mtmd", "rpc"]}
+llama-cpp-4 = { version = "0.5.1", features = ["cuda", "openmp", "mtmd"] }
+llama-cpp-sys-4 = { version = "0.5.1", features = ["rpc"] }
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.61", features = ["Win32_Foundation", "Win32_Security_Cryptography", "Win32_System_JobObjects", "Win32_System_Memory", "Win32_System_Threading"] }

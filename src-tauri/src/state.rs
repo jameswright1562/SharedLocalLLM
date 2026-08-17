@@ -11,8 +11,8 @@ pub use persistence::{data_root, directory_for, logs_root, regenerate_key};
 use persistence::{new_api_key, read_settings, save_settings, secrets_path, PersistedSettings};
 
 use crate::{
-    inference::InferenceEngine,
     hardware,
+    inference::InferenceEngine,
     models::{
         default_lm_studio_roots, discover_gguf_models, expand_lm_studio_roots, lms_catalog_roots,
     },

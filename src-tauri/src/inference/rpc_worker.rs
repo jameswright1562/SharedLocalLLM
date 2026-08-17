@@ -1,8 +1,4 @@
-use std::{
-    ffi::CString,
-    ptr,
-    sync::OnceLock,
-};
+use std::{ffi::CString, ptr, sync::OnceLock};
 
 use llama_cpp_sys_4 as sys;
 
@@ -23,13 +19,7 @@ pub fn start_rpc_worker() -> Result<(), ErrorPayload> {
                 eprintln!("RPC worker failed: {error}");
             }
         })
-        .map_err(|error| {
-            ErrorPayload::new(
-                "rpc_worker_thread_failed",
-                error.to_string(),
-                None,
-            )
-        })?;
+        .map_err(|error| ErrorPayload::new("rpc_worker_thread_failed", error.to_string(), None))?;
 
     let _ = RPC_WORKER_STARTED.set(());
 
@@ -38,25 +28,20 @@ pub fn start_rpc_worker() -> Result<(), ErrorPayload> {
 
 fn run_rpc_worker() -> Result<(), ErrorPayload> {
     unsafe {
-        let device_count =
-            sys::ggml_backend_dev_count();
+        let device_count = sys::ggml_backend_dev_count();
 
         let mut devices = Vec::new();
 
         for index in 0..device_count {
-            let device =
-                sys::ggml_backend_dev_get(index);
+            let device = sys::ggml_backend_dev_get(index);
 
             if device.is_null() {
                 continue;
             }
 
-            let device_type =
-                sys::ggml_backend_dev_type(device);
+            let device_type = sys::ggml_backend_dev_type(device);
 
-            if device_type ==
-                sys::GGML_BACKEND_DEVICE_TYPE_GPU
-            {
+            if device_type == sys::GGML_BACKEND_DEVICE_TYPE_GPU {
                 devices.push(device);
             }
         }
@@ -69,9 +54,7 @@ fn run_rpc_worker() -> Result<(), ErrorPayload> {
             ));
         }
 
-        let endpoint =
-            CString::new("127.0.0.1:50052")
-                .expect("static RPC endpoint");
+        let endpoint = CString::new("127.0.0.1:50052").expect("static RPC endpoint");
 
         sys::ggml_backend_rpc_start_server(
             endpoint.as_ptr(),

@@ -1,21 +1,16 @@
-use std::time::Duration;
-
-use crate::{
-    state::AppState,
-    types::{ClusterSession, ErrorPayload},
-};
+use crate::{state::AppState, types::ClusterSession};
 
 pub(crate) async fn halt(state: &AppState) {
     // Unload model from inference engine
     if let Some(inference) = state.inference.as_ref() {
         let _ = inference.unload().await;
     }
-    
+
     // Stop any legacy external processes
     if let Ok(mut processes) = state.processes.lock() {
         processes.stop();
     }
-    
+
     let mut peer = state.peer.lock().await;
     if let Some(forwarder) = peer.forwarder.take() {
         drop(peer);
@@ -36,60 +31,6 @@ pub(crate) fn idle_session(has_peer: bool) -> ClusterSession {
         status: if has_peer { "ready" } else { "idle" }.into(),
         ..ClusterSession::default()
     }
-}
-
-const HEALTH_TIMEOUT: Duration = Duration::from_secs(120);
-const HEALTH_POLL_INTERVAL: Duration = Duration::from_millis(500);
-const HEALTH_REQUEST_TIMEOUT: Duration = Duration::from_millis(1000);
-
-pub(super) async fn wait_for_health(
-    port: u16,
-    api_key: &str,
-    state: &AppState,
-) -> Result<(), ErrorPayload> {
-    // With embedded inference engine, model load is now synchronous.
-    // This function is kept for compatibility but mostly no-op.
-    // If there was an API server, we could check its health here.
-    // For now, the model is already loaded if we got here.
-    Ok(())
-}
-
-fn server_exited(state: &AppState) -> bool {
-    state
-        .processes
-        .lock()
-        .map(|mut processes| processes.server_has_exited())
-        .unwrap_or(false)
-}
-
-fn health_error(message: &str) -> ErrorPayload {
-    ErrorPayload::new(
-        "llama_server_not_ready",
-        message,
-        Some(match runtime_log_tail() {
-            Some(tail) => format!(
-                "Runtime log tail: {}",
-                crate::state::redact_diagnostic(&tail)
-            ),
-            None => "Open the logs folder and check model/runtime compatibility.".into(),
-        }),
-    )
-}
-
-fn runtime_log_tail() -> Option<String> {
-    std::fs::read(
-        dirs::data_local_dir()
-            .unwrap_or_else(std::env::temp_dir)
-            .join("SharedLocalLLM")
-            .join("logs")
-            .join("llama-server.stderr.log"),
-    )
-    .ok()
-    .and_then(|bytes| {
-        let start = bytes.len().saturating_sub(1500);
-        String::from_utf8(bytes[start..].to_vec()).ok()
-    })
-    .filter(|text| !text.trim().is_empty())
 }
 
 pub(super) async fn publish_cluster(state: &AppState) {
