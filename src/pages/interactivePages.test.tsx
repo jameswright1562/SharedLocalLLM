@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { cloneSnapshot, serviceWith } from "../test/fixtures";
@@ -54,7 +54,7 @@ describe("interactive pages", () => {
     expect(screen.getByText("diagram.png")).toBeInTheDocument();
     await user.type(screen.getByLabelText(/^message$/i), "Explain this route");
     await user.click(screen.getByRole("button", { name: /send message/i }));
-    expect(screen.getByText(/generating/i)).toBeInTheDocument();
+    expect(screen.getByText(/processing prompt/i)).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /■ stop/i }));
     expect(cancelGeneration).toHaveBeenCalled();
     const firstCall = sendChatMessage.mock.calls[0]!;
@@ -67,6 +67,32 @@ describe("interactive pages", () => {
     await user.type(screen.getByLabelText(/^message$/i), "Again");
     await user.keyboard("{Enter}");
     expect(await screen.findByText("Second answer")).toBeInTheDocument();
+  });
+
+  it("streams tokens into the message as they arrive", async () => {
+    const user = userEvent.setup();
+    const snapshot = cloneSnapshot();
+    snapshot.cluster = { ...snapshot.cluster, status: "running", modelId: "model-text" };
+    let resolveChat!: (value: { content: string }) => void;
+    const sendChatMessage = vi
+      .fn()
+      .mockImplementation((_messages, _settings, _images, onStream) => {
+        onStream?.({ kind: "status", status: "processing" });
+        onStream?.({ kind: "token", content: "Hello" });
+        onStream?.({ kind: "token", content: " world" });
+        return new Promise((resolve) => (resolveChat = resolve));
+      });
+    render(<ChatPage {...props(snapshot, { sendChatMessage })} />);
+    await user.type(screen.getByLabelText(/^message$/i), "Hi");
+    await user.click(screen.getByRole("button", { name: /send message/i }));
+
+    expect(await screen.findByText(/Hello world/)).toBeInTheDocument();
+
+    await act(async () => {
+      resolveChat({ content: "Hello world" });
+    });
+    expect(screen.getByText("Hello world")).toBeInTheDocument();
+    expect(screen.queryByText(/processing prompt/i)).not.toBeInTheDocument();
   });
 
   it("shows generation errors and retries the last user prompt", async () => {

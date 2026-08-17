@@ -172,6 +172,9 @@ export interface ChatResponse {
   content: string;
 }
 
+export type ChatStreamEvent =
+  { kind: "token"; content: string } | { kind: "status"; status: string };
+
 export interface AppService {
   getAppSnapshot(): Promise<AppSnapshot>;
   completeSetup(deviceName: string): Promise<AppSnapshot>;
@@ -201,6 +204,7 @@ export interface AppService {
     messages: ChatMessage[],
     settings: ChatSettings,
     images: string[],
+    onStream?: (event: ChatStreamEvent) => void,
   ): Promise<ChatResponse>;
   cancelGeneration(): Promise<void>;
   getApiConfig(): Promise<ApiConfig>;

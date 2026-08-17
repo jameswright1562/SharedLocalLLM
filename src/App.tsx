@@ -22,7 +22,7 @@ const navigation: Array<{ id: PageId; label: string; icon: string }> = [
   { id: "models", label: "Models", icon: "◫" },
   { id: "benchmarks", label: "Benchmarks", icon: "⌁" },
   { id: "chat", label: "Chat", icon: "◌" },
-  { id: "api", label: "API", icon: "{ }" },
+  { id: "api", label: "API", icon: "{}" },
   { id: "settings", label: "Settings", icon: "⚙" },
 ];
 

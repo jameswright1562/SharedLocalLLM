@@ -145,6 +145,7 @@ async fn stream_local(
         .error_for_status()
         .map_err(proxy_error)?;
     let mut stream = response.bytes_stream();
+    let _ = app.emit("chat-status", json!({"status": "processing"}));
     let mut buffer = String::new();
     let mut content = String::new();
     while let Some(chunk) = stream.next().await {

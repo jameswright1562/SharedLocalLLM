@@ -1,4 +1,4 @@
-import type { AppService, ChatMessage, ChatResponse, ChatSettings } from "../types";
+import type { AppService, ChatResponse } from "../types";
 import { decodeAppError } from "./errors";
 
 async function invoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {
@@ -44,8 +44,25 @@ export const nativeService: AppService = {
   stopCluster: () => invoke("stop_cluster"),
   runInferenceBenchmark: (modelId) => invoke("run_inference_benchmark", { modelId }),
   cancelInferenceBenchmark: () => invoke("cancel_inference_benchmark"),
-  sendChatMessage: (messages: ChatMessage[], settings: ChatSettings, images: string[]) =>
-    invoke<ChatResponse>("send_chat_message", { messages, settings, images }),
+  sendChatMessage: async (messages, settings, images, onStream) => {
+    let unlistenToken: (() => void) | undefined;
+    let unlistenStatus: (() => void) | undefined;
+    if (onStream) {
+      const { listen } = await import("@tauri-apps/api/event");
+      unlistenToken = await listen<{ content: string }>("chat-token", (event) =>
+        onStream({ kind: "token", content: event.payload.content }),
+      );
+      unlistenStatus = await listen<{ status: string }>("chat-status", (event) =>
+        onStream({ kind: "status", status: event.payload.status }),
+      );
+    }
+    try {
+      return await invoke<ChatResponse>("send_chat_message", { messages, settings, images });
+    } finally {
+      unlistenToken?.();
+      unlistenStatus?.();
+    }
+  },
   cancelGeneration: () => invoke("cancel_generation"),
   getApiConfig: () => invoke("get_api_config"),
   regenerateApiKey: () => invoke("regenerate_api_key"),

@@ -127,12 +127,18 @@ export const demoService: AppService = {
   async cancelInferenceBenchmark() {
     await delay(80);
   },
-  async sendChatMessage(messages) {
+  async sendChatMessage(messages, _settings, _images, onStream) {
     await delay(950);
     const latest = [...messages].reverse().find((message) => message.role === "user");
-    return {
-      content: `The cluster received your request${latest?.content ? ` about “${latest.content.slice(0, 52)}”` : ""}. This browser preview simulates the streamed response; native mode routes it through the active coordinator.`,
-    };
+    const content = `The cluster received your request${latest?.content ? ` about “${latest.content.slice(0, 52)}”` : ""}. This browser preview simulates the streamed response; native mode routes it through the active coordinator.`;
+    if (onStream) {
+      onStream({ kind: "status", status: "processing" });
+      for (const word of content.split(" ")) {
+        await delay(15);
+        onStream({ kind: "token", content: `${word} ` });
+      }
+    }
+    return { content };
   },
   async cancelGeneration() {
     await delay(80);

@@ -10,6 +10,8 @@ export function ChatPage({ snapshot, service, navigate, refreshSnapshot }: PageP
   const [draft, setDraft] = useState("");
   const [images, setImages] = useState<File[]>([]);
   const [generating, setGenerating] = useState(false);
+  const [streaming, setStreaming] = useState("");
+  const [phase, setPhase] = useState<"processing" | "generating">("processing");
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [settings, setSettings] = useState<ChatSettings>({
     systemPrompt: "You are a concise and helpful assistant.",
@@ -41,7 +43,7 @@ export function ChatPage({ snapshot, service, navigate, refreshSnapshot }: PageP
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, generating]);
+  }, [messages, generating, streaming]);
 
   async function submit(content = draft, existing?: ChatMessage[], retryImages: string[] = []) {
     if (!content.trim() || disabledReason || generating) return;
@@ -60,6 +62,9 @@ export function ChatPage({ snapshot, service, navigate, refreshSnapshot }: PageP
       setImages([]);
     }
     setGenerating(true);
+    setStreaming("");
+    setPhase("processing");
+    const assistantId = crypto.randomUUID();
     try {
       const imageDataUrls =
         retryImages.length > 0 ? retryImages : await Promise.all(attachedImages.map(fileToDataUrl));
@@ -74,25 +79,34 @@ export function ChatPage({ snapshot, service, navigate, refreshSnapshot }: PageP
         wire.filter((message) => message.role !== "system"),
         settings,
         visionEnabled ? imageDataUrls : [],
+        (event) => {
+          if (generationRef.current !== generationId) return;
+          if (event.kind === "status") {
+            setPhase("processing");
+          } else {
+            setPhase("generating");
+            setStreaming((current) => current + event.content);
+          }
+        },
       );
       if (generationRef.current !== generationId) return;
-      setMessages([
-        ...history,
-        { id: crypto.randomUUID(), role: "assistant", content: response.content },
-      ]);
+      setMessages([...history, { id: assistantId, role: "assistant", content: response.content }]);
     } catch (reason) {
       if (generationRef.current !== generationId) return;
       setMessages([
         ...history,
         {
-          id: crypto.randomUUID(),
+          id: assistantId,
           role: "assistant",
           content: describeAppError(reason, "Generation stopped unexpectedly."),
           error: true,
         },
       ]);
     } finally {
-      if (generationRef.current === generationId) setGenerating(false);
+      if (generationRef.current === generationId) {
+        setGenerating(false);
+        setStreaming("");
+      }
     }
   }
 
@@ -211,13 +225,17 @@ export function ChatPage({ snapshot, service, navigate, refreshSnapshot }: PageP
             <article className="message message-assistant streaming" aria-live="polite">
               <header>
                 <span>CLUSTER</span>
-                <small>Generating</small>
+                <small>{phase === "generating" ? "Generating" : "Processing prompt"}</small>
               </header>
-              <p>
-                <i aria-hidden="true" />
-                <i aria-hidden="true" />
-                <i aria-hidden="true" />
-              </p>
+              {streaming ? (
+                <p className="streaming-text">{streaming}</p>
+              ) : (
+                <p>
+                  <i aria-hidden="true" />
+                  <i aria-hidden="true" />
+                  <i aria-hidden="true" />
+                </p>
+              )}
             </article>
           )}
           <div ref={bottomRef} />
