@@ -1,0 +1,2 @@
+[console_scripts]
+sharedlocalllm-backend = sharedlocalllm_backend.__main__:main

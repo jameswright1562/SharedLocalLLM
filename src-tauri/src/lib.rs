@@ -18,12 +18,9 @@ pub fn run() {
             app.state::<BackendProcess>().start(app.handle())?;
             if let Ok(executable) = std::env::current_exe() {
                 tauri::async_runtime::spawn(async move {
-                    let _ = crate::firewall::ensure_peer_firewall_rules(
-                        &executable,
-                        49_158,
-                        49_157,
-                    )
-                    .await;
+                    let _ =
+                        crate::firewall::ensure_peer_firewall_rules(&executable, 49_158, 49_157)
+                            .await;
                 });
             }
             install_tray(app)?;
