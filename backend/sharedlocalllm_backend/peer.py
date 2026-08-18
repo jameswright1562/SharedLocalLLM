@@ -1,0 +1,265 @@
+from __future__ import annotations
+
+import asyncio
+import ipaddress
+import json
+import socket
+import time
+from typing import Any
+
+from .errors import BackendError
+
+DISCOVERY_PORT = 49157
+PEER_PORT = 49158
+PROTOCOL_VERSION = 4
+
+
+class RpcForwarder:
+    def __init__(self, peer: "PeerManager") -> None:
+        self.peer = peer
+        self.server: asyncio.AbstractServer | None = None
+        self.endpoint: str | None = None
+
+    async def start(self) -> str:
+        if self.server and self.endpoint:
+            return self.endpoint
+        self.server = await asyncio.start_server(self._handle, "127.0.0.1", 0)
+        port = int(self.server.sockets[0].getsockname()[1])
+        self.endpoint = f"127.0.0.1:{port}"
+        return self.endpoint
+
+    async def stop(self) -> None:
+        if self.server:
+            self.server.close()
+            await self.server.wait_closed()
+        self.server = None
+        self.endpoint = None
+
+    async def _handle(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        remote_reader = remote_writer = None
+        try:
+            host, port = self.peer.endpoint()
+            remote_reader, remote_writer = await asyncio.open_connection(host, port)
+            await _write_json(remote_writer, {"op": "rpc_tunnel"})
+            ready = await _read_json(remote_reader)
+            if not ready.get("ok"):
+                raise BackendError("rpc_tunnel_failed", ready.get("message", "RPC tunnel failed"))
+            await _bridge(reader, writer, remote_reader, remote_writer)
+        except Exception:
+            pass
+        finally:
+            writer.close()
+            if remote_writer:
+                remote_writer.close()
+
+
+class PeerManager:
+    def __init__(self, runtime: Any) -> None:
+        self.runtime = runtime
+        self.server: asyncio.AbstractServer | None = None
+        self._broadcast_task: asyncio.Task[None] | None = None
+        self.remote_models: list[dict[str, Any]] = []
+
+    async def start(self) -> None:
+        if self.server:
+            return
+        self.server = await asyncio.start_server(self._handle_connection, "0.0.0.0", PEER_PORT)
+        self._broadcast_task = asyncio.create_task(self._broadcast_loop())
+
+    async def stop(self) -> None:
+        if self._broadcast_task:
+            self._broadcast_task.cancel()
+        if self.server:
+            self.server.close()
+            await self.server.wait_closed()
+        self.server = None
+
+    def endpoint(self) -> tuple[str, int]:
+        peer = self.runtime.store.get("peer")
+        if not peer or not peer.get("address"):
+            raise BackendError("peer_unavailable", "Connect another computer first.")
+        host, _, port = peer["address"].partition(":")
+        return host, int(port or PEER_PORT)
+
+    async def connect(self, manual_endpoint: str | None) -> dict[str, Any]:
+        if manual_endpoint:
+            host, port = _parse_endpoint(manual_endpoint)
+        else:
+            discovered = await asyncio.to_thread(self._discover_sync, 4.0)
+            if not discovered:
+                raise BackendError(
+                    "peer_not_discovered", "No SharedLocalLLM computer was discovered.",
+                    "Enter the other computer's Ethernet IPv4 address."
+                )
+            host, port, _ = discovered[0]
+        response = await self.request_to(host, port, "connect", {
+            "deviceId": self.runtime.local_node["id"],
+            "deviceName": self.runtime.local_node["name"],
+        })
+        node = response["node"]
+        self.remote_models = response.get("models", [])
+        self.runtime.store.update(peer={
+            "id": node["id"], "name": node["name"], "address": f"{host}:{port}", "capabilities": node,
+        })
+        return node
+
+    async def request(self, op: str, data: dict[str, Any] | None = None) -> dict[str, Any]:
+        host, port = self.endpoint()
+        return await self.request_to(host, port, op, data)
+
+    async def request_to(
+        self, host: str, port: int, op: str, data: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        try:
+            reader, writer = await asyncio.wait_for(asyncio.open_connection(host, port), 5)
+            await _write_json(writer, {"op": op, "data": data or {}})
+            response = await asyncio.wait_for(_read_json(reader), 120)
+            writer.close()
+            await writer.wait_closed()
+        except (OSError, asyncio.TimeoutError) as error:
+            raise BackendError("peer_unavailable", f"The other computer did not answer: {error}") from error
+        if not response.get("ok"):
+            raise BackendError(
+                response.get("code", "peer_error"), response.get("message", "Peer request failed"), response.get("action")
+            )
+        return response.get("value", {})
+
+    async def heartbeat(self) -> dict[str, Any] | None:
+        try:
+            value = await self.request("heartbeat")
+            peer = self.runtime.store.get("peer")
+            if peer:
+                peer["capabilities"] = value["node"]
+                self.runtime.store.update(peer=peer)
+            self.remote_models = value.get("models", self.remote_models)
+            return value["node"]
+        except BackendError:
+            return None
+
+    async def network_benchmark(self) -> dict[str, Any]:
+        samples: list[float] = []
+        for _ in range(5):
+            started = time.perf_counter()
+            await self.request("heartbeat")
+            samples.append((time.perf_counter() - started) * 1000)
+        payload = "x" * (48 * 1024)
+        started = time.perf_counter()
+        response = await self.request("echo", {"payload": payload})
+        elapsed = max(time.perf_counter() - started, 0.001)
+        bits = len(response.get("payload", "")) * 8
+        throughput = bits / elapsed / 1_000_000
+        samples.sort()
+        median = samples[len(samples) // 2]
+        p95 = samples[-1]
+        classification = "good" if median < 10 and throughput >= 50 else "usable" if median < 30 else "poor"
+        return {
+            "downMbps": round(throughput, 2), "upMbps": round(throughput, 2),
+            "latencyMedianMs": round(median, 2), "latencyP95Ms": round(p95, 2),
+            "jitterMs": round(max(samples) - min(samples), 2), "packetLossPercent": 0.0,
+            "classification": classification, "adapter": self.runtime.local_node["adapter"]["name"],
+        }
+
+    async def _handle_connection(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        try:
+            request = await _read_json(reader)
+            op = request.get("op")
+            data = request.get("data") or {}
+            if op == "rpc_tunnel":
+                rpc_reader, rpc_writer = await self.runtime.inference.open_rpc_worker_connection()
+                await _write_json(writer, {"ok": True})
+                await _bridge(reader, writer, rpc_reader, rpc_writer)
+                return
+            value = await self._dispatch(op, data)
+            await _write_json(writer, {"ok": True, "value": value})
+        except BackendError as error:
+            await _write_json(writer, {"ok": False, **error.to_dict()})
+        except Exception as error:
+            await _write_json(writer, {"ok": False, "code": "peer_internal", "message": str(error)})
+        finally:
+            writer.close()
+
+    async def _dispatch(self, op: str, data: dict[str, Any]) -> Any:
+        if op in ("connect", "heartbeat"):
+            return {"node": self.runtime.local_node, "models": self.runtime.local_models}
+        if op == "models":
+            return {"models": self.runtime.local_models}
+        if op == "echo":
+            return {"payload": data.get("payload", "")}
+        if op == "start_cluster":
+            return await self.runtime.start_cluster(data["modelId"], data["loadConfig"], allow_peer=False)
+        if op == "stop_cluster":
+            return await self.runtime.stop_cluster(proxy_peer=False)
+        if op == "chat":
+            return await self.runtime.chat(data["messages"], data["settings"], data.get("images", []), proxy_peer=False)
+        if op == "benchmark_inference":
+            return await self.runtime.run_inference_benchmark(data["modelId"], proxy_peer=False)
+        raise BackendError("peer_request_unknown", f"Unknown peer operation: {op}")
+
+    async def _broadcast_loop(self) -> None:
+        payload = json.dumps({
+            "protocolVersion": PROTOCOL_VERSION, "deviceId": self.runtime.local_node["id"],
+            "deviceName": self.runtime.local_node["name"], "peerPort": PEER_PORT,
+        }).encode()
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        while True:
+            try:
+                sock.sendto(payload, ("255.255.255.255", DISCOVERY_PORT))
+            except OSError:
+                pass
+            await asyncio.sleep(1)
+
+    def _discover_sync(self, seconds: float) -> list[tuple[str, int, dict[str, Any]]]:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.bind(("0.0.0.0", DISCOVERY_PORT))
+        sock.settimeout(0.25)
+        found: dict[str, tuple[str, int, dict[str, Any]]] = {}
+        deadline = time.monotonic() + seconds
+        while time.monotonic() < deadline:
+            try:
+                payload, source = sock.recvfrom(64 * 1024)
+                value = json.loads(payload)
+                if value.get("deviceId") != self.runtime.local_node["id"]:
+                    found[value["deviceId"]] = (source[0], int(value.get("peerPort", PEER_PORT)), value)
+            except (OSError, json.JSONDecodeError, KeyError):
+                continue
+        sock.close()
+        return list(found.values())
+
+
+async def _read_json(reader: asyncio.StreamReader) -> dict[str, Any]:
+    line = await reader.readline()
+    if not line:
+        raise BackendError("peer_closed", "Peer closed the connection.")
+    return json.loads(line)
+
+
+async def _write_json(writer: asyncio.StreamWriter, value: dict[str, Any]) -> None:
+    writer.write(json.dumps(value, separators=(",", ":")).encode() + b"\n")
+    await writer.drain()
+
+
+async def _bridge(
+    left_reader: asyncio.StreamReader, left_writer: asyncio.StreamWriter,
+    right_reader: asyncio.StreamReader, right_writer: asyncio.StreamWriter,
+) -> None:
+    async def copy(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        try:
+            while data := await reader.read(256 * 1024):
+                writer.write(data)
+                await writer.drain()
+        finally:
+            writer.close()
+
+    await asyncio.gather(copy(left_reader, right_writer), copy(right_reader, left_writer), return_exceptions=True)
+
+
+def _parse_endpoint(value: str) -> tuple[str, int]:
+    text = value.strip().replace("http://", "").replace("https://", "").rstrip("/")
+    host, sep, port = text.partition(":")
+    try:
+        ipaddress.ip_address(host)
+    except ValueError as error:
+        raise BackendError("peer_endpoint_invalid", "Enter the other computer's IPv4 address.") from error
+    return host, int(port) if sep else PEER_PORT
