@@ -35,3 +35,12 @@ Recommended responsibility split:
 - Avoid adopting a higher-level agent framework such as Rig unless the product later needs agent, RAG, or multi-provider abstractions.
 
 There is currently no official OpenAI-maintained Rust SDK, so dependency maintenance and llama.cpp compatibility should be evaluated before adoption.
+
+## Remember last used cluster settings
+
+When starting a cluster with a model, the program should remember the user's last used settings (model selection, quantization, GPU/CUDA settings, layer mappings, etc.) and pre-populate them for the next cluster launch. This would improve workflow efficiency by reducing repetitive manual configuration.
+
+Implementation considerations:
+- Store settings per-model or globally as a JSON configuration
+- Allow user to clear/reset remembered settings
+- Consider privacy implications of persisted inferencing preferences
