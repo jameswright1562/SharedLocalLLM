@@ -1,12 +1,10 @@
 {
   "name": "shared-local-llm",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@11.21.0",
-  "engines": {
-    "node": ">=22.12"
-  },
+  "engines": { "node": ">=22.12" },
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
@@ -16,8 +14,12 @@
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "e2e": "playwright test",
+    "backend:install": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/setup-python-backend.ps1",
+    "backend:ensure": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/ensure-python-backend.ps1",
+    "backend:test": "backend\\.venv\\Scripts\\python.exe -m pytest backend\\tests",
+    "backend:package": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-python-backend.ps1",
     "tauri": "tauri",
-    "check": "pnpm format:check && pnpm typecheck && pnpm lint && pnpm test:coverage && pnpm build && pnpm e2e"
+    "check": "pnpm format:check && pnpm typecheck && pnpm lint && pnpm test:coverage && pnpm build && pnpm e2e && pnpm backend:test"
   },
   "dependencies": {
     "@tauri-apps/api": "2.11.1",
@@ -34,10 +36,10 @@
     "@types/react": "19.2.18",
     "@types/node": "26.2.0",
     "@types/react-dom": "19.2.4",
-    "@vitejs/plugin-react": "6.0.5",
     "@vitest/coverage-v8": "4.1.10",
+    "@vitejs/plugin-react": "6.0.5",
     "eslint": "10.8.1",
-    "eslint-plugin-react-hooks": "7.1.1",
+    "eslint-plugin-react-hooks": "7.0.1",
     "eslint-plugin-react-refresh": "0.5.4",
     "globals": "17.10.0",
     "jsdom": "30.0.1",
@@ -47,7 +49,5 @@
     "vite": "8.2.1",
     "vitest": "4.1.10"
   },
-  "workspaces": [
-    "."
-  ]
+  "workspaces": ["."]
 }
