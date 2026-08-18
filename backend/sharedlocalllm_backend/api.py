@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import threading
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -43,7 +42,7 @@ def create_control_app(runtime: Any) -> FastAPI:
 
 
 def create_openai_app(runtime: Any) -> FastAPI:
-    app = FastAPI(title="SharedLocalLLM OpenAI API")
+    app = FastAPI(title="SharedLocalLLM OpenAI API", docs_url=None, redoc_url=None)
 
     def authorize(authorization: str | None) -> None:
         expected = f"Bearer {runtime.store.get('apiKey')}"
@@ -52,7 +51,8 @@ def create_openai_app(runtime: Any) -> FastAPI:
 
     @app.exception_handler(BackendError)
     async def api_error(_request: Request, error: BackendError):
-        return JSONResponse({"error": {"message": error.message, "type": error.code}}, status_code=400)
+        status = 401 if error.code == "api_unauthorized" else 400
+        return JSONResponse({"error": {"message": error.message, "type": error.code}}, status_code=status)
 
     @app.get("/health")
     async def health(authorization: str | None = Header(default=None)) -> dict[str, str]:
@@ -73,17 +73,27 @@ def create_openai_app(runtime: Any) -> FastAPI:
             "systemPrompt": "", "temperature": body.get("temperature", 0.7),
             "maxTokens": body.get("max_tokens", 512),
         }
+        if body.get("stream") and runtime.cluster.get("coordinatorNodeId") == runtime.local_node["id"]:
+            async def events():
+                async for content in runtime.inference.chat_stream(body.get("messages", []), settings):
+                    chunk = {
+                        "id": "chatcmpl-sharedlocalllm", "object": "chat.completion.chunk",
+                        "choices": [{"index": 0, "delta": {"content": content}, "finish_reason": None}],
+                    }
+                    yield f"data: {json.dumps(chunk)}\n\n"
+                yield "data: [DONE]\n\n"
+            return StreamingResponse(events(), media_type="text/event-stream")
         response = await runtime.chat(body.get("messages", []), settings, [], proxy_peer=True)
         content = response["content"]
         if body.get("stream"):
-            async def events():
+            async def remote_events():
                 chunk = {
                     "id": "chatcmpl-sharedlocalllm", "object": "chat.completion.chunk",
                     "choices": [{"index": 0, "delta": {"content": content}, "finish_reason": None}],
                 }
                 yield f"data: {json.dumps(chunk)}\n\n"
                 yield "data: [DONE]\n\n"
-            return StreamingResponse(events(), media_type="text/event-stream")
+            return StreamingResponse(remote_events(), media_type="text/event-stream")
         return {
             "id": "chatcmpl-sharedlocalllm", "object": "chat.completion",
             "model": body.get("model", runtime.cluster.get("modelId", "active")),
@@ -109,36 +119,45 @@ def create_openai_app(runtime: Any) -> FastAPI:
 
 
 class ApiServerManager:
+    """Runs the user-facing API on the same asyncio loop as the control/peer runtime."""
+
     def __init__(self, runtime: Any) -> None:
         self.runtime = runtime
-        self._lock = threading.Lock()
-        self._server: uvicorn.Server | None = None
-        self._thread: threading.Thread | None = None
-        self._port: int | None = None
+        self.server: uvicorn.Server | None = None
+        self.task: asyncio.Task[None] | None = None
+        self.port: int | None = None
 
-    def start(self, port: int) -> None:
-        with self._lock:
-            if self._thread and self._thread.is_alive() and self._port == port:
+    async def start(self, port: int) -> None:
+        if self.task and not self.task.done() and self.port == port:
+            return
+        await self.stop()
+        config = uvicorn.Config(
+            create_openai_app(self.runtime), host="127.0.0.1", port=port,
+            log_level="warning", lifespan="off",
+        )
+        self.server = uvicorn.Server(config)
+        self.task = asyncio.create_task(self.server.serve())
+        self.port = port
+        for _ in range(100):
+            if self.server.started:
                 return
-            self._stop_locked()
-            config = uvicorn.Config(create_openai_app(self.runtime), host="127.0.0.1", port=port, log_level="warning")
-            self._server = uvicorn.Server(config)
-            self._thread = threading.Thread(target=self._server.run, name="openai-api", daemon=True)
-            self._port = port
-            self._thread.start()
+            if self.task.done():
+                await self.task
+                raise BackendError("api_start_failed", f"OpenAI API failed to bind port {port}.")
+            await asyncio.sleep(0.05)
+        raise BackendError("api_start_timeout", f"OpenAI API did not bind port {port} in time.")
 
-    def restart(self, port: int) -> None:
-        self.start(port)
+    async def restart(self, port: int) -> None:
+        await self.start(port)
 
-    def stop(self) -> None:
-        with self._lock:
-            self._stop_locked()
-
-    def _stop_locked(self) -> None:
-        if self._server:
-            self._server.should_exit = True
-        if self._thread and self._thread.is_alive():
-            self._thread.join(timeout=3)
-        self._server = None
-        self._thread = None
-        self._port = None
+    async def stop(self) -> None:
+        if self.server:
+            self.server.should_exit = True
+        if self.task:
+            try:
+                await asyncio.wait_for(self.task, 3)
+            except (asyncio.TimeoutError, asyncio.CancelledError):
+                self.task.cancel()
+        self.server = None
+        self.task = None
+        self.port = None

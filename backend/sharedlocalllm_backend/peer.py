@@ -7,6 +7,8 @@ import socket
 import time
 from typing import Any
 
+import psutil
+
 from .errors import BackendError
 
 DISCOVERY_PORT = 49157
@@ -26,6 +28,7 @@ class RpcForwarder:
         self.server = await asyncio.start_server(self._handle, "127.0.0.1", 0)
         port = int(self.server.sockets[0].getsockname()[1])
         self.endpoint = f"127.0.0.1:{port}"
+        self.peer.runtime.store.log("INFO", "rpc_forwarder_ready", self.endpoint)
         return self.endpoint
 
     async def stop(self) -> None:
@@ -36,17 +39,17 @@ class RpcForwarder:
         self.endpoint = None
 
     async def _handle(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
-        remote_reader = remote_writer = None
+        remote_writer: asyncio.StreamWriter | None = None
         try:
             host, port = self.peer.endpoint()
             remote_reader, remote_writer = await asyncio.open_connection(host, port)
-            await _write_json(remote_writer, {"op": "rpc_tunnel"})
+            await _write_json(remote_writer, {"version": PROTOCOL_VERSION, "op": "rpc_tunnel"})
             ready = await _read_json(remote_reader)
             if not ready.get("ok"):
                 raise BackendError("rpc_tunnel_failed", ready.get("message", "RPC tunnel failed"))
             await _bridge(reader, writer, remote_reader, remote_writer)
-        except Exception:
-            pass
+        except Exception as error:
+            self.peer.runtime.store.log("WARN", "rpc_forwarder_failed", str(error))
         finally:
             writer.close()
             if remote_writer:
@@ -65,6 +68,7 @@ class PeerManager:
             return
         self.server = await asyncio.start_server(self._handle_connection, "0.0.0.0", PEER_PORT)
         self._broadcast_task = asyncio.create_task(self._broadcast_loop())
+        self.runtime.store.log("INFO", "peer_listener_ready", f"0.0.0.0:{PEER_PORT}")
 
     async def stop(self) -> None:
         if self._broadcast_task:
@@ -93,26 +97,26 @@ class PeerManager:
                 )
             host, port, _ = discovered[0]
         response = await self.request_to(host, port, "connect", {
-            "deviceId": self.runtime.local_node["id"],
-            "deviceName": self.runtime.local_node["name"],
+            "node": self.runtime.local_node,
+            "models": self.runtime.local_models,
         })
         node = response["node"]
+        node["online"] = True
+        node["role"] = "worker"
         self.remote_models = response.get("models", [])
         self.runtime.store.update(peer={
             "id": node["id"], "name": node["name"], "address": f"{host}:{port}", "capabilities": node,
         })
         return node
 
-    async def request(self, op: str, data: dict[str, Any] | None = None) -> dict[str, Any]:
+    async def request(self, op: str, data: dict[str, Any] | None = None) -> Any:
         host, port = self.endpoint()
         return await self.request_to(host, port, op, data)
 
-    async def request_to(
-        self, host: str, port: int, op: str, data: dict[str, Any] | None = None
-    ) -> dict[str, Any]:
+    async def request_to(self, host: str, port: int, op: str, data: dict[str, Any] | None = None) -> Any:
         try:
             reader, writer = await asyncio.wait_for(asyncio.open_connection(host, port), 5)
-            await _write_json(writer, {"op": op, "data": data or {}})
+            await _write_json(writer, {"version": PROTOCOL_VERSION, "op": op, "data": data or {}})
             response = await asyncio.wait_for(_read_json(reader), 120)
             writer.close()
             await writer.wait_closed()
@@ -162,6 +166,11 @@ class PeerManager:
     async def _handle_connection(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         try:
             request = await _read_json(reader)
+            if request.get("version") != PROTOCOL_VERSION:
+                raise BackendError(
+                    "peer_version", "The peer protocol versions do not match.",
+                    "Run the Python-backend branch on both computers."
+                )
             op = request.get("op")
             data = request.get("data") or {}
             if op == "rpc_tunnel":
@@ -169,6 +178,8 @@ class PeerManager:
                 await _write_json(writer, {"ok": True})
                 await _bridge(reader, writer, rpc_reader, rpc_writer)
                 return
+            if op == "connect":
+                self._accept_peer(data, writer)
             value = await self._dispatch(op, data)
             await _write_json(writer, {"ok": True, "value": value})
         except BackendError as error:
@@ -177,6 +188,21 @@ class PeerManager:
             await _write_json(writer, {"ok": False, "code": "peer_internal", "message": str(error)})
         finally:
             writer.close()
+
+    def _accept_peer(self, data: dict[str, Any], writer: asyncio.StreamWriter) -> None:
+        node = data.get("node")
+        source = writer.get_extra_info("peername")
+        if not isinstance(node, dict) or not source:
+            raise BackendError("peer_connect_invalid", "The peer supplied invalid capabilities.")
+        remote = dict(node)
+        remote["online"] = True
+        remote["role"] = "worker"
+        self.remote_models = list(data.get("models") or [])
+        self.runtime.store.update(peer={
+            "id": remote["id"], "name": remote["name"],
+            "address": f"{source[0]}:{PEER_PORT}", "capabilities": remote,
+        })
+        self.runtime._merge_models()
 
     async def _dispatch(self, op: str, data: dict[str, Any]) -> Any:
         if op in ("connect", "heartbeat"):
@@ -200,14 +226,18 @@ class PeerManager:
             "protocolVersion": PROTOCOL_VERSION, "deviceId": self.runtime.local_node["id"],
             "deviceName": self.runtime.local_node["name"], "peerPort": PEER_PORT,
         }).encode()
-        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-        while True:
-            try:
-                sock.sendto(payload, ("255.255.255.255", DISCOVERY_PORT))
-            except OSError:
-                pass
-            await asyncio.sleep(1)
+        sockets = _broadcast_sockets()
+        try:
+            while True:
+                for sock, target in sockets:
+                    try:
+                        sock.sendto(payload, target)
+                    except OSError:
+                        pass
+                await asyncio.sleep(1)
+        finally:
+            for sock, _ in sockets:
+                sock.close()
 
     def _discover_sync(self, seconds: float) -> list[tuple[str, int, dict[str, Any]]]:
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -220,7 +250,7 @@ class PeerManager:
             try:
                 payload, source = sock.recvfrom(64 * 1024)
                 value = json.loads(payload)
-                if value.get("deviceId") != self.runtime.local_node["id"]:
+                if value.get("protocolVersion") == PROTOCOL_VERSION and value.get("deviceId") != self.runtime.local_node["id"]:
                     found[value["deviceId"]] = (source[0], int(value.get("peerPort", PEER_PORT)), value)
             except (OSError, json.JSONDecodeError, KeyError):
                 continue
@@ -253,6 +283,27 @@ async def _bridge(
             writer.close()
 
     await asyncio.gather(copy(left_reader, right_writer), copy(right_reader, left_writer), return_exceptions=True)
+
+
+def _broadcast_sockets() -> list[tuple[socket.socket, tuple[str, int]]]:
+    values: list[tuple[socket.socket, tuple[str, int]]] = []
+    for addresses in psutil.net_if_addrs().values():
+        for address in addresses:
+            if address.family != socket.AF_INET or not address.address or address.address.startswith("127."):
+                continue
+            broadcast = address.broadcast or "255.255.255.255"
+            try:
+                sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+                sock.bind((address.address, 0))
+                values.append((sock, (broadcast, DISCOVERY_PORT)))
+            except OSError:
+                continue
+    if not values:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        values.append((sock, ("255.255.255.255", DISCOVERY_PORT)))
+    return values
 
 
 def _parse_endpoint(value: str) -> tuple[str, int]:

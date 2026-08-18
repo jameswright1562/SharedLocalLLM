@@ -23,7 +23,7 @@ class Store:
 
     def _defaults(self) -> dict[str, Any]:
         return {
-            "installId": str(uuid.uuid4()),
+            "installId": f"device-{uuid.uuid4()}",
             "deviceName": os.environ.get("COMPUTERNAME") or "SharedLocalLLM PC",
             "setupComplete": False,
             "apiPort": 11435,
@@ -36,14 +36,37 @@ class Store:
 
     def _load(self) -> dict[str, Any]:
         defaults = self._defaults()
-        try:
-            loaded = json.loads(self.path.read_text(encoding="utf-8"))
-            if isinstance(loaded, dict):
-                defaults.update(loaded)
-        except (OSError, json.JSONDecodeError):
-            pass
+        loaded = self._read_json(self.path)
+        if not loaded:
+            loaded = self._legacy_settings()
+        if loaded:
+            defaults.update(loaded)
         self._write(defaults)
         return defaults
+
+    def _legacy_settings(self) -> dict[str, Any] | None:
+        legacy = self._read_json(self.data_dir / "settings.json")
+        if not legacy:
+            return None
+        migrated: dict[str, Any] = {}
+        for key in (
+            "installId", "deviceName", "setupComplete", "apiPort", "autostart",
+            "customModelDirectories", "benchmarks",
+        ):
+            if key in legacy and legacy[key] is not None:
+                migrated[key] = legacy[key]
+        peers = legacy.get("peers")
+        if isinstance(peers, list) and peers:
+            migrated["peer"] = peers[0]
+        return migrated
+
+    @staticmethod
+    def _read_json(path: Path) -> dict[str, Any] | None:
+        try:
+            loaded = json.loads(path.read_text(encoding="utf-8"))
+            return loaded if isinstance(loaded, dict) else None
+        except (OSError, json.JSONDecodeError):
+            return None
 
     def _write(self, value: dict[str, Any]) -> None:
         tmp = self.path.with_suffix(".tmp")

@@ -5,7 +5,7 @@ import gc
 import os
 import threading
 import time
-from typing import Any
+from typing import Any, AsyncIterator
 
 from .errors import BackendError
 from .peer import RpcForwarder
@@ -46,11 +46,13 @@ class InferenceEngine:
             if rpc_endpoint:
                 if total_layers <= 0:
                     remote_layers = local_layers = 1
+                    total_layers = 2
                 # llama.cpp places registered RPC devices before local GPUs.
-                tensor_split = [float(remote_layers), float(local_layers or 1)]
+                tensor_split = [float(remote_layers), float(local_layers)]
             context = max(512, int(load_config.get("contextSize", 4096)))
             self.store.log(
-                "INFO", "model_load", f"model={model['name']} ctx={context} rpc={rpc_endpoint} split={tensor_split}"
+                "INFO", "model_load",
+                f"model={model['name']} ctx={context} rpc={rpc_endpoint} split={tensor_split}",
             )
             try:
                 await asyncio.to_thread(
@@ -63,6 +65,7 @@ class InferenceEngine:
                     "Reduce context/model size or review llama-cpp-python CUDA/RPC logs."
                 ) from error
             self.model_id = model["id"]
+            self.store.log("INFO", "model_loaded", model["name"])
 
     def _load_sync(
         self, path: str, context: int, gpu_layers: int,
@@ -89,6 +92,8 @@ class InferenceEngine:
 
     async def _unload_locked(self) -> None:
         await asyncio.to_thread(self._drop_sync)
+        if self.model_id:
+            self.store.log("INFO", "model_unloaded", self.model_id)
         self.model_id = None
         await self._stop_forwarder()
 
@@ -104,6 +109,7 @@ class InferenceEngine:
 
     async def open_rpc_worker_connection(self) -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
         endpoint = await asyncio.to_thread(self._rpc_worker.start)
+        self.store.log("INFO", "rpc_worker_ready", endpoint)
         host, port = endpoint.split(":", 1)
         return await asyncio.open_connection(host, int(port))
 
@@ -113,7 +119,7 @@ class InferenceEngine:
         if images:
             raise BackendError(
                 "vision_not_migrated", "Vision attachments are not enabled in the Python migration yet.",
-                "Use a text-only model while the mtmd/vision handler is wired."
+                "Use text-only chat on this branch for now."
             )
         async with self._async_lock:
             if not self.llm:
@@ -121,28 +127,68 @@ class InferenceEngine:
             self._cancel.clear()
             return await asyncio.to_thread(self._chat_sync, messages, settings)
 
-    def _chat_sync(self, messages: list[dict[str, Any]], settings: dict[str, Any]) -> str:
-        from llama_cpp import StoppingCriteriaList
+    async def chat_stream(
+        self, messages: list[dict[str, Any]], settings: dict[str, Any]
+    ) -> AsyncIterator[str]:
+        async with self._async_lock:
+            if not self.llm:
+                raise BackendError("model_not_loaded", "Start a model before chatting.")
+            self._cancel.clear()
+            loop = asyncio.get_running_loop()
+            queue: asyncio.Queue[str | BaseException | None] = asyncio.Queue()
 
+            def run() -> None:
+                try:
+                    wire = self._wire_messages(messages, settings)
+                    with self._sync_lock:
+                        chunks = self.llm.create_chat_completion(
+                            messages=wire,
+                            temperature=float(settings.get("temperature", 0.7)),
+                            max_tokens=int(settings.get("maxTokens", 512)),
+                            stream=True,
+                        )
+                        for chunk in chunks:
+                            if self._cancel.is_set():
+                                break
+                            content = chunk["choices"][0].get("delta", {}).get("content")
+                            if content:
+                                loop.call_soon_threadsafe(queue.put_nowait, str(content))
+                except BaseException as error:
+                    loop.call_soon_threadsafe(queue.put_nowait, error)
+                finally:
+                    loop.call_soon_threadsafe(queue.put_nowait, None)
+
+            thread = threading.Thread(target=run, name="llama-chat-stream", daemon=True)
+            thread.start()
+            while True:
+                item = await queue.get()
+                if item is None:
+                    break
+                if isinstance(item, BaseException):
+                    raise BackendError("generation_failed", str(item)) from item
+                yield item
+
+    def _wire_messages(
+        self, messages: list[dict[str, Any]], settings: dict[str, Any]
+    ) -> list[dict[str, str]]:
         wire = [{"role": item["role"], "content": item.get("content", "")} for item in messages]
         system = settings.get("systemPrompt", "").strip()
         if system and not any(item["role"] == "system" for item in wire):
             wire.insert(0, {"role": "system", "content": system})
+        return wire
+
+    def _chat_sync(self, messages: list[dict[str, Any]], settings: dict[str, Any]) -> str:
+        from llama_cpp import StoppingCriteriaList
+
+        wire = self._wire_messages(messages, settings)
         criteria = StoppingCriteriaList([lambda _tokens, _logits: self._cancel.is_set()])
         with self._sync_lock:
-            try:
-                result = self.llm.create_chat_completion(
-                    messages=wire,
-                    temperature=float(settings.get("temperature", 0.7)),
-                    max_tokens=int(settings.get("maxTokens", 512)),
-                    stopping_criteria=criteria,
-                )
-            except TypeError:
-                result = self.llm.create_chat_completion(
-                    messages=wire,
-                    temperature=float(settings.get("temperature", 0.7)),
-                    max_tokens=int(settings.get("maxTokens", 512)),
-                )
+            result = self.llm.create_chat_completion(
+                messages=wire,
+                temperature=float(settings.get("temperature", 0.7)),
+                max_tokens=int(settings.get("maxTokens", 512)),
+                stopping_criteria=criteria,
+            )
         return str(result["choices"][0]["message"].get("content") or "")
 
     def cancel(self) -> None:

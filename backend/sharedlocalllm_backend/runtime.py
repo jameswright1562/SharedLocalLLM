@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import inspect
 import secrets
+import socket
 import time
 import uuid
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Awaitable, Callable
 
 from .errors import BackendError
 from .hardware import probe_node
@@ -27,7 +29,7 @@ class BackendRuntime:
         self.cluster: dict[str, Any] = {"status": "idle"}
         self.inference = InferenceEngine(self.store)
         self.peer = PeerManager(self)
-        self.api_port_changed: Callable[[int], None] | None = None
+        self.api_port_changed: Callable[[int], Awaitable[None]] | None = None
         self.discover_models()
 
     async def start(self) -> None:
@@ -122,7 +124,7 @@ class BackendRuntime:
         if not handler:
             raise BackendError("command_unknown", f"Unknown backend command: {command}")
         value = handler()
-        if hasattr(value, "__await__"):
+        if inspect.isawaitable(value):
             return await value
         return value
 
@@ -134,22 +136,32 @@ class BackendRuntime:
         self.store.update(deviceName=name, setupComplete=True)
         return self.snapshot()
 
-    def update_settings(self, settings: dict[str, Any]) -> dict[str, Any]:
+    async def update_settings(self, settings: dict[str, Any]) -> dict[str, Any]:
         name = str(settings.get("deviceName", "")).strip()
         port = int(settings.get("apiPort", 11435))
-        if not name or len(name) > 80 or not 1024 <= port <= 65535:
+        if not name or len(name) > 80 or not 1024 <= port <= 65535 or port == 11436:
             raise BackendError("settings_invalid", "Use a valid device name and API port from 1024-65535.")
         old_port = int(self.store.get("apiPort", 11435))
+        if port != old_port and not _port_available(port):
+            raise BackendError(
+                "api_port_in_use", f"127.0.0.1:{port} is already in use.", "Choose another local API port."
+            )
         self.local_node["name"] = name
         self.store.update(deviceName=name, apiPort=port, autostart=bool(settings.get("autostart")))
         if port != old_port and self.api_port_changed:
-            self.api_port_changed(port)
+            await self.api_port_changed(port)
         return self.snapshot()
 
     def refresh_hardware(self) -> dict[str, Any]:
+        status = self.local_node.get("clusterStatus")
+        model_id = self.local_node.get("clusterModelId")
         self.local_node = probe_node(
             self.store.get("installId"), self.store.get("deviceName"), "coordinator"
         )
+        if status:
+            self.local_node["clusterStatus"] = status
+        if model_id:
+            self.local_node["clusterModelId"] = model_id
         self.discover_models()
         return self.snapshot()
 
@@ -206,9 +218,12 @@ class BackendRuntime:
             total_vram = sum(max(0.1, float(node["gpu"].get("vramAvailableGb", 0))) for node in nodes)
             remaining = total
             for index, node in enumerate(nodes):
-                layers = remaining if index == len(nodes) - 1 else round(total * float(node["gpu"].get("vramAvailableGb", 0)) / total_vram)
-                allocations.append({"nodeId": node["id"], "layers": max(0, layers)})
-                remaining -= max(0, layers)
+                layers = remaining if index == len(nodes) - 1 else round(
+                    total * float(node["gpu"].get("vramAvailableGb", 0)) / total_vram
+                )
+                layers = max(0, min(remaining, layers))
+                allocations.append({"nodeId": node["id"], "layers": layers})
+                remaining -= layers
         per_layer = model["sizeBytes"] / total
         node_map = {node["id"]: node for node in self.snapshot()["nodes"]}
         devices = []
@@ -237,23 +252,29 @@ class BackendRuntime:
         if model.get("remoteOnly"):
             if not allow_peer or not peer:
                 raise BackendError("model_not_local", "This model is stored only on the other computer.")
-            remote = await self.peer.request("start_cluster", {"modelId": model_id, "loadConfig": load_config})
+            await self.peer.request("start_cluster", {"modelId": model_id, "loadConfig": load_config})
             self.cluster = {
                 "status": "running", "coordinatorNodeId": peer["id"],
                 "workerNodeId": self.local_node["id"], "modelId": model_id,
             }
+            self._publish_local_cluster()
             return self.cluster
         path = self.model_paths.get(model_id)
         if not path:
             raise BackendError("model_not_found", "The selected local GGUF is unavailable.")
         peer_id = peer["id"] if peer else None
         self.cluster = {"status": "loading", "coordinatorNodeId": self.local_node["id"], "modelId": model_id}
+        self._publish_local_cluster()
         await self.inference.load(model, path, load_config, self.peer, self.local_node["id"], peer_id)
-        uses_peer = bool(peer_id and any(x.get("nodeId") == peer_id and x.get("layers", 0) > 0 for x in load_config.get("gpuLayers", [])))
+        uses_peer = bool(peer_id and any(
+            x.get("nodeId") == peer_id and x.get("layers", 0) > 0
+            for x in load_config.get("gpuLayers", [])
+        ))
         self.cluster = {
             "status": "running", "coordinatorNodeId": self.local_node["id"],
             "workerNodeId": peer_id if uses_peer else None, "modelId": model_id,
         }
+        self._publish_local_cluster()
         return self.cluster
 
     async def stop_cluster(self, proxy_peer: bool = True) -> dict[str, Any]:
@@ -265,7 +286,16 @@ class BackendRuntime:
                 pass
         await self.inference.unload()
         self.cluster = {"status": "ready" if self.store.get("peer") else "idle"}
+        self._publish_local_cluster()
         return self.cluster
+
+    def _publish_local_cluster(self) -> None:
+        self.local_node["clusterStatus"] = self.cluster.get("status")
+        model_id = self.cluster.get("modelId")
+        if model_id:
+            self.local_node["clusterModelId"] = model_id
+        else:
+            self.local_node.pop("clusterModelId", None)
 
     async def chat(
         self, messages: list[dict[str, Any]], settings: dict[str, Any], images: list[str], proxy_peer: bool = True
@@ -283,20 +313,21 @@ class BackendRuntime:
         model = self._model(model_id)
         if model.get("remoteOnly") and proxy_peer:
             return await self.peer.request("benchmark_inference", {"modelId": model_id})
+        load_started = time.perf_counter()
         temporary = self.inference.model_id != model_id
         if temporary:
-            nodes = self.snapshot()["nodes"]
-            layers = int(model.get("layerCount") or 1)
             split = self.estimate_model_split(model_id, {"contextSize": 4096, "gpuLayers": []})
             allocations = [{"nodeId": value["nodeId"], "layers": value["layers"]} for value in split["devices"]]
-            await self.start_cluster(model_id, {"contextSize": 4096, "gpuLayers": allocations}, allow_peer=proxy_peer)
-        started = time.perf_counter()
+            await self.start_cluster(
+                model_id, {"contextSize": 4096, "gpuLayers": allocations}, allow_peer=proxy_peer
+            )
+        load_time = time.perf_counter() - load_started if temporary else 0.0
         prompt, generation = await self.inference.benchmark()
         result = {
             "id": str(uuid.uuid4()), "modelName": model["name"],
             "topology": "distributed" if self.cluster.get("workerNodeId") else "local",
             "gpuLayers": [], "promptTokensPerSecond": prompt, "generationTokensPerSecond": generation,
-            "loadTimeSeconds": time.perf_counter() - started, "memoryPeakGb": 0.0,
+            "loadTimeSeconds": load_time, "memoryPeakGb": 0.0,
             "recommended": True, "ranAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         }
         self.store.append_benchmark(result)
@@ -317,3 +348,12 @@ class BackendRuntime:
         if not model:
             raise BackendError("model_not_found", "Refresh the catalogue and choose an available model.")
         return model
+
+
+def _port_available(port: int) -> bool:
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.bind(("127.0.0.1", port))
+        return True
+    except OSError:
+        return False

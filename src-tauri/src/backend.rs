@@ -3,7 +3,10 @@ use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream},
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
-    sync::{atomic::{AtomicBool, Ordering}, Mutex},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Mutex,
+    },
     time::Duration,
 };
 
@@ -26,7 +29,10 @@ impl BackendProcess {
         if backend_is_listening() {
             return Ok(());
         }
-        let mut child = self.child.lock().map_err(|_| bridge_error("Backend process state is unavailable."))?;
+        let mut child = self
+            .child
+            .lock()
+            .map_err(|_| bridge_error("Backend process state is unavailable."))?;
         if child.is_some() {
             return Ok(());
         }
@@ -35,7 +41,9 @@ impl BackendProcess {
         fs::create_dir_all(log_path.parent().unwrap_or_else(|| Path::new(".")))
             .map_err(|error| bridge_error(error.to_string()))?;
         let stdout = File::create(&log_path).map_err(|error| bridge_error(error.to_string()))?;
-        let stderr = stdout.try_clone().map_err(|error| bridge_error(error.to_string()))?;
+        let stderr = stdout
+            .try_clone()
+            .map_err(|error| bridge_error(error.to_string()))?;
         command
             .env("PYTHONUNBUFFERED", "1")
             .stdin(Stdio::null())
@@ -112,7 +120,11 @@ pub async fn backend_request(
                 tokio::time::sleep(Duration::from_millis(250)).await;
             }
             Err(error) => {
-                return Err(ErrorPayload::new("python_backend_request", error.to_string(), None));
+                return Err(ErrorPayload::new(
+                    "python_backend_request",
+                    error.to_string(),
+                    None,
+                ));
             }
         }
     }
@@ -163,6 +175,12 @@ fn backend_command(app: &AppHandle) -> Result<(Command, String), ErrorPayload> {
         }
     }
 
+    if cfg!(debug_assertions) {
+        if let Some(command) = development_backend_command() {
+            return Ok(command);
+        }
+    }
+
     if let Ok(resource) = app.path().resolve(
         "backend/sharedlocalllm-backend.exe",
         BaseDirectory::Resource,
@@ -172,6 +190,18 @@ fn backend_command(app: &AppHandle) -> Result<(Command, String), ErrorPayload> {
         }
     }
 
+    if let Some(command) = development_backend_command() {
+        return Ok(command);
+    }
+
+    Err(ErrorPayload::new(
+        "python_backend_missing",
+        "The SharedLocalLLM Python backend is not installed.",
+        Some("Run `pnpm backend:install` from the repository root.".into()),
+    ))
+}
+
+fn development_backend_command() -> Option<(Command, String)> {
     let backend_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .unwrap_or_else(|| Path::new("."))
@@ -180,17 +210,14 @@ fn backend_command(app: &AppHandle) -> Result<(Command, String), ErrorPayload> {
         .ok()
         .map(PathBuf::from);
     let venv = backend_dir.join(".venv").join("Scripts").join("python.exe");
-    if let Some(python) = configured.filter(|path| path.is_file()).or_else(|| venv.is_file().then_some(venv)) {
-        let mut command = Command::new(&python);
-        command.args(["-m", "sharedlocalllm_backend"]).current_dir(&backend_dir);
-        return Ok((command, python.display().to_string()));
-    }
-
-    Err(ErrorPayload::new(
-        "python_backend_missing",
-        "The SharedLocalLLM Python backend is not installed.",
-        Some("Run `pnpm backend:install` from the repository root.".into()),
-    ))
+    let python = configured
+        .filter(|path| path.is_file())
+        .or_else(|| venv.is_file().then_some(venv))?;
+    let mut command = Command::new(&python);
+    command
+        .args(["-m", "sharedlocalllm_backend"])
+        .current_dir(&backend_dir);
+    Some((command, python.display().to_string()))
 }
 
 fn backend_is_listening() -> bool {
@@ -206,9 +233,18 @@ fn logs_root() -> PathBuf {
 
 fn error_from_value(value: Value) -> ErrorPayload {
     ErrorPayload::new(
-        value.get("code").and_then(Value::as_str).unwrap_or("python_backend_error"),
-        value.get("message").and_then(Value::as_str).unwrap_or("The Python backend returned an error."),
-        value.get("action").and_then(Value::as_str).map(str::to_owned),
+        value
+            .get("code")
+            .and_then(Value::as_str)
+            .unwrap_or("python_backend_error"),
+        value
+            .get("message")
+            .and_then(Value::as_str)
+            .unwrap_or("The Python backend returned an error."),
+        value
+            .get("action")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
     )
 }
 
