@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { ModelCatalogue, type CapabilityFilter } from "../components/ModelCatalogue";
 import { ModelInspector } from "../components/ModelInspector";
+import { Modal } from "@mantine/core";
 import { describeAppError } from "../services/errors";
 import { distributeLayersByVram, estimateModelSplitLocally } from "../services/splitEstimate";
 import type { GpuLayerAllocation, PageProps } from "../types";
@@ -16,6 +17,7 @@ export function ModelsPage({ snapshot, service, refreshSnapshot }: PageProps) {
   const [manualByModel, setManualByModel] = useState<Record<string, boolean>>({});
   const [layersByModel, setLayersByModel] = useState<Record<string, GpuLayerAllocation[]>>({});
   const [forceByModel, setForceByModel] = useState<Record<string, boolean>>({});
+  const [inspectorOpened, setInspectorOpened] = useState(false);
   const nodeLookup = new Map(snapshot.nodes.map((node) => [node.id, node.name]));
   const models = discoveredModels ?? snapshot.models;
   const visibleModels = useMemo(
@@ -194,30 +196,41 @@ export function ModelsPage({ snapshot, service, refreshSnapshot }: PageProps) {
           models={models}
           visibleModels={visibleModels}
           selectedId={selectedId}
-          select={setSelectedId}
+          select={(id) => {
+            setSelectedId(id);
+            setInspectorOpened(true);
+          }}
           addFolder={() => void addFolder()}
         />
-        <ModelInspector
-          selected={selected}
-          nodeLookup={nodeLookup}
-          contextSize={contextSize}
-          setContextSize={(value) =>
-            selected && setContextByModel({ ...contextByModel, [selected.id]: value })
-          }
-          manualSplit={manualSplit}
-          setManualSplit={setManualSplit}
-          gpuNodes={gpuNodes}
-          gpuLayers={gpuLayers}
-          splitEstimate={splitEstimate}
-          setGpuLayers={(layers) =>
-            selected && setLayersByModel({ ...layersByModel, [selected.id]: layers })
-          }
-          busy={busy === "launch"}
-          splitInvalid={splitInvalid}
-          force={force}
-          setForce={setForce}
-          launch={() => void launch()}
-        />
+        <Modal
+          opened={inspectorOpened}
+          onClose={() => setInspectorOpened(false)}
+          title="Model inspector"
+          size="xl"
+          centered
+        >
+          <ModelInspector
+            selected={selected}
+            nodeLookup={nodeLookup}
+            contextSize={contextSize}
+            setContextSize={(value) =>
+              selected && setContextByModel({ ...contextByModel, [selected.id]: value })
+            }
+            manualSplit={manualSplit}
+            setManualSplit={setManualSplit}
+            gpuNodes={gpuNodes}
+            gpuLayers={gpuLayers}
+            splitEstimate={splitEstimate}
+            setGpuLayers={(layers) =>
+              selected && setLayersByModel({ ...layersByModel, [selected.id]: layers })
+            }
+            busy={busy === "launch"}
+            splitInvalid={splitInvalid}
+            force={force}
+            setForce={setForce}
+            launch={() => void launch()}
+          />
+        </Modal>
       </div>
       {message && (
         <div className="toast-message" role="status">

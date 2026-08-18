@@ -1,7 +1,8 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
+import { render } from "./test/render";
 import App from "./App";
 import { demoService } from "./services/appService";
 import type { AppService, AppSnapshot } from "./types";
@@ -132,11 +133,11 @@ describe("SharedLocalLLM app", () => {
     expect(screen.queryByText(/orchid/i)).not.toBeInTheDocument();
     const row = within(screen.getByTestId("model-list"))
       .getByText(/atlas vision/i)
-      .closest("button");
+      .closest("tr");
     expect(row).not.toBeNull();
-    expect(within(row as HTMLElement).getByText(/combined gpu/i)).toBeInTheDocument();
     await user.click(row as HTMLElement);
-    expect(screen.getByRole("button", { name: /launch atlas vision/i })).toBeEnabled();
+    expect(await screen.findByRole("button", { name: /launch atlas vision/i })).toBeEnabled();
+    expect(screen.getByText(/combined gpu/i)).toBeInTheDocument();
   });
 
   it("renders network classification and reruns the benchmark", async () => {

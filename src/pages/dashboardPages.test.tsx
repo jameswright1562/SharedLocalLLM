@@ -1,6 +1,7 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
+import { render } from "../test/render";
 import { cloneSnapshot, serviceWith } from "../test/fixtures";
 import type { AppSnapshot, PageProps } from "../types";
 import { BenchmarksPage } from "./BenchmarksPage";
@@ -156,15 +157,23 @@ describe("dashboard pages", () => {
     await waitFor(() => expect(pageProps.refreshSnapshot).toHaveBeenCalled());
 
     await user.click(screen.getByRole("button", { name: /^split$/i }));
-    expect(within(screen.getByTestId("model-list")).getByText(/atlas/i)).toBeInTheDocument();
+    expect(within(screen.getByTestId("model-list")).getByText(/atlas vision/i)).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /^text$/i }));
     await user.clear(screen.getByRole("searchbox"));
     await user.type(screen.getByRole("searchbox"), "Colossus");
-    expect(screen.getByRole("button", { name: /launch colossus/i })).toBeDisabled();
+    const colossusRow = within(screen.getByTestId("model-list"))
+      .getByText(/colossus 70b/i)
+      .closest("tr");
+    await user.click(colossusRow as HTMLElement);
+    expect(await screen.findByRole("button", { name: /launch colossus/i })).toBeDisabled();
 
     await user.clear(screen.getByRole("searchbox"));
     await user.type(screen.getByRole("searchbox"), "Orchid");
-    await user.click(screen.getByRole("button", { name: /launch orchid/i }));
+    const orchidRow = within(screen.getByTestId("model-list"))
+      .getByText(/orchid 9b/i)
+      .closest("tr");
+    await user.click(orchidRow as HTMLElement);
+    await user.click(await screen.findByRole("button", { name: /launch orchid/i }));
     expect(await screen.findByRole("status")).toHaveTextContent("runtime busy");
     await user.click(screen.getByRole("button", { name: /launch orchid/i }));
     await waitFor(() => expect(startCluster).toHaveBeenCalledTimes(2));
@@ -178,8 +187,13 @@ describe("dashboard pages", () => {
     const pageProps = props(snapshot, { addModelDirectory, startCluster });
     render(<ModelsPage {...pageProps} />);
 
-    await user.clear(screen.getByLabelText("Requested context"));
-    await user.type(screen.getByLabelText("Requested context"), "12288");
+    const orchidRow = within(screen.getByTestId("model-list"))
+      .getByText(/orchid 9b/i)
+      .closest("tr");
+    await user.click(orchidRow as HTMLElement);
+    const contextInput = await screen.findByLabelText("Requested context");
+    await user.clear(contextInput);
+    await user.type(contextInput, "12288");
     await user.click(screen.getByRole("button", { name: /launch orchid/i }));
     expect(startCluster).toHaveBeenCalledWith("model-text", {
       contextSize: 12288,
@@ -199,10 +213,14 @@ describe("dashboard pages", () => {
     const startCluster = vi.fn().mockResolvedValue({ status: "running", modelId: "model-text" });
     render(<ModelsPage {...props(snapshot, { startCluster })} />);
 
-    await user.click(screen.getByRole("button", { name: /manual gpu split/i }));
+    const orchidRow = within(screen.getByTestId("model-list"))
+      .getByText(/orchid 9b/i)
+      .closest("tr");
+    await user.click(orchidRow as HTMLElement);
+    await user.click(await screen.findByRole("button", { name: /manual gpu split/i }));
 
     expect(screen.getByRole("heading", { name: /gpu layer allocation/i })).toBeInTheDocument();
-    const localLayers = screen.getByLabelText(/gpu layers on studio host/i);
+    const localLayers = await screen.findByLabelText(/gpu layers on studio host/i);
     const remoteLayers = screen.getByLabelText(/gpu layers on remote node/i);
     await user.clear(localLayers);
     await user.type(localLayers, "24");
@@ -236,7 +254,11 @@ describe("dashboard pages", () => {
     render(<ModelsPage {...props(snapshot, { startCluster })} />);
 
     await user.type(screen.getByRole("searchbox"), "Colossus");
-    const launchButton = screen.getByRole("button", { name: /launch colossus/i });
+    const colossusRow = within(screen.getByTestId("model-list"))
+      .getByText(/colossus 70b/i)
+      .closest("tr");
+    await user.click(colossusRow as HTMLElement);
+    const launchButton = await screen.findByRole("button", { name: /launch colossus/i });
     expect(launchButton).toBeDisabled();
 
     await user.click(screen.getByRole("checkbox", { name: /force launch/i }));

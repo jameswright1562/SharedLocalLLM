@@ -1,7 +1,7 @@
 fastapi<1,>=0.116
 uvicorn<1,>=0.35
 psutil<8,>=7
-llama-cpp-python==0.3.34
+llama-cpp-python==0.3.35
 
 [dev]
 pytest<9,>=8.4

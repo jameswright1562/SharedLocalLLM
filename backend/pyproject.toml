@@ -11,7 +11,7 @@ dependencies = [
   "fastapi>=0.116,<1",
   "uvicorn>=0.35,<1",
   "psutil>=7,<8",
-  "llama-cpp-python==0.3.34",
+  "llama-cpp-python==0.3.35",
 ]
 
 [project.optional-dependencies]

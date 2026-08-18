@@ -37,18 +37,22 @@ impl BackendProcess {
             return Ok(());
         }
         let (mut command, label) = backend_command(app)?;
-        let log_path = logs_root().join("python-sidecar.log");
-        fs::create_dir_all(log_path.parent().unwrap_or_else(|| Path::new(".")))
-            .map_err(|error| bridge_error(error.to_string()))?;
-        let stdout = File::create(&log_path).map_err(|error| bridge_error(error.to_string()))?;
-        let stderr = stdout
-            .try_clone()
-            .map_err(|error| bridge_error(error.to_string()))?;
-        command
-            .env("PYTHONUNBUFFERED", "1")
-            .stdin(Stdio::null())
-            .stdout(Stdio::from(stdout))
-            .stderr(Stdio::from(stderr));
+        command.env("PYTHONUNBUFFERED", "1").stdin(Stdio::null());
+        if cfg!(debug_assertions) {
+            command.stdout(Stdio::inherit()).stderr(Stdio::inherit());
+        } else {
+            let log_path = logs_root().join("python-sidecar.log");
+            fs::create_dir_all(log_path.parent().unwrap_or_else(|| Path::new(".")))
+                .map_err(|error| bridge_error(error.to_string()))?;
+            let stdout =
+                File::create(&log_path).map_err(|error| bridge_error(error.to_string()))?;
+            let stderr = stdout
+                .try_clone()
+                .map_err(|error| bridge_error(error.to_string()))?;
+            command
+                .stdout(Stdio::from(stdout))
+                .stderr(Stdio::from(stderr));
+        }
         let process = command.spawn().map_err(|error| {
             ErrorPayload::new(
                 "python_backend_start_failed",

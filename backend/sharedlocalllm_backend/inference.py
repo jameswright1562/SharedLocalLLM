@@ -9,7 +9,7 @@ from typing import Any, AsyncIterator
 
 from .errors import BackendError
 from .peer import RpcForwarder
-from .rpc_native import NativeRpcServer
+from .rpc_native import NativeRpcServer, prepare_rpc_load
 
 
 class InferenceEngine:
@@ -42,13 +42,15 @@ class InferenceEngine:
                 self._forwarder = RpcForwarder(peer)
                 rpc_endpoint = await self._forwarder.start()
             total_layers = remote_layers + local_layers
-            tensor_split = None
-            if rpc_endpoint:
-                if total_layers <= 0:
-                    remote_layers = local_layers = 1
-                    total_layers = 2
-                # llama.cpp places registered RPC devices before local GPUs.
-                tensor_split = [float(remote_layers), float(local_layers)]
+            if rpc_endpoint and total_layers <= 0:
+                remote_layers = local_layers = 1
+                total_layers = 2
+            # Registers the worker RPC device and stages the exact device list,
+            # so llama.cpp enumerates the worker ahead of the local GPU and
+            # actually splits layers across both computers.
+            tensor_split = await asyncio.to_thread(
+                prepare_rpc_load, rpc_endpoint, remote_layers, local_layers
+            )
             context = max(512, int(load_config.get("contextSize", 4096)))
             self.store.log(
                 "INFO", "model_load",
@@ -56,20 +58,19 @@ class InferenceEngine:
             )
             try:
                 await asyncio.to_thread(
-                    self._load_sync, path, context, total_layers, tensor_split, rpc_endpoint
+                    self._load_sync, path, context, total_layers, tensor_split
                 )
             except Exception as error:
                 await self._stop_forwarder()
                 raise BackendError(
                     "model_load_failed", str(error),
-                    "Reduce context/model size or review llama-cpp-python CUDA/RPC logs."
+                    "Reduce context/model size or review the CUDA/RPC logs on both computers.",
                 ) from error
             self.model_id = model["id"]
             self.store.log("INFO", "model_loaded", model["name"])
 
     def _load_sync(
-        self, path: str, context: int, gpu_layers: int,
-        tensor_split: list[float] | None, rpc_endpoint: str | None,
+        self, path: str, context: int, gpu_layers: int, tensor_split: list[float] | None
     ) -> None:
         from llama_cpp import Llama, LLAMA_SPLIT_MODE_LAYER
 
@@ -80,10 +81,9 @@ class InferenceEngine:
                 n_gpu_layers=gpu_layers if gpu_layers > 0 else -1,
                 split_mode=LLAMA_SPLIT_MODE_LAYER,
                 tensor_split=tensor_split,
-                rpc_servers=rpc_endpoint,
                 n_threads=max(1, (os.cpu_count() or 8) // 2),
                 n_threads_batch=max(1, os.cpu_count() or 8),
-                verbose=True,
+                verbose=False,
             )
 
     async def unload(self) -> None:

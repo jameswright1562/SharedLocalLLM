@@ -133,7 +133,7 @@ class ApiServerManager:
         await self.stop()
         config = uvicorn.Config(
             create_openai_app(self.runtime), host="127.0.0.1", port=port,
-            log_level="warning", lifespan="off",
+            log_level="warning", access_log=False, lifespan="off",
         )
         self.server = uvicorn.Server(config)
         self.task = asyncio.create_task(self.server.serve())

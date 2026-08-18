@@ -14,7 +14,8 @@ async def run_backend() -> None:
     runtime.api_port_changed = api.restart
     await api.start(int(runtime.store.get("apiPort", 11435)))
     control = uvicorn.Server(uvicorn.Config(
-        create_control_app(runtime), host="127.0.0.1", port=CONTROL_PORT, log_level="info"
+        create_control_app(runtime), host="127.0.0.1", port=CONTROL_PORT,
+        log_level="warning", access_log=False,
     ))
     try:
         await control.serve()

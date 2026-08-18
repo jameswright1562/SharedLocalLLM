@@ -6,7 +6,7 @@ Requires-Python: >=3.12
 Requires-Dist: fastapi<1,>=0.116
 Requires-Dist: uvicorn<1,>=0.35
 Requires-Dist: psutil<8,>=7
-Requires-Dist: llama-cpp-python==0.3.34
+Requires-Dist: llama-cpp-python==0.3.35
 Provides-Extra: dev
 Requires-Dist: pytest<9,>=8.4; extra == "dev"
 Requires-Dist: httpx<1,>=0.28; extra == "dev"

@@ -3,7 +3,7 @@
 This branch moves application orchestration, peer networking, model discovery, benchmarking, and
 `llama.cpp` inference into Python. Tauri remains a thin Windows shell and request bridge.
 
-The backend uses `llama-cpp-python==0.3.34`. Install it with both CUDA and RPC enabled:
+The backend uses `llama-cpp-python==0.3.35`. Install it with both CUDA and RPC enabled:
 
 ```powershell
 pnpm backend:install

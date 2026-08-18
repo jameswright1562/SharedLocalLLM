@@ -8,14 +8,17 @@ import { appService, demoService, nativeService } from "./appService";
 describe("app services", () => {
   beforeEach(() => {
     vi.useFakeTimers();
-    invokeMock.mockReset().mockImplementation((command: string, payload?: Record<string, unknown>) => {
-      if (command === "pick_model_directory") return Promise.resolve("C:\\Models");
-      if (command === "backend_request") {
-        const request = payload as { command?: string } | undefined;
-        if (request?.command === "send_chat_message") return Promise.resolve({ content: "hello" });
-      }
-      return Promise.resolve({ status: "ready" });
-    });
+    invokeMock
+      .mockReset()
+      .mockImplementation((command: string, payload?: Record<string, unknown>) => {
+        if (command === "pick_model_directory") return Promise.resolve("C:\\Models");
+        if (command === "backend_request") {
+          const request = payload as { command?: string } | undefined;
+          if (request?.command === "send_chat_message")
+            return Promise.resolve({ content: "hello" });
+        }
+        return Promise.resolve({ status: "ready" });
+      });
   });
 
   afterEach(() => {
@@ -31,15 +34,25 @@ describe("app services", () => {
     expect(appService).toBe(demoService);
     const initial = await settle(demoService.getAppSnapshot());
     expect(initial.nodes).toHaveLength(2);
-    expect(await settle(demoService.refreshHardware())).toMatchObject({ deviceName: "Primary node" });
+    expect(await settle(demoService.refreshHardware())).toMatchObject({
+      deviceName: "Primary node",
+    });
     expect(await settle(demoService.discoverModels())).toHaveLength(3);
 
     const completed = await settle(demoService.completeSetup("Demo coordinator"));
     expect(completed).toMatchObject({ setupComplete: true, deviceName: "Demo coordinator" });
     const updated = await settle(
-      demoService.updateSettings({ deviceName: "Renamed coordinator", apiPort: 12000, autostart: true }),
+      demoService.updateSettings({
+        deviceName: "Renamed coordinator",
+        apiPort: 12000,
+        autostart: true,
+      }),
     );
-    expect(updated).toMatchObject({ deviceName: "Renamed coordinator", apiPort: 12000, autostart: true });
+    expect(updated).toMatchObject({
+      deviceName: "Renamed coordinator",
+      apiPort: 12000,
+      autostart: true,
+    });
 
     const progress = vi.fn();
     const installed = await settle(demoService.installRuntime(progress));
@@ -49,7 +62,9 @@ describe("app services", () => {
     const directory = await settle(demoService.addModelDirectory());
     expect(directory?.path).toContain("Custom");
     await settle(demoService.removeModelDirectory(directory!.id));
-    expect((await settle(demoService.getAppSnapshot())).modelDirectories).not.toContainEqual(directory);
+    expect((await settle(demoService.getAppSnapshot())).modelDirectories).not.toContainEqual(
+      directory,
+    );
 
     expect((await settle(demoService.runNetworkTest())).classification).toBe("good");
     expect((await settle(demoService.connectPeer())).role).toBe("worker");
@@ -69,7 +84,11 @@ describe("app services", () => {
     const progress = vi.fn();
     await nativeService.getAppSnapshot();
     await nativeService.completeSetup("Main node");
-    await nativeService.updateSettings({ deviceName: "Main node", apiPort: 11435, autostart: true });
+    await nativeService.updateSettings({
+      deviceName: "Main node",
+      apiPort: 11435,
+      autostart: true,
+    });
     await nativeService.installRuntime(progress);
     expect(progress).toHaveBeenCalledWith(100, "Python backend ready");
     await nativeService.refreshHardware();
@@ -109,11 +128,26 @@ describe("app services", () => {
       .filter(([command]) => command === "backend_request")
       .map(([, value]) => (value as { command: string }).command);
     expect(backendCommands).toEqual([
-      "get_app_snapshot", "complete_setup", "update_settings", "install_runtime",
-      "refresh_hardware", "discover_models", "add_model_directory", "remove_model_directory",
-      "run_network_test", "connect_peer", "reset_pairing", "estimate_model_split", "start_cluster",
-      "stop_cluster", "run_inference_benchmark", "cancel_inference_benchmark", "send_chat_message",
-      "cancel_generation", "get_api_config", "regenerate_api_key",
+      "get_app_snapshot",
+      "complete_setup",
+      "update_settings",
+      "install_runtime",
+      "refresh_hardware",
+      "discover_models",
+      "add_model_directory",
+      "remove_model_directory",
+      "run_network_test",
+      "connect_peer",
+      "reset_pairing",
+      "estimate_model_split",
+      "start_cluster",
+      "stop_cluster",
+      "run_inference_benchmark",
+      "cancel_inference_benchmark",
+      "send_chat_message",
+      "cancel_generation",
+      "get_api_config",
+      "regenerate_api_key",
     ]);
     expect(invokeMock).toHaveBeenCalledWith("pick_model_directory", undefined);
     expect(invokeMock).toHaveBeenCalledWith("open_network_settings", undefined);

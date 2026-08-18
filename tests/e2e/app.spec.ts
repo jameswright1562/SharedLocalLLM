@@ -30,6 +30,10 @@ test.describe("browser demo", () => {
 
   test("previews a manual per-computer GPU layer split", async ({ page }) => {
     await page.getByRole("button", { name: "Models", exact: true }).click();
+    await page
+      .getByTestId("model-list")
+      .getByText(/meridian 12b instruct/i)
+      .click();
     await page.getByRole("button", { name: /manual gpu split/i }).click();
 
     await expect(page.getByRole("heading", { name: /gpu layer allocation/i })).toBeVisible();
@@ -43,8 +47,13 @@ test.describe("browser demo", () => {
 
   test("accepts a chat prompt through the accessible composer", async ({ page }) => {
     await page.getByRole("button", { name: "Models", exact: true }).click();
+    await page
+      .getByTestId("model-list")
+      .getByText(/meridian 12b instruct/i)
+      .click();
     await page.getByRole("button", { name: /launch meridian 12b instruct/i }).click();
     await expect(page.locator(".toast-message")).toContainText(/is loading/i);
+    await page.keyboard.press("Escape");
 
     await page.getByRole("button", { name: "Chat", exact: true }).click();
     await expect(page.getByRole("heading", { name: "Cluster chat", exact: true })).toBeVisible();

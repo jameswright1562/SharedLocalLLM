@@ -40,7 +40,11 @@ export const nativeService: AppService = {
   cancelInferenceBenchmark: () => backend("cancel_inference_benchmark"),
   sendChatMessage: async (messages, settings, images, onStream) => {
     onStream?.({ kind: "status", status: "generating" });
-    const response = await backend<ChatResponse>("send_chat_message", { messages, settings, images });
+    const response = await backend<ChatResponse>("send_chat_message", {
+      messages,
+      settings,
+      images,
+    });
     if (response.content) onStream?.({ kind: "token", content: response.content });
     onStream?.({ kind: "status", status: "idle" });
     return response;

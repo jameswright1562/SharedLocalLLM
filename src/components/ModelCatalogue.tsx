@@ -1,5 +1,7 @@
 import type { ModelRecord } from "../types";
-import { fitLabels, formatBytes } from "../pages/pageFormat";
+import { NumberFormatter, Table } from "@mantine/core";
+import { useMemo, useState } from "react";
+import { IconChevronDown, IconChevronUp } from "@tabler/icons-react";
 
 export type CapabilityFilter = "all" | "text" | "vision" | "split";
 
@@ -18,36 +20,48 @@ export function ModelCatalogue({
   select,
   addFolder,
 }: ModelCatalogueProps) {
+  const [sortBy, setSortBy] = useState<keyof ModelRecord | null>(null);
+  const [reverseSortDirection, setReverseSortDirection] = useState(false);
+
+  const handleSort = (field: keyof ModelRecord) => {
+    const reversed = field === sortBy ? !reverseSortDirection : false;
+    setReverseSortDirection(reversed);
+    setSortBy(field);
+  };
+
+  const sortedModels = useMemo(() => {
+    if (!sortBy) return visibleModels;
+
+    return [...visibleModels].sort((a, b) => {
+      let comparison: number;
+
+      switch (sortBy) {
+        case "name":
+          comparison = a.name.localeCompare(b.name);
+          break;
+        case "architecture":
+          comparison = a.architecture.localeCompare(b.architecture);
+          break;
+        case "capability":
+          comparison = a.capability.localeCompare(b.capability);
+          break;
+        case "contextLength":
+          comparison = a.contextLength - b.contextLength;
+          break;
+        case "locations":
+          comparison = a.locations.join(" ").localeCompare(b.locations.join(" "));
+          break;
+        default:
+          return 0;
+      }
+
+      return reverseSortDirection ? -comparison : comparison;
+    });
+  }, [visibleModels, sortBy, reverseSortDirection]);
+
   return (
     <div className="model-list" data-testid="model-list">
-      {visibleModels.map((model) => (
-        <button
-          className={`model-row ${selectedId === model.id ? "selected" : ""}`}
-          key={model.id}
-          onClick={() => select(model.id)}
-          aria-pressed={selectedId === model.id}
-        >
-          <span className={`model-kind kind-${model.capability}`}>
-            {model.capability === "vision" ? "◉" : "T"}
-          </span>
-          <span className="model-main">
-            <strong>{model.name}</strong>
-            <small>
-              {model.architecture} · {model.quantization} · {formatBytes(model.sizeBytes)}
-            </small>
-          </span>
-          <span className="model-tags">
-            <i>{model.capability}</i>
-            {model.shards > 1 && <i>{model.shards} shards</i>}
-            <i>{model.locations[0]?.source === "lm-studio" ? "LM Studio" : "Custom"}</i>
-          </span>
-          <span className={`fit-badge fit-${model.fit}`}>{fitLabels[model.fit]}</span>
-          <span className="row-arrow" aria-hidden="true">
-            ›
-          </span>
-        </button>
-      ))}
-      {visibleModels.length === 0 && (
+      {sortedModels.length === 0 ? (
         <div className="empty-state model-empty">
           <span>GG</span>
           <div>
@@ -62,6 +76,80 @@ export function ModelCatalogue({
             </button>
           </div>
         </div>
+      ) : (
+        <Table.ScrollContainer minWidth={500} maxHeight={700}>
+          <Table stickyHeader stickyHeaderOffset={0} highlightOnHover>
+            <Table.Thead>
+              <Table.Tr>
+                <Table.Th onClick={() => handleSort("name")}>
+                  Name
+                  {sortBy === "name" &&
+                    (reverseSortDirection ? (
+                      <IconChevronUp size={14} />
+                    ) : (
+                      <IconChevronDown size={14} />
+                    ))}
+                </Table.Th>
+                <Table.Th onClick={() => handleSort("architecture")}>
+                  Architecture
+                  {sortBy === "architecture" &&
+                    (reverseSortDirection ? (
+                      <IconChevronUp size={14} />
+                    ) : (
+                      <IconChevronDown size={14} />
+                    ))}
+                </Table.Th>
+                <Table.Th onClick={() => handleSort("capability")}>
+                  Modalities
+                  {sortBy === "capability" &&
+                    (reverseSortDirection ? (
+                      <IconChevronUp size={14} />
+                    ) : (
+                      <IconChevronDown size={14} />
+                    ))}
+                </Table.Th>
+                <Table.Th onClick={() => handleSort("contextLength")}>
+                  Max Context Size
+                  {sortBy === "contextLength" &&
+                    (reverseSortDirection ? (
+                      <IconChevronUp size={14} />
+                    ) : (
+                      <IconChevronDown size={14} />
+                    ))}
+                </Table.Th>
+                <Table.Th onClick={() => handleSort("locations")}>
+                  Location
+                  {sortBy === "locations" &&
+                    (reverseSortDirection ? (
+                      <IconChevronUp size={14} />
+                    ) : (
+                      <IconChevronDown size={14} />
+                    ))}
+                </Table.Th>
+              </Table.Tr>
+            </Table.Thead>
+            <Table.Tbody>
+              {sortedModels.map((model) => (
+                <Table.Tr
+                  className={`${selectedId === model.id ? "selected" : ""}`}
+                  key={model.id}
+                  onClick={() => select(model.id)}
+                  aria-pressed={selectedId === model.id}
+                >
+                  <Table.Td>{model.name}</Table.Td>
+                  <Table.Td>{model.architecture}</Table.Td>
+                  <Table.Td>
+                    <i>{model.capability}</i>
+                  </Table.Td>
+                  <Table.Td>
+                    <NumberFormatter value={model.contextLength} thousandSeparator />
+                  </Table.Td>
+                  <Table.Td>{model.locations.map((location) => location.path).join(", ")}</Table.Td>
+                </Table.Tr>
+              ))}
+            </Table.Tbody>
+          </Table>
+        </Table.ScrollContainer>
       )}
     </div>
   );

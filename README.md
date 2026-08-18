@@ -49,13 +49,13 @@ inference.
 
 ## Ports
 
-| Port | Scope | Purpose |
-| --- | --- | --- |
-| `11436/tcp` | loopback | Internal Tauri-to-Python control API |
-| `11435/tcp` by default | loopback | OpenAI-compatible API |
-| `49158/tcp` | LAN | Peer control and tunneled llama.cpp RPC |
-| `49157/udp` | LAN | Peer discovery |
-| dynamic TCP | loopback | Raw llama.cpp RPC worker/forwarder endpoints |
+| Port                   | Scope    | Purpose                                      |
+| ---------------------- | -------- | -------------------------------------------- |
+| `11436/tcp`            | loopback | Internal Tauri-to-Python control API         |
+| `11435/tcp` by default | loopback | OpenAI-compatible API                        |
+| `49158/tcp`            | LAN      | Peer control and tunneled llama.cpp RPC      |
+| `49157/udp`            | LAN      | Peer discovery                               |
+| dynamic TCP            | loopback | Raw llama.cpp RPC worker/forwarder endpoints |
 
 The OpenAI API requires the bearer key shown by the app. The Python migration generates a new API
 key the first time it runs because the previous key was stored using the Rust/Windows DPAPI path.
