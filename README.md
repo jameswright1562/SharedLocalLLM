@@ -2,279 +2,148 @@
 
 **Use two Windows computers as one local LLM workspace.**
 
-SharedLocalLLM finds GGUF models you already have, measures both computers and the network between
-them, and recommends where each model should run. If a model benefits from—or requires—both GPUs,
-the app can launch it through `llama.cpp`'s distributed RPC backend.
+This branch uses a React/Tauri desktop shell with a Python backend. Python owns model discovery,
+peer networking, distributed RPC orchestration, inference, benchmarking, and the localhost
+OpenAI-compatible API. Rust is intentionally thin and handles Windows/Tauri integration such as the
+tray, autostart, firewall elevation, folder picking, and starting/stopping the packaged backend.
 
-You do not need a particular GPU model or a matching pair of computers. Hardware, available memory,
-model size, context length, and network performance are detected at runtime. LM Studio works as the
-default model source, but it is optional: you can select any local model directory instead.
-
-> [!IMPORTANT]
-> **This project is an implementation preview.** The browser UI, automated frontend/native tests,
-> and unsigned Windows installer build are working. The physical two-computer GPU acceptance matrix
-> is not yet complete, so do not read the current test results as a claim that distributed inference
-> has been proven on real hardware. Both `llama.cpp` RPC and multimodal support are experimental.
-
-## Why this project exists
-
-A model may be too large for either computer on its own while still fitting across their combined
-VRAM and system RAM. Starting the correct processes, choosing a safe layer split, checking whether
-the network is fast enough, and keeping the RPC service off the open LAN are all easy to get wrong.
-
-SharedLocalLLM puts that setup behind one desktop interface:
-
-- Connect exactly two computers over Ethernet, Wi-Fi, or a direct cable.
-- Discover hardware and current free VRAM/RAM instead of relying on hardcoded specifications.
-- Find LM Studio models automatically or index user-selected read-only folders.
-- Recognize normal GGUF files, split GGUF models, and nearby `mmproj` vision projectors.
-- Test throughput, latency, jitter, and packet loss in both directions.
-- Compare single-computer, combined-GPU, and GPU-plus-RAM placements.
-- Launch local chat and a localhost OpenAI-compatible API.
-- Keep clear, redacted logs when a runtime, benchmark, or model fails.
-
-Two computers increase available capacity, but they do not guarantee more speed. SharedLocalLLM
-measures the available choices and can recommend one computer when that is faster.
-
-## How it fits together
-
-The computer that owns the selected model normally becomes the **coordinator**. It starts
-`llama-server` and makes placement decisions. The other computer becomes the **worker** and starts
-`ggml-rpc-server` on loopback only.
+## Architecture
 
 ```text
-Computer A                                              Computer B
+Computer A                                                    Computer B
 
-Local app/API                                            Local app/API
-127.0.0.1:11435                                          127.0.0.1:11435
-      │                                                        │
-      ▼                                                        │
-SharedLocalLLM coordinator ◀── plain peer channel (TCP 49158) ──▶ SharedLocalLLM worker
-      │                                                        │
-      ▼                                                        ▼
-llama-server                                       ggml-rpc-server on 127.0.0.1
-      │                                                        │
-      └──────────── model layers use both compute devices ─────┘
+React UI                                                       React UI
+   │                                                              │
+Tauri/Rust                                                     Tauri/Rust
+   │                                                              │
+Python backend                                                Python backend
+   │                                                              │
+   ├── FastAPI / OpenAI API                                      ├── peer server
+   ├── asyncio peer client/server                                └── embedded llama.cpp RPC worker
+   ├── llama-cpp-python                                                  │
+   │      │                                                            GPU
+   │      ├── local CUDA GPU                                            │
+   │      └── rpc_servers=127.0.0.1:<forwarder>                         │
+   │                         │                                           │
+   └── loopback RPC forwarder ───── TCP 49158 peer tunnel ──────────────┘
 ```
 
-The raw RPC socket is **never meant to be exposed to the LAN**. Peer traffic flows over a plain
-(unencrypted) TCP channel on a trusted private LAN; there is no pairing code and no application-layer
-authentication, so only use this on a network you control with two computers you trust. The local
-model API stays on `127.0.0.1` and requires a bearer key.
+Raw llama.cpp RPC remains loopback-only. TCP `49158` carries the SharedLocalLLM control/RPC tunnel
+between the two computers and UDP `49157` is used for discovery. The peer protocol is versioned but
+is currently intended only for two trusted computers on a LAN you control.
 
-Read [Architecture](docs/architecture.md) for component boundaries, lifecycle, persistence, and the
-full security model.
+See [Architecture](docs/architecture.md) for the component and lifecycle details.
 
-## What you need
+## Backend stack
 
-- Two Windows 10/11 x64 computers on the same network. The Windows Public/Private network category
-  is informational only and does not affect connection or launch.
-- An NVIDIA GPU and compatible driver on each computer for the pinned CUDA 12 runtime.
-- A GGUF model stored on at least one computer.
-- Enough combined VRAM and RAM for the chosen model and context.
+- Python 3.12+
+- `llama-cpp-python==0.3.34`, built with `GGML_CUDA=ON` and `GGML_RPC=ON`
+- `asyncio` for peer control, discovery, network testing, and byte-stream forwarding
+- FastAPI + Uvicorn for the internal bridge and OpenAI-compatible API
+- psutil + `nvidia-smi` for hardware telemetry
+- PyInstaller for the packaged Windows backend executable
 
-There is no fixed VRAM, RAM, processor, Ethernet, or Wi-Fi specification. A wired network is usually
-the best starting point, but the app measures the route rather than guessing from the adapter name.
+`llama-cpp-python` exposes `rpc_servers`, `tensor_split`, `split_mode`, and `n_gpu_layers` directly,
+so the application no longer needs a Rust wrapper around llama.cpp just to configure distributed
+inference.
 
-## Two-computer setup
+## Ports
 
-The intended installed flow is the same on both computers:
+| Port | Scope | Purpose |
+| --- | --- | --- |
+| `11436/tcp` | loopback | Internal Tauri-to-Python control API |
+| `11435/tcp` by default | loopback | OpenAI-compatible API |
+| `49158/tcp` | LAN | Peer control and tunneled llama.cpp RPC |
+| `49157/udp` | LAN | Peer discovery |
+| dynamic TCP | loopback | Raw llama.cpp RPC worker/forwarder endpoints |
 
-1. Install the same SharedLocalLLM version on both computers and open it on each one.
-2. Install the pinned `llama.cpp` runtime from the first-run wizard. The runtime manager checks the
-   official origin, archive size, SHA-256 digest, archive contents, and required executables.
-3. Give each computer a friendly name.
-4. Connect the two computers. On one computer, click **Connect** to auto-discover the other over the
-   LAN. For a direct Ethernet cable with no router, run `ipconfig` on the other computer and enter its
-   Ethernet IPv4 address in the **Ethernet IPv4 address** field. SharedLocalLLM uses TCP port `49158`
-   automatically; you may also enter `address:port` when testing a non-default development build. The
-   app prompts once for administrator approval (UAC) to create a program-scoped Windows Firewall rule
-   automatically, so no manual firewall or network-profile change is needed.
-5. Open **Models**. This computer indexes its own GGUF files. A connected peer can report model names,
-   but launch still requires a local file. Use detected LM Studio folders or **Add folder**.
-6. Open **Network**, run the network test, and review the result. Then select a model and inspect its
-   fit/recommendation before launching it.
-7. Use **Chat** on the computer that launched the model, or from the worker after the peer reports a
-   running cluster. Copy localhost API details from **API**. Stop the cluster from the app when
-   finished so its managed processes are cleaned up.
+The OpenAI API requires the bearer key shown by the app. The Python migration generates a new API
+key the first time it runs because the previous key was stored using the Rust/Windows DPAPI path.
+Non-secret settings and the existing peer record are migrated from `%LOCALAPPDATA%\SharedLocalLLM\settings.json`.
 
-Version 0.1.2 replaces the old shared `local-node` placeholder with a unique per-install identity.
-After upgrading from 0.1.1, open **Nodes**, choose **Forget** for the old peer if it is still listed,
-then connect once more. This removes only the saved peer record; model directories and model files
-are unchanged. Each app keeps a listener available and refreshes peer health periodically so a
-connected computer can reconnect after reopening.
+## Development setup
 
-For a cable connected directly between two computers with no router or DHCP server, set a static
-address on each side so the two computers can see each other, for example `10.10.10.1/24` on one
-computer and `10.10.10.2/24` on the other, with no gateway and no DNS. Windows may instead assign
-automatic `169.254.x.x` link-local addresses; that is also valid. In both cases, enter the other
-computer's Ethernet IPv4 address manually. Both computers still need to run this same app version.
-
-There is not yet a published, physically validated installer release. Contributors can build the
-current preview from source using the steps below. If connection or launch fails, use the
-[two-computer troubleshooting guide](docs/troubleshooting.md); every manual command there is clearly
-labelled by computer.
-
-## Models: LM Studio or any folder
-
-Model discovery runs independently on both computers:
-
-1. If LM Studio's `lms` command is available, the app reads `lms ls --json --detailed`. This follows
-   the model location configured inside LM Studio, including a non-default location.
-2. If the CLI is unavailable, it checks the legacy `%USERPROFILE%\.lmstudio\models` layout, the
-   current `.lmstudio\hub\models` catalogue, bundled models, and the real `downloadsFolder` recorded
-   in `.lmstudio\settings.json` (often `%USERPROFILE%\.cache\huggingface\hub`).
-3. It also indexes every custom folder you add in SharedLocalLLM.
-
-Configured folders are read-only. SharedLocalLLM does not move, rename, overwrite, delete, or copy
-model files between computers. Keep split shards together. For a vision model, keep its compatible
-`mmproj*.gguf` beside the model files.
-
-LM Studio itself is not required. If it is running a loaded model and occupying substantial VRAM,
-SharedLocalLLM reports the conflict and lets you choose whether to unload it; the app does not kill
-LM Studio automatically.
-
-## Network and placement recommendations
-
-The first candidate split is based on currently usable VRAM, with safety space left for Windows and
-other applications. The app can then compare valid nearby layer splits, single-computer placement,
-and coordinator RAM spill. Results are tied to the exact model, context, hardware, drivers, runtime,
-and active network adapter so a changed setup does not reuse a stale recommendation.
-
-Automatic allocation is the default. In **Models**, switch to **Manual GPU split** to set a target
-GPU-layer count for each connected computer. The live estimate combines proportional GGUF weights,
-the selected context's F16 KV cache, and a runtime allowance, shows the current available VRAM on
-each computer, and blocks a manual launch when the estimate exceeds it. `llama.cpp` may round the
-requested proportions at tensor boundaries, so the displayed figures are estimates rather than a
-guarantee of exact allocation.
-
-The network rating is guidance, not a promise of token speed:
-
-| Rating | Sustained bidirectional throughput |   p95 latency | Meaning                                  |
-| ------ | ---------------------------------: | ------------: | ---------------------------------------- |
-| Good   |                at least 800 Mbit/s |  at most 3 ms | Strong candidate for distributed testing |
-| Usable |                at least 200 Mbit/s | at most 10 ms | Distribution is possible; benchmark it   |
-| Poor   |      below either usable threshold |             — | Allowed with a clear performance warning |
-
-## Try the project locally
-
-### 1. Install the development tools
-
-You will need:
-
-- [Node.js](https://nodejs.org/) 22.12 or newer and pnpm 11.
-- [Rust](https://rustup.rs/) stable with the `x86_64-pc-windows-msvc` target.
-- Microsoft Visual Studio Build Tools with **Desktop development with C++**.
-- Microsoft Edge WebView2 (normally already present on current Windows versions).
-
-### 2. Install dependencies
-
-From PowerShell in the repository root:
+Install Node.js 22.12+, pnpm 11, Rust/MSVC, Python 3.12, CMake, and an NVIDIA CUDA toolkit. Then:
 
 ```powershell
 corepack enable
 pnpm install --frozen-lockfile
+pnpm backend:install
+pnpm tauri dev
 ```
 
-### 3. Choose a development mode
+`pnpm backend:install` creates `backend/.venv`, installs Ninja, and builds llama-cpp-python from source
+with CUDA and RPC enabled. `pnpm tauri dev` checks that the backend environment is present before
+starting Vite/Tauri.
 
-The browser preview is the quickest way to explore the interface. It uses simulated computers,
-models, network results, and inference responses; it does not start the native distributed runtime.
+The browser-only preview still uses the deterministic demo service:
 
 ```powershell
 pnpm dev
 ```
 
-Run the real Tauri desktop shell when working on native commands:
+## Checks
 
 ```powershell
-pnpm tauri dev
-```
-
-> [!NOTE]
-> Run the desktop shell from an **administrator** PowerShell. The app creates a program-scoped
-> Windows Firewall rule for the peer ports on startup; when the process is not elevated,
-> `New-NetFirewallRule` fails with "Access is denied" and the peers cannot connect through the
-> firewall. Launching the terminal as administrator keeps development behaviour identical to the
-> installed app.
-
-### 4. Run the checks
-
-```powershell
-pnpm check
+pnpm typecheck
+pnpm lint
+pnpm test
+pnpm backend:test
 cargo fmt --manifest-path src-tauri/Cargo.toml --all --check
 cargo test --manifest-path src-tauri/Cargo.toml --all-targets
 cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
 ```
 
-The frontend coverage gate is 80% for statements, branches, functions, and lines. Playwright covers
-the critical browser-preview journeys. Native tests cover deterministic core and peer behavior, but
-neither replaces the physical two-computer checks in [Testing](docs/testing.md).
-
-### 5. Build the Windows installer
+## Build the Windows installer
 
 ```powershell
 pnpm tauri build --bundles nsis
 ```
 
-The installer is written below `src-tauri/target/release/bundle/nsis/`. Local builds are unsigned
-unless you configure a Windows code-signing certificate, so Windows may show its usual warning.
+The Tauri build first packages the Python backend with PyInstaller and then bundles
+`sharedlocalllm-backend.exe` as an application resource. End users do not need to install Python.
 
-## Local API example
+## Model discovery and placement
 
-Each computer uses `http://127.0.0.1:11435` by default. The app does not silently switch ports when
-that address is occupied. Copy the current URL and key from the **API** page, then call it from the
-same computer:
+SharedLocalLLM scans the default LM Studio locations plus folders added through the UI. GGUF files
+remain read-only and are never copied between machines. Model metadata is used to estimate context
+and GPU placement. Remote catalogue entries can be launched from either UI: the computer that owns
+the GGUF becomes coordinator, while a distributed local model can offload layers through the peer's
+embedded RPC worker.
+
+For two GPUs, the UI's node allocations are translated into llama.cpp `tensor_split` weights using
+explicit node identity. Registered RPC devices are accounted for before the local CUDA device so an
+asymmetric split is not accidentally reversed.
+
+## Local OpenAI API
+
+The default endpoint is `http://127.0.0.1:11435` and supports:
+
+- `GET /health`
+- `GET /v1/models`
+- `POST /v1/chat/completions`
+- `POST /v1/completions`
+- SSE chat streaming when the local computer is coordinator
+
+Example:
 
 ```powershell
 $apiKey = "paste-the-key-shown-by-SharedLocalLLM"
 curl.exe http://127.0.0.1:11435/v1/chat/completions `
   -H "Authorization: Bearer $apiKey" `
   -H "Content-Type: application/json" `
-  -d '{"model":"selected-model","stream":false,"messages":[{"role":"user","content":"Hello"}]}'
+  -d '{"model":"active","stream":false,"messages":[{"role":"user","content":"Hello"}]}'
 ```
 
-Baseline routes are `/health`, `/v1/models`, `/v1/chat/completions`, and `/v1/completions`, including
-SSE streaming. Keep the bearer key out of logs, screenshots, and issue reports.
+## Current limits
 
-## Safety and current limits
+- The physical two-PC CUDA/RPC path still needs to be exercised on real hardware after checkout.
+- Vision attachments are not wired into the Python inference handler yet. The `use-new-crate` branch
+  also had text-only generation despite retaining projector metadata, so this branch does not remove
+  a working multimodal generation path.
+- The peer protocol is not encrypted or authenticated and should only be used on a trusted LAN.
+- Distributed inference can be slower than single-GPU inference; benchmark the actual model/context.
+- More than two nodes and WAN clustering are out of scope.
 
-- Use only two computers you control on a trusted network. Do not expose this app to
-  the internet, an untrusted LAN, or a multi-tenant environment.
-- V1 supports Windows x64 NVIDIA computers and layer splitting. WAN clustering, more than two nodes,
-  and LAN tensor parallelism are out of scope.
-- Upstream describes `llama.cpp` RPC as proof-of-concept, fragile, and insecure. SharedLocalLLM keeps
-  raw RPC on loopback, but the current peer-authentication design is still a preview.
-- Distributed inference may be slower than the best single computer, especially over Wi-Fi or when
-  spilling layers into system RAM.
-- A generation cannot migrate if the peer disconnects. It returns an error and may offer a
-  single-computer retry only when the model fits.
-- GGUF models are not sandboxed. Use models from sources you trust.
-- Vision compatibility depends on the model and projector and remains experimental.
-- `llama.cpp` filesystem, shell, MCP, and built-in agent tools are never enabled.
-
-See the upstream [`llama.cpp` RPC warning](https://github.com/ggml-org/llama.cpp/blob/master/tools/rpc/README.md)
-and [security guidance](https://github.com/ggml-org/llama.cpp/security) for the risks behind these
-boundaries.
-
-## Project guide
-
-| If you want to…                                        | Read…                                                   |
-| ------------------------------------------------------ | ------------------------------------------------------- |
-| Understand the processes, protocol, and state          | [Architecture](docs/architecture.md)                    |
-| Run checks or see the physical acceptance matrix       | [Testing and release gates](docs/testing.md)            |
-| Fix discovery, firewall, network, model, or API issues | [Two-computer troubleshooting](docs/troubleshooting.md) |
-| Contribute code safely                                 | [Contributing](CONTRIBUTING.md)                         |
-| Review deferred improvements                           | [Ideas](ideas.md)                                       |
-| Report a security concern                              | [Security policy](SECURITY.md)                          |
-
-## Contributing
-
-New contributors are welcome. Start with [CONTRIBUTING.md](CONTRIBUTING.md), keep changes focused,
-and add or update a test before changing behavior. Please report the exact checks you ran and call
-out anything that still needs real-hardware validation.
-
-## License
-
-SharedLocalLLM is available under the [MIT License](LICENSE). Downloaded or bundled third-party
-components keep their own licenses.
+Both computers must run the Python-backend branch because its peer protocol version intentionally
+differs from the Rust-backend branch.

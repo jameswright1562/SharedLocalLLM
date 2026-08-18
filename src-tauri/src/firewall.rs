@@ -5,8 +5,8 @@
 
 use std::path::Path;
 
-pub const TCP_RULE_NAME: &str = "SharedLocalLLM";
-pub const UDP_RULE_NAME: &str = "SharedLocalLLM Discovery";
+pub const TCP_RULE_NAME: &str = "SharedLocalLLM Peer Backend";
+pub const UDP_RULE_NAME: &str = "SharedLocalLLM Peer Discovery";
 
 pub async fn ensure_peer_firewall_rules(
     executable: &Path,
@@ -79,7 +79,7 @@ fn powershell_literal(value: &str) -> String {
 #[cfg(windows)]
 pub fn peer_firewall_rules_exist() -> bool {
     powershell_bool(
-        "@(Get-NetFirewallRule -DisplayName 'SharedLocalLLM' -ErrorAction SilentlyContinue).Count -gt 0 -and @(Get-NetFirewallRule -DisplayName 'SharedLocalLLM Discovery' -ErrorAction SilentlyContinue).Count -gt 0",
+        "@(Get-NetFirewallRule -DisplayName 'SharedLocalLLM Peer Backend' -ErrorAction SilentlyContinue).Count -gt 0 -and @(Get-NetFirewallRule -DisplayName 'SharedLocalLLM Peer Discovery' -ErrorAction SilentlyContinue).Count -gt 0",
     )
 }
 
@@ -134,7 +134,7 @@ mod tests {
 
     #[test]
     fn peer_rule_allows_tcp_port_on_every_profile() {
-        let script = firewall_rule_script("SharedLocalLLM", "TCP", 49_158);
+        let script = firewall_rule_script("SharedLocalLLM Peer Backend", "TCP", 49_158);
         assert!(script.contains("-Protocol TCP"));
         assert!(script.contains("-LocalPort 49158"));
         assert!(script.contains("-Profile Any"));
@@ -143,7 +143,7 @@ mod tests {
 
     #[test]
     fn discovery_rule_uses_udp() {
-        let script = firewall_rule_script("SharedLocalLLM Discovery", "UDP", 49_157);
+        let script = firewall_rule_script("SharedLocalLLM Peer Discovery", "UDP", 49_157);
         assert!(script.contains("-Protocol UDP"));
         assert!(script.contains("-LocalPort 49157"));
     }

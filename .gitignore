@@ -1,19 +1,42 @@
+# JavaScript
 node_modules/
 dist/
 coverage/
-playwright-report/
-test-results/
-*.log
-.DS_Store
-Thumbs.db
-.vscode/
-.idea/
+*.tsbuildinfo
+
+# Rust and Tauri
 src-tauri/target/
 src-tauri/target-package/
 src-tauri/gen/
+
+# Python backend
 backend/.venv/
 backend/build/
 backend/dist/
 backend/*.spec
 backend/**/__pycache__/
 backend/.pytest_cache/
+
+# Tests
+playwright-report/
+test-results/
+
+# Editors and operating systems
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Local state, downloads, logs, and secrets
+*.log
+.env
+.env.*
+!.env.example
+.runtime/
+diagnostics/
+runtime-downloads/
+
+graphify-out/
+
+.opencode/
+.codex/
