@@ -199,6 +199,11 @@ describe("dashboard pages", () => {
       contextSize: 12288,
       gpuLayers: expect.any(Array),
       force: false,
+      flashAttention: false,
+      useMmap: true,
+      useMlock: false,
+      cpuThreads: 0,
+      batchSize: 512,
     });
 
     await user.click(screen.getByRole("button", { name: /^add folder$/i }));
@@ -238,6 +243,56 @@ describe("dashboard pages", () => {
         { nodeId: "node-b", layers: 16 },
       ],
       force: false,
+      flashAttention: false,
+      useMmap: true,
+      useMlock: false,
+      cpuThreads: 0,
+      batchSize: 512,
+    });
+  });
+
+  it("describes advanced load options and forwards their values on launch", async () => {
+    const user = userEvent.setup();
+    const startCluster = vi.fn().mockResolvedValue({ status: "running", modelId: "model-text" });
+    render(<ModelsPage {...props(cloneSnapshot(), { startCluster })} />);
+
+    const orchidRow = within(screen.getByTestId("model-list"))
+      .getByText(/orchid 9b/i)
+      .closest("tr");
+    await user.click(orchidRow as HTMLElement);
+
+    expect(
+      await screen.findByRole("heading", { name: /advanced load options/i }),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/uses flash attention to accelerate generation/i)).toBeInTheDocument();
+    expect(screen.getByText(/maps the model file into memory/i)).toBeInTheDocument();
+    expect(screen.getByText(/prevents windows from swapping/i)).toBeInTheDocument();
+    expect(screen.getByText(/0 lets llama.cpp choose/i)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("checkbox", { name: /flash attention/i }));
+    await user.click(screen.getByRole("checkbox", { name: /lock model in ram/i }));
+    const threads = screen.getByRole("spinbutton", { name: /cpu threads/i });
+    await user.type(threads, "{Control>}a{/Control}8");
+    const batch = screen.getByRole("spinbutton", { name: /batch size/i });
+    await user.type(batch, "{Control>}a{/Control}2048");
+
+    expect(
+      screen.getByText(/unsupported gpus fall back to standard attention/i),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/needs free ram equal to the whole model/i)).toBeInTheDocument();
+    expect(screen.getByText(/can oversubscribe the cpu/i)).toBeInTheDocument();
+    expect(screen.getByText(/very large batches use more memory/i)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /launch orchid/i }));
+    expect(startCluster).toHaveBeenCalledWith("model-text", {
+      contextSize: 8192,
+      gpuLayers: expect.any(Array),
+      force: false,
+      flashAttention: true,
+      useMmap: true,
+      useMlock: true,
+      cpuThreads: 8,
+      batchSize: 2048,
     });
   });
 
@@ -269,6 +324,11 @@ describe("dashboard pages", () => {
       contextSize: 8192,
       gpuLayers: expect.any(Array),
       force: true,
+      flashAttention: false,
+      useMmap: true,
+      useMlock: false,
+      cpuThreads: 0,
+      batchSize: 512,
     });
   });
 

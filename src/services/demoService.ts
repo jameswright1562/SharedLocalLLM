@@ -124,17 +124,25 @@ export const demoService: AppService = {
     await delay(80);
   },
   async sendChatMessage(messages, _settings, _images, onStream) {
-    await delay(950);
+    await delay(600);
     const latest = [...messages].reverse().find((message) => message.role === "user");
-    const content = `The cluster received your request${latest?.content ? ` about “${latest.content.slice(0, 52)}”` : ""}. This browser preview simulates the streamed response; native mode routes it through the active coordinator.`;
+    const topic = latest?.content ? ` about “${latest.content.slice(0, 52)}”` : "";
+    const reasoning = `I traced the request${topic} across both nodes and re-checked the model placement before answering.`;
+    const content = `The cluster received your request${topic}. This browser preview simulates the streamed response; native mode routes it through the active coordinator.`;
     if (onStream) {
       onStream({ kind: "status", status: "processing" });
+      for (const word of reasoning.split(" ")) {
+        await delay(12);
+        onStream({ kind: "reasoning", content: `${word} ` });
+      }
       for (const word of content.split(" ")) {
-        await delay(15);
+        await delay(14);
         onStream({ kind: "token", content: `${word} ` });
       }
+      onStream({ kind: "stats", tokensPerSecond: 24.8 });
+      onStream({ kind: "status", status: "idle" });
     }
-    return { content };
+    return { content, reasoning, tokensPerSecond: 24.8 };
   },
   async cancelGeneration() {
     await delay(80);

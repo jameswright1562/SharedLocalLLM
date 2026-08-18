@@ -9,7 +9,38 @@ from typing import Any, AsyncIterator
 
 from .errors import BackendError
 from .peer import RpcForwarder
+from .reasoning import ReasoningStreamSplitter, is_reasoning_model, split_reasoning
 from .rpc_native import NativeRpcServer, prepare_rpc_load
+
+
+def build_llama_kwargs(
+    load_config: dict[str, Any], path: str, context: int, gpu_layers: int,
+    tensor_split: list[float] | None,
+) -> dict[str, Any]:
+    """Map a model load config into llama-cpp-python constructor arguments.
+
+    Unknown or unset options fall back to the previous hardcoded behaviour:
+    automatic CPU threads, a 512-token batch, mmap enabled, and standard (non
+    flash) attention. ``cpuThreads=0`` keeps the automatic half-core default.
+    """
+    from llama_cpp import LLAMA_SPLIT_MODE_LAYER
+
+    cores = os.cpu_count() or 8
+    requested_threads = int(load_config.get("cpuThreads", 0))
+    return {
+        "model_path": path,
+        "n_ctx": context,
+        "n_gpu_layers": gpu_layers if gpu_layers > 0 else -1,
+        "split_mode": LLAMA_SPLIT_MODE_LAYER,
+        "tensor_split": tensor_split,
+        "n_threads": max(1, requested_threads) if requested_threads > 0 else max(1, cores // 2),
+        "n_threads_batch": max(1, cores),
+        "n_batch": max(1, int(load_config.get("batchSize", 512))),
+        "flash_attn": bool(load_config.get("flashAttention", False)),
+        "use_mmap": bool(load_config.get("useMmap", True)),
+        "use_mlock": bool(load_config.get("useMlock", False)),
+        "verbose": True,
+    }
 
 
 class InferenceEngine:
@@ -22,6 +53,7 @@ class InferenceEngine:
         self._cancel = threading.Event()
         self._forwarder: RpcForwarder | None = None
         self._rpc_worker = NativeRpcServer()
+        self.reasoning = False
 
     async def load(
         self, model: dict[str, Any], path: str, load_config: dict[str, Any],
@@ -54,11 +86,16 @@ class InferenceEngine:
             context = max(512, int(load_config.get("contextSize", 4096)))
             self.store.log(
                 "INFO", "model_load",
-                f"model={model['name']} ctx={context} rpc={rpc_endpoint} split={tensor_split}",
+                f"model={model['name']} ctx={context} rpc={rpc_endpoint} split={tensor_split} "
+                f"flash_attn={bool(load_config.get('flashAttention', False))} "
+                f"mmap={bool(load_config.get('useMmap', True))} "
+                f"mlock={bool(load_config.get('useMlock', False))} "
+                f"threads={int(load_config.get('cpuThreads', 0))} "
+                f"batch={int(load_config.get('batchSize', 512))}",
             )
             try:
                 await asyncio.to_thread(
-                    self._load_sync, path, context, total_layers, tensor_split
+                    self._load_sync, path, context, total_layers, tensor_split, load_config
                 )
             except Exception as error:
                 await self._stop_forwarder()
@@ -67,24 +104,18 @@ class InferenceEngine:
                     "Reduce context/model size or review the CUDA/RPC logs on both computers.",
                 ) from error
             self.model_id = model["id"]
+            self.reasoning = is_reasoning_model(model["name"])
             self.store.log("INFO", "model_loaded", model["name"])
 
     def _load_sync(
-        self, path: str, context: int, gpu_layers: int, tensor_split: list[float] | None
+        self, path: str, context: int, gpu_layers: int, tensor_split: list[float] | None,
+        load_config: dict[str, Any],
     ) -> None:
-        from llama_cpp import Llama, LLAMA_SPLIT_MODE_LAYER
+        from llama_cpp import Llama
 
+        kwargs = build_llama_kwargs(load_config, path, context, gpu_layers, tensor_split)
         with self._sync_lock:
-            self.llm = Llama(
-                model_path=path,
-                n_ctx=context,
-                n_gpu_layers=gpu_layers if gpu_layers > 0 else -1,
-                split_mode=LLAMA_SPLIT_MODE_LAYER,
-                tensor_split=tensor_split,
-                n_threads=max(1, (os.cpu_count() or 8) // 2),
-                n_threads_batch=max(1, os.cpu_count() or 8),
-                verbose=False,
-            )
+            self.llm = Llama(**kwargs)
 
     async def unload(self) -> None:
         async with self._async_lock:
@@ -115,7 +146,7 @@ class InferenceEngine:
 
     async def chat(
         self, messages: list[dict[str, Any]], settings: dict[str, Any], images: list[str]
-    ) -> str:
+    ) -> dict[str, Any]:
         if images:
             raise BackendError(
                 "vision_not_migrated", "Vision attachments are not enabled in the Python migration yet.",
@@ -128,18 +159,27 @@ class InferenceEngine:
             return await asyncio.to_thread(self._chat_sync, messages, settings)
 
     async def chat_stream(
-        self, messages: list[dict[str, Any]], settings: dict[str, Any]
-    ) -> AsyncIterator[str]:
+        self, messages: list[dict[str, Any]], settings: dict[str, Any], images: list[str] | None = None
+    ) -> AsyncIterator[dict[str, Any]]:
+        if images:
+            raise BackendError(
+                "vision_not_migrated", "Vision attachments are not enabled in the Python migration yet.",
+                "Use text-only chat on this branch for now."
+            )
         async with self._async_lock:
             if not self.llm:
                 raise BackendError("model_not_loaded", "Start a model before chatting.")
             self._cancel.clear()
             loop = asyncio.get_running_loop()
-            queue: asyncio.Queue[str | BaseException | None] = asyncio.Queue()
+            queue: asyncio.Queue[dict[str, Any] | BaseException | None] = asyncio.Queue()
 
             def run() -> None:
                 try:
                     wire = self._wire_messages(messages, settings)
+                    splitter = ReasoningStreamSplitter(self.reasoning)
+                    reasoning_parts: list[str] = []
+                    answer_parts: list[str] = []
+                    started: float | None = None
                     with self._sync_lock:
                         chunks = self.llm.create_chat_completion(
                             messages=wire,
@@ -152,7 +192,28 @@ class InferenceEngine:
                                 break
                             content = chunk["choices"][0].get("delta", {}).get("content")
                             if content:
-                                loop.call_soon_threadsafe(queue.put_nowait, str(content))
+                                if started is None:
+                                    started = time.monotonic()
+                                for kind, piece in splitter.push(str(content)):
+                                    (reasoning_parts if kind == "reasoning" else answer_parts).append(piece)
+                                    loop.call_soon_threadsafe(
+                                        queue.put_nowait, {"type": kind, "content": piece}
+                                    )
+                    for kind, piece in splitter.finish():
+                        (reasoning_parts if kind == "reasoning" else answer_parts).append(piece)
+                        loop.call_soon_threadsafe(queue.put_nowait, {"type": kind, "content": piece})
+                    full = "".join(reasoning_parts) + "".join(answer_parts)
+                    completion_tokens = 1
+                    with self._sync_lock:
+                        completion_tokens = max(
+                            1, len(self.llm.tokenize(full.encode("utf-8"), add_bos=False))
+                        )
+                    elapsed = max((time.monotonic() - started) if started else 0.001, 0.001)
+                    loop.call_soon_threadsafe(
+                        queue.put_nowait,
+                        {"type": "stats", "tokensPerSecond": round(completion_tokens / elapsed, 2)},
+                    )
+                    loop.call_soon_threadsafe(queue.put_nowait, {"type": "done"})
                 except BaseException as error:
                     loop.call_soon_threadsafe(queue.put_nowait, error)
                 finally:
@@ -177,19 +238,38 @@ class InferenceEngine:
             wire.insert(0, {"role": "system", "content": system})
         return wire
 
-    def _chat_sync(self, messages: list[dict[str, Any]], settings: dict[str, Any]) -> str:
-        from llama_cpp import StoppingCriteriaList
+    def _chat_sync(self, messages: list[dict[str, Any]], settings: dict[str, Any]) -> dict[str, Any]:
+        from llama_cpp import LogitsProcessorList
 
         wire = self._wire_messages(messages, settings)
-        criteria = StoppingCriteriaList([lambda _tokens, _logits: self._cancel.is_set()])
+
+        def abort_on_cancel(_tokens: object, logits: object) -> object:
+            if self._cancel.is_set():
+                raise InterruptedError
+            return logits
+
+        started = time.monotonic()
         with self._sync_lock:
-            result = self.llm.create_chat_completion(
-                messages=wire,
-                temperature=float(settings.get("temperature", 0.7)),
-                max_tokens=int(settings.get("maxTokens", 512)),
-                stopping_criteria=criteria,
-            )
-        return str(result["choices"][0]["message"].get("content") or "")
+            try:
+                result = self.llm.create_chat_completion(
+                    messages=wire,
+                    temperature=float(settings.get("temperature", 0.7)),
+                    max_tokens=int(settings.get("maxTokens", 512)),
+                    logits_processor=LogitsProcessorList([abort_on_cancel]),
+                )
+            except InterruptedError:
+                self.llm.reset()
+                return {"content": "", "reasoning": "", "tokensPerSecond": 0.0}
+        elapsed = max(time.monotonic() - started, 0.001)
+        usage = result.get("usage") or {}
+        completion = max(1, int(usage.get("completion_tokens") or 1))
+        content = str(result["choices"][0]["message"].get("content") or "")
+        reasoning, answer = split_reasoning(content, self.reasoning)
+        return {
+            "content": answer,
+            "reasoning": reasoning,
+            "tokensPerSecond": round(completion / elapsed, 2),
+        }
 
     def cancel(self) -> None:
         self._cancel.set()

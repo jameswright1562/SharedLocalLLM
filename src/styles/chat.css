@@ -99,6 +99,33 @@
   color: #f1b5b0;
   border-left-color: var(--danger);
 }
+.message-reasoning {
+  margin: 0 0 10px;
+}
+.message-reasoning summary {
+  cursor: pointer;
+  color: var(--cyan);
+  font: 600 0.62rem var(--mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  user-select: none;
+}
+.message-reasoning p {
+  margin-top: 8px;
+  color: #9db4c0;
+  background: rgba(20, 45, 60, 0.5);
+  border-left-color: #2a4d5a;
+  font-style: italic;
+}
+.message .message-stats {
+  width: max-content;
+  margin: 6px 0 0;
+  padding: 4px 8px;
+  color: var(--dim);
+  background: transparent;
+  border-left: 0;
+  font: 0.6rem var(--mono);
+}
 .streaming p {
   display: flex;
   gap: 5px;

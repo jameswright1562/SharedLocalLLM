@@ -4,7 +4,7 @@
   "version": "0.2.0",
   "identifier": "dev.sharedlocalllm.app",
   "build": {
-    "beforeDevCommand": "pnpm backend:ensure && pnpm backend:package && pnpm dev",
+    "beforeDevCommand": "pnpm backend:ensure && pnpm dev",
     "devUrl": "http://localhost:1420",
     "beforeBuildCommand": "pnpm backend:package && pnpm build",
     "frontendDist": "../dist"

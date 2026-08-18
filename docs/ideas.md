@@ -35,3 +35,24 @@ Recommended responsibility split:
 - Avoid adopting a higher-level agent framework such as Rig unless the product later needs agent, RAG, or multi-provider abstractions.
 
 There is currently no official OpenAI-maintained Rust SDK, so dependency maintenance and llama.cpp compatibility should be evaluated before adoption.
+
+## Remote CPU offload over RPC
+
+The peer RPC worker currently exposes only GPU-class devices (GPU, iGPU, accelerator); a connected
+machine's CPU is used only as a fallback when that machine has no GPU at all. llama.cpp's RPC client
+also reports every RPC device as a GPU regardless of its real type, so the coordinator cannot
+currently target a remote CPU at all.
+
+Future work to enable remote CPU offload should include:
+
+- Expose the worker's CPU as an additional RPC device even when a GPU is present (or behind a
+  per-cluster toggle) instead of only as a no-GPU fallback.
+- Let the coordinator identify which RPC device is the remote CPU so a layer share can be assigned
+  explicitly rather than the current even split across all RPC devices.
+- Decide placement semantics first: remote CPU alongside remote GPU, or remote CPU only as a last
+  resort when the model exceeds combined GPU VRAM.
+- Keep raw llama.cpp RPC loopback-only; only the trusted-peer tunnel crosses the LAN.
+- Benchmark before promoting: offloading to a remote CPU is generally slower than the local GPU and
+  should not be presented as a distributed speedup.
+
+Until this is implemented, document and surface in the UI that RPC uses the peer's GPU only.

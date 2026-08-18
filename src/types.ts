@@ -67,6 +67,19 @@ export interface ModelLoadConfig {
   contextSize: number;
   gpuLayers: GpuLayerAllocation[];
   force?: boolean;
+  flashAttention?: boolean;
+  useMmap?: boolean;
+  useMlock?: boolean;
+  cpuThreads?: number;
+  batchSize?: number;
+}
+
+export interface ModelLoadOptions {
+  flashAttention: boolean;
+  useMmap: boolean;
+  useMlock: boolean;
+  cpuThreads: number;
+  batchSize: number;
 }
 
 export interface DeviceVramEstimate {
@@ -158,6 +171,8 @@ export interface ChatMessage {
   id: string;
   role: "user" | "assistant" | "system";
   content: string;
+  reasoning?: string;
+  tokensPerSecond?: number;
   imageNames?: string[];
   imageData?: string[];
   error?: boolean;
@@ -171,10 +186,16 @@ export interface ChatSettings {
 
 export interface ChatResponse {
   content: string;
+  reasoning?: string;
+  tokensPerSecond?: number;
 }
 
 export type ChatStreamEvent =
-  { kind: "token"; content: string } | { kind: "status"; status: string };
+  | { kind: "status"; status: string }
+  | { kind: "token"; content: string }
+  | { kind: "reasoning"; content: string }
+  | { kind: "stats"; tokensPerSecond: number }
+  | { kind: "done" };
 
 export interface AppService {
   getAppSnapshot(): Promise<AppSnapshot>;

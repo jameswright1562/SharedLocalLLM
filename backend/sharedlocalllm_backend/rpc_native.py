@@ -57,7 +57,6 @@ class NativeRpcServer:
     def _run(self) -> None:
         try:
             ensure_backend_initialized()
-            libraries = _libraries()
 
             dev_count = _symbol("ggml_backend_dev_count")
             dev_get = _symbol("ggml_backend_dev_get")
@@ -225,17 +224,15 @@ def device_info() -> list[dict[str, Any]]:
 
 
 def ensure_backend_initialized() -> None:
-    """Initialize llama.cpp's global backend exactly once, quietly."""
+    """Initialize llama.cpp's global backend exactly once."""
     global _backend_initialized
     if _backend_initialized:
         return
     from llama_cpp import Llama
     from llama_cpp import llama_cpp as low
-    from llama_cpp._utils import suppress_stdout_stderr
 
     if not getattr(Llama, "_Llama__backend_initialized", False):
-        with suppress_stdout_stderr(disable=False):
-            low.llama_backend_init()
+        low.llama_backend_init()
         # Llama's high-level wrapper must not initialize the global backend twice.
         setattr(Llama, "_Llama__backend_initialized", True)
     load_all = _symbol("ggml_backend_load_all_from_path", required=False)

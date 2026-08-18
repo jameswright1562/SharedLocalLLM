@@ -6,7 +6,7 @@ import socket
 import time
 import uuid
 from pathlib import Path
-from typing import Any, Awaitable, Callable
+from typing import Any, AsyncIterator, Awaitable, Callable
 
 from .errors import BackendError
 from .hardware import probe_node
@@ -299,12 +299,28 @@ class BackendRuntime:
 
     async def chat(
         self, messages: list[dict[str, Any]], settings: dict[str, Any], images: list[str], proxy_peer: bool = True
-    ) -> dict[str, str]:
+    ) -> dict[str, Any]:
         coordinator = self.cluster.get("coordinatorNodeId")
         if proxy_peer and coordinator and coordinator != self.local_node["id"]:
             return await self.peer.request("chat", {"messages": messages, "settings": settings, "images": images})
-        content = await self.inference.chat(messages, settings, images)
-        return {"content": content}
+        return await self.inference.chat(messages, settings, images)
+
+    async def chat_stream_events(
+        self, messages: list[dict[str, Any]], settings: dict[str, Any], images: list[str]
+    ) -> AsyncIterator[dict[str, Any]]:
+        coordinator = self.cluster.get("coordinatorNodeId")
+        if coordinator and coordinator != self.local_node["id"]:
+            result = await self.chat(messages, settings, images)
+            if result.get("reasoning"):
+                yield {"type": "reasoning", "content": result["reasoning"]}
+            if result.get("content"):
+                yield {"type": "token", "content": result["content"]}
+            if result.get("tokensPerSecond"):
+                yield {"type": "stats", "tokensPerSecond": result["tokensPerSecond"]}
+            yield {"type": "done"}
+            return
+        async for event in self.inference.chat_stream(messages, settings, images):
+            yield event
 
     def cancel_generation(self) -> None:
         self.inference.cancel()

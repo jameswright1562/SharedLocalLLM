@@ -1,4 +1,10 @@
-import type { AppService, ChatResponse } from "../types";
+import type {
+  AppService,
+  ChatMessage,
+  ChatResponse,
+  ChatSettings,
+  ChatStreamEvent,
+} from "../types";
 import { decodeAppError } from "./errors";
 
 async function invoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {
@@ -12,6 +18,48 @@ async function invoke<T>(command: string, args?: Record<string, unknown>): Promi
 
 async function backend<T>(command: string, args: Record<string, unknown> = {}): Promise<T> {
   return invoke<T>("backend_request", { command, args });
+}
+
+type StreamPayload =
+  | { type: "reasoning"; content: string }
+  | { type: "token"; content: string }
+  | { type: "stats"; tokensPerSecond: number }
+  | { type: "done" }
+  | { type: "error"; message: string };
+
+async function streamChatCompletion(
+  messages: ChatMessage[],
+  settings: ChatSettings,
+  images: string[],
+  onStream?: (event: ChatStreamEvent) => void,
+): Promise<ChatResponse> {
+  const { invoke: tauriInvoke, Channel } = await import("@tauri-apps/api/core");
+  const channel = new Channel<StreamPayload>();
+  channel.onmessage = (payload) => {
+    switch (payload.type) {
+      case "reasoning":
+        onStream?.({ kind: "reasoning", content: payload.content });
+        break;
+      case "token":
+        onStream?.({ kind: "token", content: payload.content });
+        break;
+      case "stats":
+        onStream?.({ kind: "stats", tokensPerSecond: payload.tokensPerSecond });
+        break;
+      case "done":
+        onStream?.({ kind: "status", status: "idle" });
+        break;
+    }
+  };
+  try {
+    return await tauriInvoke<ChatResponse>("backend_stream", {
+      command: "send_chat_message",
+      args: { messages, settings, images },
+      channel,
+    });
+  } catch (reason) {
+    throw decodeAppError(reason);
+  }
 }
 
 export const nativeService: AppService = {
@@ -39,15 +87,24 @@ export const nativeService: AppService = {
   runInferenceBenchmark: (modelId) => backend("run_inference_benchmark", { modelId }),
   cancelInferenceBenchmark: () => backend("cancel_inference_benchmark"),
   sendChatMessage: async (messages, settings, images, onStream) => {
-    onStream?.({ kind: "status", status: "generating" });
-    const response = await backend<ChatResponse>("send_chat_message", {
-      messages,
-      settings,
-      images,
-    });
-    if (response.content) onStream?.({ kind: "token", content: response.content });
-    onStream?.({ kind: "status", status: "idle" });
-    return response;
+    onStream?.({ kind: "status", status: "processing" });
+    try {
+      return await streamChatCompletion(messages, settings, images, onStream);
+    } catch {
+      onStream?.({ kind: "status", status: "generating" });
+      const response = await backend<ChatResponse>("send_chat_message", {
+        messages,
+        settings,
+        images,
+      });
+      if (response.reasoning) onStream?.({ kind: "reasoning", content: response.reasoning });
+      if (response.content) onStream?.({ kind: "token", content: response.content });
+      if (response.tokensPerSecond !== undefined) {
+        onStream?.({ kind: "stats", tokensPerSecond: response.tokensPerSecond });
+      }
+      onStream?.({ kind: "status", status: "idle" });
+      return response;
+    }
   },
   cancelGeneration: () => backend("cancel_generation"),
   getApiConfig: () => backend("get_api_config"),

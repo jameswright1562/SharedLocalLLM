@@ -97,6 +97,76 @@
 .metadata-note {
   margin: 16px 0;
 }
+.load-options {
+  display: grid;
+  gap: 12px;
+  margin: 16px 0;
+  padding: 13px;
+  background: #09141f;
+  border: 1px solid var(--line);
+}
+.load-options h3 {
+  margin: 0;
+  font-size: 0.82rem;
+}
+.load-option {
+  display: grid;
+  gap: 6px;
+  padding-top: 11px;
+  border-top: 1px solid var(--line);
+}
+.load-option-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.load-option-toggle input[type="checkbox"] {
+  margin: 0;
+  accent-color: var(--cyan);
+}
+.load-option-toggle span {
+  color: var(--text);
+  font-size: 0.7rem;
+}
+.load-option-toggle label {
+  color: var(--text);
+  font-size: 0.7rem;
+  cursor: pointer;
+}
+.option-hint {
+  margin-left: auto;
+  color: var(--dim);
+  font: 0.52rem var(--mono);
+  text-transform: uppercase;
+}
+.option-description,
+.option-warning {
+  margin: 0;
+  font-size: 0.63rem;
+  line-height: 1.5;
+}
+.option-description {
+  color: var(--muted);
+}
+.option-warning {
+  padding-left: 9px;
+  color: var(--amber);
+  border-left: 2px solid var(--amber);
+}
+.option-number-row {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr);
+  align-items: start;
+  gap: 10px;
+}
+.option-number-row input[type="number"] {
+  width: 100%;
+  padding: 6px 8px;
+  background: #0c1825;
+  border: 1px solid var(--line);
+  color: var(--foreground);
+  font: 0.72rem var(--mono);
+}
 .force-launch {
   display: flex;
   align-items: center;

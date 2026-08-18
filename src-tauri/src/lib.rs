@@ -36,6 +36,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             backend::backend_request,
+            backend::backend_stream,
             backend::pick_model_directory,
             backend::open_network_settings,
             backend::open_logs_folder,

@@ -74,7 +74,13 @@ pnpm tauri dev
 
 `pnpm backend:install` creates `backend/.venv`, installs Ninja, and builds llama-cpp-python from source
 with CUDA and RPC enabled. `pnpm tauri dev` checks that the backend environment is present before
-starting Vite/Tauri.
+starting Vite/Tauri; it does not rebuild the package or the PyInstaller executable (use
+`pnpm backend:package` explicitly when you need the packaged sidecar).
+
+In debug builds the Rust shell auto-restarts the Python backend when you edit
+`backend/sharedlocalllm_backend/**/*.py`, `backend/sidecar_entry.py`, or `backend/pyproject.toml`, so
+backend changes hot-reload during `pnpm tauri dev`. A restart drops runtime state such as the loaded
+model and the peer session. Set `SHARED_LOCAL_LLM_BACKEND_RELOAD=0` to disable the watcher.
 
 The browser-only preview still uses the deterministic demo service:
 

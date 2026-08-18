@@ -3,8 +3,9 @@ import { ModelCatalogue, type CapabilityFilter } from "../components/ModelCatalo
 import { ModelInspector } from "../components/ModelInspector";
 import { Modal } from "@mantine/core";
 import { describeAppError } from "../services/errors";
+import { DEFAULT_LOAD_OPTIONS } from "../services/loadOptions";
 import { distributeLayersByVram, estimateModelSplitLocally } from "../services/splitEstimate";
-import type { GpuLayerAllocation, PageProps } from "../types";
+import type { GpuLayerAllocation, ModelLoadOptions, PageProps } from "../types";
 
 export function ModelsPage({ snapshot, service, refreshSnapshot }: PageProps) {
   const [query, setQuery] = useState("");
@@ -17,6 +18,7 @@ export function ModelsPage({ snapshot, service, refreshSnapshot }: PageProps) {
   const [manualByModel, setManualByModel] = useState<Record<string, boolean>>({});
   const [layersByModel, setLayersByModel] = useState<Record<string, GpuLayerAllocation[]>>({});
   const [forceByModel, setForceByModel] = useState<Record<string, boolean>>({});
+  const [optionsByModel, setOptionsByModel] = useState<Record<string, ModelLoadOptions>>({});
   const [inspectorOpened, setInspectorOpened] = useState(false);
   const nodeLookup = new Map(snapshot.nodes.map((node) => [node.id, node.name]));
   const models = discoveredModels ?? snapshot.models;
@@ -42,6 +44,9 @@ export function ModelsPage({ snapshot, service, refreshSnapshot }: PageProps) {
   );
   const manualSplit = selected ? Boolean(manualByModel[selected.id]) : false;
   const force = selected ? Boolean(forceByModel[selected.id]) : false;
+  const loadOptions = selected
+    ? (optionsByModel[selected.id] ?? DEFAULT_LOAD_OPTIONS)
+    : DEFAULT_LOAD_OPTIONS;
   const gpuLayers = useMemo(
     () =>
       selected
@@ -106,6 +111,11 @@ export function ModelsPage({ snapshot, service, refreshSnapshot }: PageProps) {
         contextSize,
         gpuLayers: selected.layerCount ? gpuLayers : [],
         force: forceLaunch,
+        flashAttention: loadOptions.flashAttention,
+        useMmap: loadOptions.useMmap,
+        useMlock: loadOptions.useMlock,
+        cpuThreads: loadOptions.cpuThreads,
+        batchSize: loadOptions.batchSize,
       });
       setMessage(
         `${selected.name} is loading with ${manualSplit ? "the selected GPU layer split" : "automatic allocation"}${forceLaunch ? " (forced)" : ""}.`,
@@ -223,6 +233,10 @@ export function ModelsPage({ snapshot, service, refreshSnapshot }: PageProps) {
             splitEstimate={splitEstimate}
             setGpuLayers={(layers) =>
               selected && setLayersByModel({ ...layersByModel, [selected.id]: layers })
+            }
+            loadOptions={loadOptions}
+            setLoadOptions={(options) =>
+              selected && setOptionsByModel({ ...optionsByModel, [selected.id]: options })
             }
             busy={busy === "launch"}
             splitInvalid={splitInvalid}

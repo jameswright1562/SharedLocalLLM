@@ -38,6 +38,26 @@ def create_control_app(runtime: Any) -> FastAPI:
         payload = await request.json()
         return await runtime.dispatch(command, payload if isinstance(payload, dict) else {})
 
+    @app.post("/_internal/stream/{command}")
+    async def stream_command(command: str, request: Request) -> Any:
+        payload = await request.json()
+        payload = payload if isinstance(payload, dict) else {}
+        if command != "send_chat_message":
+            raise BackendError(
+                "stream_unsupported", f"Streaming is not available for command: {command}"
+            )
+
+        async def events():
+            try:
+                async for event in runtime.chat_stream_events(
+                    payload.get("messages", []), payload.get("settings", {}), payload.get("images", [])
+                ):
+                    yield f"data: {json.dumps(event)}\n\n"
+            except BackendError as error:
+                yield f"data: {json.dumps({'type': 'error', 'message': error.message})}\n\n"
+
+        return StreamingResponse(events(), media_type="text/event-stream")
+
     return app
 
 
@@ -75,10 +95,12 @@ def create_openai_app(runtime: Any) -> FastAPI:
         }
         if body.get("stream") and runtime.cluster.get("coordinatorNodeId") == runtime.local_node["id"]:
             async def events():
-                async for content in runtime.inference.chat_stream(body.get("messages", []), settings):
+                async for event in runtime.inference.chat_stream(body.get("messages", []), settings, []):
+                    if event.get("type") != "token":
+                        continue
                     chunk = {
                         "id": "chatcmpl-sharedlocalllm", "object": "chat.completion.chunk",
-                        "choices": [{"index": 0, "delta": {"content": content}, "finish_reason": None}],
+                        "choices": [{"index": 0, "delta": {"content": event["content"]}, "finish_reason": None}],
                     }
                     yield f"data: {json.dumps(chunk)}\n\n"
                 yield "data: [DONE]\n\n"
@@ -94,10 +116,13 @@ def create_openai_app(runtime: Any) -> FastAPI:
                 yield f"data: {json.dumps(chunk)}\n\n"
                 yield "data: [DONE]\n\n"
             return StreamingResponse(remote_events(), media_type="text/event-stream")
+        message: dict[str, Any] = {"role": "assistant", "content": content}
+        if response.get("reasoning"):
+            message["reasoning_content"] = response["reasoning"]
         return {
             "id": "chatcmpl-sharedlocalllm", "object": "chat.completion",
             "model": body.get("model", runtime.cluster.get("modelId", "active")),
-            "choices": [{"index": 0, "message": {"role": "assistant", "content": content}, "finish_reason": "stop"}],
+            "choices": [{"index": 0, "message": message, "finish_reason": "stop"}],
             "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
         }
 

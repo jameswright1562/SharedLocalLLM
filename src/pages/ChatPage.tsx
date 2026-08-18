@@ -11,6 +11,7 @@ export function ChatPage({ snapshot, service, navigate, refreshSnapshot }: PageP
   const [images, setImages] = useState<File[]>([]);
   const [generating, setGenerating] = useState(false);
   const [streaming, setStreaming] = useState("");
+  const [streamingReasoning, setStreamingReasoning] = useState("");
   const [phase, setPhase] = useState<"processing" | "generating">("processing");
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [settings, setSettings] = useState<ChatSettings>({
@@ -20,6 +21,7 @@ export function ChatPage({ snapshot, service, navigate, refreshSnapshot }: PageP
   });
   const bottomRef = useRef<HTMLDivElement>(null);
   const generationRef = useRef(0);
+  const streamedTps = useRef<number | undefined>(undefined);
   const localRunning = snapshot.cluster.status === "running";
   const peerRunning = snapshot.nodes.some(
     (node, index) => index > 0 && node.clusterStatus === "running",
@@ -63,6 +65,8 @@ export function ChatPage({ snapshot, service, navigate, refreshSnapshot }: PageP
     }
     setGenerating(true);
     setStreaming("");
+    setStreamingReasoning("");
+    streamedTps.current = undefined;
     setPhase("processing");
     const assistantId = crypto.randomUUID();
     try {
@@ -83,14 +87,28 @@ export function ChatPage({ snapshot, service, navigate, refreshSnapshot }: PageP
           if (generationRef.current !== generationId) return;
           if (event.kind === "status") {
             setPhase("processing");
-          } else {
+          } else if (event.kind === "reasoning") {
+            setPhase("generating");
+            setStreamingReasoning((current) => current + event.content);
+          } else if (event.kind === "token") {
             setPhase("generating");
             setStreaming((current) => current + event.content);
+          } else if (event.kind === "stats") {
+            streamedTps.current = event.tokensPerSecond;
           }
         },
       );
       if (generationRef.current !== generationId) return;
-      setMessages([...history, { id: assistantId, role: "assistant", content: response.content }]);
+      setMessages([
+        ...history,
+        {
+          id: assistantId,
+          role: "assistant",
+          content: response.content,
+          reasoning: response.reasoning,
+          tokensPerSecond: response.tokensPerSecond ?? streamedTps.current,
+        },
+      ]);
     } catch (reason) {
       if (generationRef.current !== generationId) return;
       setMessages([
@@ -218,7 +236,16 @@ export function ChatPage({ snapshot, service, navigate, refreshSnapshot }: PageP
                   ▧ {name}
                 </span>
               ))}
+              {message.reasoning && (
+                <details className="message-reasoning">
+                  <summary>Reasoning</summary>
+                  <p>{message.reasoning}</p>
+                </details>
+              )}
               <p>{message.content}</p>
+              {message.tokensPerSecond !== undefined && (
+                <p className="message-stats">{message.tokensPerSecond} tok/s</p>
+              )}
             </article>
           ))}
           {generating && (
@@ -227,9 +254,15 @@ export function ChatPage({ snapshot, service, navigate, refreshSnapshot }: PageP
                 <span>CLUSTER</span>
                 <small>{phase === "generating" ? "Generating" : "Processing prompt"}</small>
               </header>
+              {streamingReasoning && (
+                <details className="message-reasoning" open>
+                  <summary>Reasoning</summary>
+                  <p className="streaming-text">{streamingReasoning}</p>
+                </details>
+              )}
               {streaming ? (
                 <p className="streaming-text">{streaming}</p>
-              ) : (
+              ) : streamingReasoning ? null : (
                 <p>
                   <i aria-hidden="true" />
                   <i aria-hidden="true" />

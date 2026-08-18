@@ -1,6 +1,13 @@
 import { useState } from "react";
-import type { GpuLayerAllocation, ModelRecord, NodeCapabilities, SplitEstimate } from "../types";
+import type {
+  GpuLayerAllocation,
+  ModelLoadOptions,
+  ModelRecord,
+  NodeCapabilities,
+  SplitEstimate,
+} from "../types";
 import { fitLabels, formatContext } from "../pages/pageFormat";
+import { AdvancedLoadOptions } from "./LoadOptions";
 
 const MIN_CONTEXT = 4096;
 
@@ -15,6 +22,8 @@ interface ModelInspectorProps {
   gpuLayers: GpuLayerAllocation[];
   splitEstimate?: SplitEstimate;
   setGpuLayers: (layers: GpuLayerAllocation[]) => void;
+  loadOptions: ModelLoadOptions;
+  setLoadOptions: (options: ModelLoadOptions) => void;
   busy: boolean;
   splitInvalid: boolean;
   force: boolean;
@@ -33,6 +42,8 @@ export function ModelInspector({
   gpuLayers,
   splitEstimate,
   setGpuLayers,
+  loadOptions,
+  setLoadOptions,
   busy,
   splitInvalid,
   force,
@@ -102,6 +113,7 @@ export function ModelInspector({
           Automatic allocation remains available.
         </p>
       )}
+      <AdvancedLoadOptions options={loadOptions} setOptions={setLoadOptions} />
       <button
         className="button primary full"
         disabled={
