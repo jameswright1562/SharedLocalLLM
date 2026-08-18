@@ -2,6 +2,7 @@ import { useRef, useState } from "react";
 import { describeAppError } from "../services/errors";
 import { fitLayersByVram } from "../services/splitEstimate";
 import type { InferenceBenchmark, PageProps } from "../types";
+import { formatRunTime } from "./pageFormat";
 
 export function BenchmarksPage({ snapshot, service, refreshSnapshot, navigate }: PageProps) {
   const [modelId, setModelId] = useState(snapshot.models[0]?.id ?? "");
@@ -21,11 +22,27 @@ export function BenchmarksPage({ snapshot, service, refreshSnapshot, navigate }:
     try {
       const results = await service.runInferenceBenchmark(modelId);
       if (runRef.current !== runId) return;
-      setRuns(results);
+      setRuns((current) => [...results, ...current]);
       await refreshSnapshot();
     } catch (reason) {
       if (runRef.current === runId) {
-        setError(describeAppError(reason, "The benchmark could not finish."));
+        const detail = describeAppError(reason, "The benchmark could not finish.");
+        setError(detail);
+        setRuns((current) => [
+          {
+            id: `failed-${Date.now()}`,
+            modelName: selectedModel?.name ?? modelId,
+            topology: "local",
+            promptTokensPerSecond: 0,
+            generationTokensPerSecond: 0,
+            loadTimeSeconds: 0,
+            memoryPeakGb: 0,
+            recommended: false,
+            ranAt: new Date().toISOString(),
+            error: detail,
+          },
+          ...current,
+        ]);
       }
     } finally {
       if (runRef.current === runId) setRunning(false);
@@ -126,6 +143,7 @@ export function BenchmarksPage({ snapshot, service, refreshSnapshot, navigate }:
                   <td>
                     <strong>{benchmark.modelName}</strong>
                     <span className="capitalize">
+                      {benchmark.error ? `Failed · ${benchmark.error}` : ""}
                       {benchmark.topology}
                       {benchmark.gpuLayers?.length
                         ? ` · ${benchmark.gpuLayers.map((item) => item.layers).join("/")} GPU layers`
@@ -145,14 +163,7 @@ export function BenchmarksPage({ snapshot, service, refreshSnapshot, navigate }:
                   <td>
                     {benchmark.memoryPeakGb > 0 ? `${benchmark.memoryPeakGb.toFixed(1)} GB` : "—"}
                   </td>
-                  <td>
-                    {new Intl.DateTimeFormat(undefined, {
-                      month: "short",
-                      day: "numeric",
-                      hour: "2-digit",
-                      minute: "2-digit",
-                    }).format(new Date(benchmark.ranAt))}
-                  </td>
+                  <td>{formatRunTime(benchmark.ranAt)}</td>
                 </tr>
               ))}
             </tbody>

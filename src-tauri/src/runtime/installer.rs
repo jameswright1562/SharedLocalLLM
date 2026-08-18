@@ -1,8 +1,7 @@
 use std::{
     fs::{self, File},
     path::{Path, PathBuf},
-    process::{Command, Stdio},
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use futures_util::StreamExt;
@@ -10,7 +9,10 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 use tokio::io::AsyncWriteExt;
 
-use super::manifest::{manifest, runtime_root, status, RuntimeAsset};
+use super::{
+    manifest::{manifest, runtime_root, status, RuntimeAsset},
+    verify::{activate, flatten_required, runtime_io, validate_required},
+};
 use crate::types::{ErrorPayload, RuntimeStatus};
 
 #[derive(Clone, Debug, Serialize)]
@@ -187,109 +189,6 @@ fn extract_archive(archive_path: &Path, output: &Path) -> Result<(), ErrorPayloa
     Ok(())
 }
 
-fn flatten_required(root: &Path, required: &[String]) -> Result<(), ErrorPayload> {
-    for name in required {
-        if root.join(name).exists() {
-            continue;
-        }
-        let found = walkdir::WalkDir::new(root)
-            .into_iter()
-            .filter_map(Result::ok)
-            .find(|entry| {
-                entry.file_type().is_file()
-                    && entry
-                        .file_name()
-                        .to_string_lossy()
-                        .eq_ignore_ascii_case(name)
-            });
-        if let Some(found) = found {
-            fs::copy(found.path(), root.join(name)).map_err(runtime_io)?;
-        }
-    }
-    Ok(())
-}
-
-fn validate_required(root: &Path, required: &[String]) -> Result<(), ErrorPayload> {
-    for executable in required {
-        if !root.join(executable).is_file() {
-            return Err(ErrorPayload::new(
-                "runtime_incomplete",
-                format!("Verified archives did not contain {executable}."),
-                Some("Retry the download or import the matching official archive.".into()),
-            ));
-        }
-        health_check(&root.join(executable))?;
-    }
-    Ok(())
-}
-
-fn activate(root: &Path, extracted: &Path, version: &str) -> Result<(), ErrorPayload> {
-    let current = root.join("current");
-    let previous = root.join("previous");
-    if previous.exists() {
-        fs::remove_dir_all(&previous).map_err(runtime_io)?;
-    }
-    if current.exists() {
-        fs::rename(&current, &previous).map_err(runtime_io)?;
-    }
-    if let Err(error) = fs::rename(extracted, &current) {
-        if previous.exists() {
-            let _ = fs::rename(&previous, &current);
-        }
-        return Err(runtime_io(error));
-    }
-    if let Err(error) = fs::write(current.join("version.txt"), version) {
-        let _ = fs::remove_dir_all(&current);
-        if previous.exists() {
-            let _ = fs::rename(&previous, &current);
-        }
-        return Err(runtime_io(error));
-    }
-    Ok(())
-}
-
-fn health_check(executable: &Path) -> Result<(), ErrorPayload> {
-    let mut child = Command::new(executable)
-        .arg("--version")
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(|error| {
-            ErrorPayload::new(
-                "runtime_health_failed",
-                error.to_string(),
-                Some(
-                    "The downloaded runtime may be incompatible with this Windows installation."
-                        .into(),
-                ),
-            )
-        })?;
-    let started = Instant::now();
-    loop {
-        if child.try_wait().map_err(runtime_io)?.is_some() {
-            return Ok(());
-        }
-        if started.elapsed() > Duration::from_secs(5) {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err(ErrorPayload::new(
-                "runtime_health_timeout",
-                format!("{} did not answer --version.", executable.display()),
-                None,
-            ));
-        }
-        std::thread::sleep(Duration::from_millis(50));
-    }
-}
-
-fn runtime_io(error: std::io::Error) -> ErrorPayload {
-    ErrorPayload::new(
-        "runtime_io",
-        error.to_string(),
-        Some("Check available disk space and folder permissions.".into()),
-    )
-}
 fn download_error(error: reqwest::Error) -> ErrorPayload {
     ErrorPayload::new(
         "runtime_download_failed",

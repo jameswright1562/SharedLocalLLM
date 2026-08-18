@@ -7,15 +7,16 @@ use std::{
     sync::{Mutex, MutexGuard},
 };
 
-pub use persistence::{data_root, directory_for, logs_root, peer_secret_path, regenerate_key};
+pub use persistence::{data_root, directory_for, logs_root, regenerate_key};
 use persistence::{new_api_key, read_settings, save_settings, secrets_path, PersistedSettings};
 
 use crate::{
     hardware,
+    inference::InferenceEngine,
     models::{
         default_lm_studio_roots, discover_gguf_models, expand_lm_studio_roots, lms_catalog_roots,
     },
-    pairing::{PairingManager, PeerRecord},
+    pairing::PeerRecord,
     peer::{DiscoveryBroadcaster, PeerClient, PeerServer, RpcForwarder},
     runtime::{self, ProcessManager},
     secrets,
@@ -28,19 +29,18 @@ pub fn redact_diagnostic(value: &str) -> String {
 
 pub struct AppState {
     pub inner: Mutex<InnerState>,
-    pub pairing: Mutex<PairingManager>,
     pub processes: Mutex<ProcessManager>,
     pub peer: tokio::sync::Mutex<PeerRuntime>,
+    pub inference: Option<std::sync::Arc<InferenceEngine>>,
     pub chat_cancel: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
     pub benchmark_cancel: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
+    pub cluster_lock: tokio::sync::Mutex<()>,
 }
 
 #[derive(Default)]
 pub struct PeerRuntime {
     pub server: Option<PeerServer>,
     pub discovery: Option<DiscoveryBroadcaster>,
-    pub pairing_session_id: Option<String>,
-    pub public_firewall_lease: Option<PathBuf>,
     pub client: Option<std::sync::Arc<PeerClient>>,
     pub forwarder: Option<RpcForwarder>,
 }
@@ -70,6 +70,10 @@ impl AppState {
         let install_id = persistence::resolve_install_id(previous_install_id.as_deref());
         persisted.install_id = Some(install_id.clone());
         let identity_log = save_settings(&persisted).err();
+        let autostart_error = persisted
+            .autostart
+            .then(|| crate::autostart::apply(true).err())
+            .flatten();
         let mut local = hardware::probe_local();
         local.id = install_id;
         if let Some(device_name) = &persisted.device_name {
@@ -110,6 +114,9 @@ impl AppState {
                 "WARN Legacy shared node identity replaced; reset and re-pair the computers".into(),
             );
         }
+        if let Some(error) = autostart_error {
+            logs.push(format!("WARN Autostart could not be applied: {error}"));
+        }
         if let Some(error) = identity_log {
             logs.push(format!(
                 "ERROR Stable install identity could not be saved: {error}"
@@ -118,7 +125,18 @@ impl AppState {
         if let Some(error) = secret_log {
             logs.push(error);
         }
+        let inference = match crate::inference::InferenceEngine::start() {
+            Ok(engine) => {
+                eprintln!("[INFO] InferenceEngine started successfully");
+                Some(std::sync::Arc::new(engine))
+            }
+            Err(error) => {
+                eprintln!("[WARN] Failed to start InferenceEngine: {}", error);
+                None
+            }
+        };
         let state = Self {
+            inference,
             inner: Mutex::new(InnerState {
                 local,
                 peers: persisted.peers,
@@ -133,11 +151,11 @@ impl AppState {
                 api_port: persisted.api_port.unwrap_or(11435),
                 autostart: persisted.autostart,
             }),
-            pairing: Mutex::new(PairingManager::default()),
             processes: Mutex::new(ProcessManager::default()),
             peer: tokio::sync::Mutex::new(PeerRuntime::default()),
             chat_cancel: Mutex::new(None),
             benchmark_cancel: Mutex::new(None),
+            cluster_lock: tokio::sync::Mutex::new(()),
         };
         let _ = state.refresh_models_shared();
         state
@@ -167,7 +185,7 @@ impl AppState {
         };
         roots.extend(lms_catalog_roots());
         let roots = expand_lm_studio_roots(&roots);
-        let mut models = discover_gguf_models(&roots)?;
+        let mut models = discover_gguf_models(&roots, &local.id)?;
         let peers = self.lock()?.peers.clone();
         placement::apply_fit(&mut models, &local, &peers);
         self.lock()?.models = models.clone();
@@ -233,7 +251,7 @@ impl AppState {
             (inner.local.id.clone(), inner.peers.first().cloned())
         };
         let peer = peer.ok_or_else(|| {
-            ErrorPayload::new("peer_unavailable", "Pair another computer first.", None)
+            ErrorPayload::new("peer_unavailable", "Connect another computer first.", None)
         })?;
         let endpoint = peer
             .address
@@ -241,8 +259,8 @@ impl AppState {
             .ok_or_else(|| {
                 ErrorPayload::new(
                     "peer_endpoint_missing",
-                    "The paired computer has no saved endpoint.",
-                    Some("Pair the computers again.".into()),
+                    "The connected computer has no saved endpoint.",
+                    Some("Connect the computers again.".into()),
                 )
             })?
             .parse()
@@ -250,19 +268,10 @@ impl AppState {
                 ErrorPayload::new(
                     "peer_endpoint_invalid",
                     "The saved peer endpoint is invalid.",
-                    Some("Pair the computers again.".into()),
+                    Some("Connect the computers again.".into()),
                 )
             })?;
-        let channel_key = secrets::load(&peer_secret_path(&peer.id))?
-            .and_then(|bytes| String::from_utf8(bytes).ok())
-            .ok_or_else(|| {
-                ErrorPayload::new(
-                    "peer_secret_missing",
-                    "The protected peer credential is unavailable.",
-                    Some("Pair the computers again.".into()),
-                )
-            })?;
-        let client = std::sync::Arc::new(PeerClient::trusted(endpoint, channel_key, local_id));
+        let client = std::sync::Arc::new(PeerClient::new(endpoint, local_id));
         self.peer.lock().await.client = Some(client.clone());
         Ok(client)
     }

@@ -34,7 +34,7 @@ export function NetworkPage({ snapshot, service }: PageProps) {
           disabled={testing || snapshot.nodes.length < 2}
           onClick={() => void runTest()}
         >
-          {testing ? "Testing both directions…" : "Run network test"}
+          {testing ? "Testing the encrypted channel…" : "Run network test"}
         </button>
       </header>
       {error && (
@@ -98,29 +98,36 @@ export function NetworkPage({ snapshot, service }: PageProps) {
                 {result.latencyP95Ms.toFixed(1)} <b>ms</b>
               </strong>
             </div>
-            <div>
-              <span>Jitter</span>
-              <strong>
-                {result.jitterMs.toFixed(1)} <b>ms</b>
-              </strong>
-            </div>
-            <div>
-              <span>Packet loss</span>
-              <strong>
-                {result.packetLossPercent.toFixed(1)} <b>%</b>
-              </strong>
-            </div>
+            {result.jitterMs >= 0 && (
+              <div>
+                <span>Jitter</span>
+                <strong>
+                  {result.jitterMs.toFixed(1)} <b>ms</b>
+                </strong>
+              </div>
+            )}
+            {result.packetLossPercent >= 0 && (
+              <div>
+                <span>Packet loss</span>
+                <strong>
+                  {result.packetLossPercent.toFixed(1)} <b>%</b>
+                </strong>
+              </div>
+            )}
           </section>
           <div className="throughput-detail">
             <span>
-              Coordinator → worker <b>{Math.round(result.upMbps)} Mbit/s</b>
+              Round-trip encrypted channel <b>{Math.round(result.downMbps)} Mbit/s</b>
             </span>
-            <Meter value={result.upMbps} max={Math.max(result.upMbps, result.downMbps, 1000)} />
-            <span>
-              Worker → coordinator <b>{Math.round(result.downMbps)} Mbit/s</b>
-            </span>
-            <Meter value={result.downMbps} max={Math.max(result.upMbps, result.downMbps, 1000)} />
+            <Meter value={result.downMbps} max={Math.max(result.downMbps, 1000)} />
+            <small>One measured direction; not separate up/down links.</small>
           </div>
+          {result.windowsProfile && (
+            <p className="network-profile-note">
+              Windows network profile: <b>{result.windowsProfile}</b> — informational only, it does
+              not affect operation.
+            </p>
+          )}
         </div>
       )}
       <section className="guidance-grid">
@@ -145,10 +152,13 @@ export function NetworkPage({ snapshot, service }: PageProps) {
           </div>
         </article>
         <article>
-          <span className="guidance-icon">!</span>
+          <span className="guidance-icon">⌁</span>
           <div>
-            <h3>Private networks only</h3>
-            <p>The app refuses cluster startup on a Windows Public network profile.</p>
+            <h3>Direct Ethernet cable</h3>
+            <p>
+              A cable directly between the two computers works with static 10.10.10.x addresses or
+              automatic 169.254.x.x link-local addresses — no router and no network-profile change.
+            </p>
           </div>
         </article>
       </section>

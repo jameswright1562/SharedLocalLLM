@@ -1,6 +1,6 @@
 # Two-computer troubleshooting
 
-Use the in-app diagnostics first: **Settings > Logs** shows redacted pairing, reconnect, cluster,
+Use the in-app diagnostics first: **Settings > Logs** shows redacted connection, reconnect, cluster,
 network, and benchmark events. **Open logs folder** opens the persistent
 `shared-local-llm.log`. Logs omit prompts, images, credentials, and personal path prefixes.
 
@@ -10,10 +10,10 @@ PowerShell normally unless a step explicitly says **Run as administrator**.
 
 ## The peer does not appear
 
-1. On both computers, confirm the same SharedLocalLLM version is open. The authenticated peer
-   listener and private-LAN discovery broadcaster run while the app is open.
-2. Confirm both are on the same trusted home/work network, with client isolation disabled on the
-   router or access point.
+1. On both computers, confirm the same SharedLocalLLM version is open. The peer listener and
+   discovery broadcaster run while the app is open.
+2. Confirm both are on the same network (Ethernet, Wi-Fi, or a direct cable), with client isolation
+   disabled on the router or access point if one is present.
 3. Check the Windows network category on each computer.
 
 **Computer A (Desktop)—inspect only:**
@@ -28,23 +28,18 @@ Get-NetConnectionProfile | Format-Table Name, InterfaceAlias, NetworkCategory, I
 Get-NetConnectionProfile | Format-Table Name, InterfaceAlias, NetworkCategory, IPv4Connectivity
 ```
 
-If the active trusted connection says `Public`, change it in Windows **Settings > Network & internet
+The network category (Public/Private) is informational only; SharedLocalLLM connects and launches
+identically on every category. No profile change is required.
 
-> Properties > Network profile type > Private**. SharedLocalLLM deliberately refuses a distributed
-> session on a Public profile. The setup wizard's **Use this public network** option permits a
-> confirmed five-minute pairing session only. When showing a code, approve the temporary Windows
-> firewall rule; it is restricted to the app and TCP port `49158`, then removed after pairing or
-> timeout. The override does not permit cluster launch or raw RPC exposure.
-
-4. On the computer entering the six-digit code, fill in **Ethernet IPv4 address (optional)** with the
-   address of the computer showing the code. The normal port is `49158`, so an address such as
-   `192.168.1.20` or `169.254.20.8` is enough. Never forward this port on the router.
+4. On the connecting computer, fill in **Ethernet IPv4 address (optional)** with the address of the
+   other computer. The normal port is `49158`, so an address such as `192.168.1.20` or `169.254.20.8`
+   is enough. Never forward this port on the router.
 5. Confirm both installations run the same application and peer-protocol version.
 
 If either computer was paired with version 0.1.1, upgrade both to 0.1.2. On each computer that still
-lists the old peer, open **Nodes**, choose **Forget**, confirm the warning, and pair again. The reset
-does not remove model sources or model files. After re-pairing, close one app, reopen it, and allow
-one health-refresh interval for its status to return to Reachable.
+lists the old peer, open **Nodes**, choose **Forget**, confirm the warning, and connect again. The
+reset does not remove model sources or model files. After reconnecting, close one app, reopen it, and
+allow one health-refresh interval for its status to return to Reachable.
 
 The persistent log is at
 `%LOCALAPPDATA%\SharedLocalLLM\logs\shared-local-llm.log`. Look for
@@ -70,18 +65,36 @@ On a direct cable with no router, a `169.254.x.x` address is expected. Use the a
 the Ethernet interface, not a Wi-Fi, VPN, loopback, or virtual-machine adapter. Manual entry skips
 UDP discovery and connects directly to TCP port `49158`.
 
-## Pairing codes do not match
+## Direct Ethernet cable (two computers, no router)
 
-Cancel on both computers. Do not approve either identity. Restart pairing from one computer and
-compare the newly generated six-digit code in person. A mismatch can mean you selected a different
-peer or traffic was intercepted. Deleting a trusted peer requires pairing it again; it does not
-delete models or conversations.
+A direct cable between two computers has no router or DHCP server. Two address schemes work, and
+neither requires a Windows network-profile change:
+
+- **Static addressing:** set `10.10.10.1/24` on one computer and `10.10.10.2/24` on the other, with
+  no gateway and no DNS. Then use the manual IPv4 entry field with the code-showing computer's
+  `10.10.10.x` address.
+- **Automatic link-local:** with no DHCP server, Windows assigns each adapter a `169.254.x.x`
+  link-local address. That is valid; enter the code-showing computer's `169.254.x.x` Ethernet
+  address manually.
+
+Manual entry skips UDP discovery and connects directly to TCP port `49158`.
+
+> WSL/Hyper-V note: virtual adapters such as `vEthernet (WSL)` advertise a fake 10 Gbps and used to
+> win the "fastest link" pick. The app now skips virtual adapters (Hyper-V, WSL, loopback, VPN, TAP)
+> when choosing the network path, so the physical Ethernet adapter is reported instead.
+
+## The computers will not connect
+
+Confirm both computers run the same SharedLocalLLM version and are on the same network (Ethernet,
+Wi-Fi, or a direct cable). For a direct cable, enter the other computer's Ethernet IPv4 address
+manually. Check **Settings > Logs** for `peer_listener_ready`, `peer_connected`, or a redacted error.
 
 ## Firewall or connection failure
 
-Choose **Settings > Network > Repair firewall access** on both computers and accept the elevation
-prompt. The repair action creates a program rule for Private profiles only. Do not create a broad
-port rule and do not enable Public access.
+SharedLocalLLM checks for its program-scoped Windows Firewall rules on startup. If they are missing
+and the app is not already elevated, it relaunches itself with a UAC prompt and creates the rules for
+TCP `49158` and UDP `49157` across all network profiles (Profile Any). No network-profile change is
+needed. Do not create a broad port rule manually.
 
 Inspect the app's rules after repair:
 
@@ -99,9 +112,8 @@ Get-NetFirewallRule -DisplayName '*SharedLocalLLM*' |
   Format-Table DisplayName, Enabled, Profile, Direction, Action
 ```
 
-If endpoint security blocks the executable, allow the signed SharedLocalLLM application for the
-Private profile through that product's UI. Do not allow `ggml-rpc-server.exe`: it must remain
-loopback-only.
+If endpoint security blocks the executable, allow the signed SharedLocalLLM application through that
+product's UI. Do not allow `ggml-rpc-server.exe`: it must remain loopback-only.
 
 ## Verify raw RPC is not exposed
 
@@ -173,7 +185,7 @@ your installations.
 
 ## Models are missing
 
-1. Open **Models > Sources** on the computer that actually stores the files and refresh it.
+1. Open **Settings > Model sources** on the computer that actually stores the files and refresh it.
 2. If LM Studio is installed, launch it once. CLI discovery follows LM Studio's configured catalogue;
    its folder does not have to be the default.
 3. Add any custom parent directory with **Add folder**. The source is local to that computer.
@@ -199,8 +211,8 @@ SharedLocalLLM never moves, renames, deletes, or downloads into a configured mod
 ## LM Studio is already using VRAM
 
 SharedLocalLLM reports material VRAM use rather than terminating another application. Check LM
-Studio's loaded models, save any work, and use the app's explicit **Unload from LM Studio** action or
-run the command yourself. This unloads models from memory; it does not delete them.
+Studio's loaded models, save any work, and unload them from LM Studio (`lms unload --all`) if you
+approve freeing that VRAM. This unloads models from memory; it does not delete them.
 
 **Computer A (Desktop)—inspect LM Studio first:**
 
@@ -234,8 +246,8 @@ Do not end the LM Studio process in Task Manager. Refresh hardware status before
 
 Open **Settings > Runtime** and read the exact stage: manifest, download, size, digest, extraction,
 inventory, or health check. Never bypass a digest mismatch. Retry only after checking the system
-clock, available disk space, and access to `github.com`. **Rollback** activates the previous verified
-runtime without deleting the failed diagnostic record.
+clock, available disk space, and access to `github.com`. Repair reinstalls the pinned runtime; a
+previous verified copy remains in the runtime `previous` folder when an install replaces `current`.
 
 If security software quarantined an executable, verify the installer and runtime release provenance
 before restoring it. Do not download replacement DLLs or executables from third-party DLL sites.
@@ -243,7 +255,8 @@ before restoring it. Do not download replacement DLLs or executables from third-
 ## API port 11435 is occupied
 
 SharedLocalLLM does not choose a new port silently. Find the listener, decide whether it is expected,
-then use **API > Change port**. Do not terminate an unknown process merely to reclaim the default.
+then use **Settings > General** to change the local API port. Do not terminate an unknown process
+merely to reclaim the default.
 
 **Computer A (Desktop)—inspect only:**
 
@@ -278,6 +291,7 @@ rather than omitting the result. Export diagnostics if that information is absen
 
 The current request cannot migrate. Wait for both apps to show **Ready**, then retry. A single-node
 retry appears only when the selected model fits one machine. If either app still reports a running
-cluster, use **Stop cluster**, wait for cleanup, and inspect Diagnostics before launching again.
+cluster, use **Stop cluster** on Overview, Models, or Chat, wait for cleanup, and inspect
+**Settings > Logs** before launching again.
 
 Do not manually start `llama-server.exe` or `ggml-rpc-server.exe` on LAN interfaces as a workaround.

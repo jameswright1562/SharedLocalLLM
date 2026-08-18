@@ -1,4 +1,8 @@
-use std::process::Command;
+use std::{
+    io::Read,
+    process::{Command, Stdio},
+    time::{Duration, Instant},
+};
 
 use serde::Deserialize;
 use sysinfo::System;
@@ -9,8 +13,10 @@ use crate::types::{GpuInfo, NetworkAdapterInfo, NodeCapabilities};
 #[serde(rename_all = "PascalCase")]
 struct AdapterProbe {
     name: Option<String>,
-    link_speed: Option<u64>,
+    transmit_link_speed: Option<u64>,
     interface_description: Option<String>,
+    #[serde(rename = "Virtual", default)]
+    virtual_adapter: Option<bool>,
 }
 
 pub fn probe_local() -> NodeCapabilities {
@@ -44,50 +50,104 @@ pub fn probe_local() -> NodeCapabilities {
             kind: "other".into(),
             link_speed_mbps: None,
         }),
+        cluster_status: None,
+        cluster_model_id: None,
     }
 }
 
 fn probe_nvidia() -> Option<GpuInfo> {
-    let output = Command::new("nvidia-smi")
-        .args([
+    let stdout = output_with_timeout(
+        "nvidia-smi",
+        &[
             "--query-gpu=name,memory.total,memory.free,driver_version",
             "--format=csv,noheader,nounits",
-        ])
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
+        ],
+        Duration::from_secs(4),
+    )?;
+    let mut names = Vec::new();
+    let mut total = 0.0;
+    let mut available = 0.0;
+    let mut driver = None;
+    for line in stdout.lines() {
+        let parts: Vec<_> = line.split(',').map(str::trim).collect();
+        if parts.len() < 4 {
+            continue;
+        }
+        names.push(parts[0].to_owned());
+        total += parts[1].parse::<f64>().ok()? / 1024.0;
+        available += parts[2].parse::<f64>().ok()? / 1024.0;
+        driver = Some(parts[3].to_owned());
     }
-    let line = String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .next()?
-        .to_owned();
-    let parts: Vec<_> = line.split(',').map(str::trim).collect();
-    if parts.len() < 4 {
+    if names.is_empty() {
         return None;
     }
     Some(GpuInfo {
-        name: parts[0].into(),
-        vram_total_gb: parts[1].parse::<f64>().ok()? / 1024.0,
-        vram_available_gb: parts[2].parse::<f64>().ok()? / 1024.0,
-        driver_version: Some(parts[3].into()),
+        name: names.join(" + "),
+        vram_total_gb: total,
+        vram_available_gb: available,
+        driver_version: driver,
     })
 }
 
 fn probe_adapter() -> Option<NetworkAdapterInfo> {
-    let script = "Get-NetAdapter | Where-Object Status -eq 'Up' | Sort-Object LinkSpeed -Descending | Select-Object -First 1 Name,LinkSpeed,InterfaceDescription | ConvertTo-Json -Compress";
-    let output = Command::new("powershell.exe")
-        .args(["-NoProfile", "-NonInteractive", "-Command", script])
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
+    let script = "Get-NetAdapter | Where-Object Status -eq 'Up' | Select-Object Name,TransmitLinkSpeed,InterfaceDescription,Virtual | ConvertTo-Json -Compress";
+    let stdout = output_with_timeout(
+        "powershell.exe",
+        &["-NoProfile", "-NonInteractive", "-Command", script],
+        Duration::from_secs(5),
+    )?;
+    select_adapter(parse_adapters(&stdout)?).map(build_adapter_info)
+}
+
+fn parse_adapters(stdout: &str) -> Option<Vec<AdapterProbe>> {
+    if let Ok(adapters) = serde_json::from_str::<Vec<AdapterProbe>>(stdout) {
+        return Some(adapters);
     }
-    let probe: AdapterProbe = serde_json::from_slice(&output.stdout).ok()?;
-    let description = probe.interface_description.unwrap_or_default();
+    serde_json::from_str::<AdapterProbe>(stdout)
+        .ok()
+        .map(|adapter| vec![adapter])
+}
+
+fn select_adapter(adapters: Vec<AdapterProbe>) -> Option<AdapterProbe> {
+    adapters
+        .into_iter()
+        .filter(is_physical_adapter)
+        .max_by_key(|adapter| adapter.transmit_link_speed.unwrap_or(0))
+}
+
+fn is_physical_adapter(adapter: &AdapterProbe) -> bool {
+    if adapter.virtual_adapter == Some(true) {
+        return false;
+    }
+    let text = format!(
+        "{} {}",
+        adapter.name.as_deref().unwrap_or_default(),
+        adapter.interface_description.as_deref().unwrap_or_default()
+    )
+    .to_ascii_lowercase();
+    ![
+        "virtual",
+        "hyper-v",
+        "vethernet",
+        "wsl",
+        "loopback",
+        "tap-windows",
+        "wireguard",
+        "tailscale",
+        "zerotier",
+        "bluetooth",
+        "vpn",
+        "pseudo-interface",
+    ]
+    .iter()
+    .any(|keyword| text.contains(keyword))
+}
+
+fn build_adapter_info(adapter: AdapterProbe) -> NetworkAdapterInfo {
+    let description = adapter.interface_description.unwrap_or_default();
     let lowered = format!(
         "{} {description}",
-        probe.name.as_deref().unwrap_or_default()
+        adapter.name.as_deref().unwrap_or_default()
     )
     .to_ascii_lowercase();
     let kind = if lowered.contains("wi-fi") || lowered.contains("wireless") {
@@ -97,9 +157,154 @@ fn probe_adapter() -> Option<NetworkAdapterInfo> {
     } else {
         "other"
     };
-    Some(NetworkAdapterInfo {
-        name: probe.name.unwrap_or(description),
+    NetworkAdapterInfo {
+        name: adapter.name.unwrap_or(description),
         kind: kind.into(),
-        link_speed_mbps: probe.link_speed.map(|bits| bits as f64 / 1_000_000.0),
-    })
+        link_speed_mbps: adapter
+            .transmit_link_speed
+            .map(|bits| bits as f64 / 1_000_000.0),
+    }
+}
+
+pub(crate) fn output_with_timeout(
+    program: &str,
+    args: &[&str],
+    timeout: Duration,
+) -> Option<String> {
+    let mut child = Command::new(program)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+    let started = Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) if status.success() => {
+                let mut buf = String::new();
+                child.stdout.take()?.read_to_string(&mut buf).ok()?;
+                return Some(buf);
+            }
+            Ok(Some(_)) => return None,
+            Ok(None) if started.elapsed() > timeout => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+            Ok(None) => std::thread::sleep(Duration::from_millis(40)),
+            Err(_) => return None,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        build_adapter_info, is_physical_adapter, parse_adapters, select_adapter, AdapterProbe,
+    };
+
+    fn probe(
+        name: &str,
+        description: &str,
+        speed_mbps: u64,
+        virtual_adapter: bool,
+    ) -> AdapterProbe {
+        AdapterProbe {
+            name: Some(name.into()),
+            transmit_link_speed: Some(speed_mbps * 1_000_000),
+            interface_description: Some(description.into()),
+            virtual_adapter: Some(virtual_adapter),
+        }
+    }
+
+    #[test]
+    fn parse_adapters_accepts_a_single_object_or_an_array() {
+        let single = r#"{"Name":"Ethernet","TransmitLinkSpeed":1000000000,"InterfaceDescription":"Realtek","Virtual":false}"#;
+        assert_eq!(parse_adapters(single).unwrap().len(), 1);
+
+        let list = r#"[{"Name":"Ethernet","TransmitLinkSpeed":1000000000,"InterfaceDescription":"Realtek","Virtual":false},{"Name":"vEthernet (WSL)","TransmitLinkSpeed":10000000000,"InterfaceDescription":"Hyper-V Virtual Ethernet Adapter #2","Virtual":true}]"#;
+        assert_eq!(parse_adapters(list).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn rejects_virtual_adapters_by_flag_and_name() {
+        assert!(!is_physical_adapter(&probe(
+            "Ethernet",
+            "Hyper-V Virtual Ethernet Adapter",
+            10000,
+            false
+        )));
+        assert!(!is_physical_adapter(&probe(
+            "vEthernet (WSL)",
+            "Hyper-V Virtual Ethernet Adapter #2",
+            10000,
+            true
+        )));
+        assert!(!is_physical_adapter(&probe(
+            "Ethernet 2",
+            "Realtek Gaming 2.5GbE Family Controller",
+            1000,
+            true
+        )));
+        assert!(!is_physical_adapter(&probe(
+            "Loopback",
+            "Microsoft KM-TEST Loopback Adapter",
+            1000,
+            false
+        )));
+    }
+
+    #[test]
+    fn accepts_physical_adapters() {
+        assert!(is_physical_adapter(&probe(
+            "Ethernet",
+            "Realtek Gaming 2.5GbE Family Controller",
+            1000,
+            false
+        )));
+        assert!(is_physical_adapter(&probe(
+            "Wi-Fi",
+            "RZ616 Wi-Fi 6E 160MHz",
+            1200,
+            false
+        )));
+    }
+
+    #[test]
+    fn selects_fastest_physical_adapter_and_skips_virtual_ones() {
+        let adapters = vec![
+            probe(
+                "vEthernet (WSL)",
+                "Hyper-V Virtual Ethernet Adapter #2",
+                10000,
+                true,
+            ),
+            probe(
+                "Ethernet",
+                "Realtek Gaming 2.5GbE Family Controller",
+                1000,
+                false,
+            ),
+            probe("Wi-Fi", "RZ616 Wi-Fi 6E 160MHz", 1200, false),
+        ];
+        let selected = select_adapter(adapters).unwrap();
+        assert_eq!(selected.name.as_deref(), Some("Wi-Fi"));
+    }
+
+    #[test]
+    fn maps_kind_and_link_speed() {
+        let wired = build_adapter_info(probe(
+            "Ethernet",
+            "Realtek Gaming 2.5GbE Family Controller",
+            1000,
+            false,
+        ));
+        assert_eq!(wired.kind, "ethernet");
+        assert_eq!(wired.link_speed_mbps, Some(1000.0));
+
+        let wireless = build_adapter_info(probe("Wi-Fi", "RZ616 Wi-Fi 6E 160MHz", 1200, false));
+        assert_eq!(wireless.kind, "wifi");
+        assert_eq!(wireless.link_speed_mbps, Some(1200.0));
+    }
 }

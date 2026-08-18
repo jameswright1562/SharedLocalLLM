@@ -14,14 +14,14 @@ not encoded in separate builds.
 - **Coordinator runtime:** `llama-server.exe` owns the selected model and connects to the local and
   remote GPU devices using layer split.
 - **Worker runtime:** `ggml-rpc-server.exe` listens on an ephemeral loopback port. It is reachable
-  only through the Rust process's authenticated peer tunnel.
-- **Local API:** binds to `127.0.0.1`; a worker-side request is forwarded through the tunnel to the
-  active coordinator.
+  only through the Rust process's peer tunnel.
+- **Local API:** binds to `127.0.0.1`. Chat from the worker is proxied over the peer channel to the
+  computer that launched `llama-server`.
 
 ## Session lifecycle
 
 ```text
-unpaired -> paired -> measuring -> ready -> loading -> running -> draining -> stopped
+unconnected -> connected -> measuring -> ready -> loading -> running -> draining -> stopped
                                       |          |
                                       +-> failed <-+
 ```
@@ -36,32 +36,43 @@ terminates the process tree. Normal window close hides to the tray while a sessi
 
 ## Peer protocol and trust
 
-Discovery uses a small UDP announcement on private interfaces. Manual private IPv4 entry reaches
-the same pairing flow. Pairing performs an ephemeral key exchange and displays a derived six-digit
-comparison code on both computers. Confirmation persists each peer identity through Windows DPAPI.
+Discovery uses a small UDP announcement on local interfaces. Manual IPv4 entry reaches the same
+connect flow: a computer connects to the peer (discovered or by explicit IP) and exchanges a plain,
+versioned `Connect` handshake that carries each side's device identity and capabilities. Both sides
+then keep a peer record.
 
-All later peer traffic uses mutual TLS and a versioned application handshake. One private-network
-TCP listener multiplexes control messages, the bounded RPC byte tunnel, network tests, and proxied
-API requests. Incompatible protocol/runtime versions fail before launch with upgrade guidance.
+All later peer traffic uses a plain, length-prefixed application protocol. One TCP listener on port
+`49158` multiplexes control messages, the bounded RPC byte tunnel, network tests, catalogue metadata,
+worker stop, and proxied chat. Incompatible protocol versions fail before launch with upgrade
+guidance. There is no pairing code and no application-layer encryption: this is a trusted-private-LAN
+design, not production-hardened peer identity or authorization.
 
 Security invariants:
 
 - Raw RPC binds only to `127.0.0.1` and is never advertised, firewall-opened, or routed to the LAN.
 - Local API binds only to `127.0.0.1`; it requires a per-install bearer key.
-- Public Windows network profiles cannot launch or accept a cluster.
-- Peer certificates, pairing material, and API keys are DPAPI-protected, not stored in SQLite.
+- The Windows network category (Public/Private/Domain) is informational only; the app operates
+  identically on all profiles, with a program-scoped firewall rule permitting only the
+  SharedLocalLLM executable on the peer ports.
+- API keys are DPAPI-protected, not stored in SQLite.
 - Logs redact secrets, prompts, image content, and personal path prefixes.
 - `llama-server` filesystem, shell, MCP, and agent tools stay disabled.
 
 These controls reduce exposure; they do not turn upstream experimental RPC into a safe service for
 untrusted networks. A direct RPC socket must be treated as a security defect.
 
+SharedLocalLLM idempotently creates program-scoped Windows Firewall rules (Profile Any) for the
+peer ports: TCP `49158` and UDP `49157`. On startup it checks whether the rules exist; if they are
+missing and the process is not elevated, it relaunches itself with a UAC prompt so the rules can be
+created. Only the SharedLocalLLM executable is permitted by these rules; `ggml-rpc-server.exe` and
+`llama-server.exe` are never opened to the LAN.
+
 ## Model and inference data flow
 
-Each node indexes its own read-only sources. The merged catalogue carries the file owner and a
-stable fingerprint, but not model bytes. Split GGUF shards become one record; adjacent `mmproj`
-files are associated with eligible vision models. The node holding the selected file coordinates
-unless both hold it and measured performance selects the other node.
+Each node indexes its own read-only sources. Peer catalogue metadata (names and locations) can be
+merged for display, but model bytes stay in place and launch requires a local GGUF. Split GGUF
+shards become one record; adjacent `mmproj` files are associated with eligible vision models. The
+computer that clicks Launch is the coordinator.
 
 The recommendation engine performs these stages:
 
@@ -78,8 +89,9 @@ a token rate before measurement.
 
 ## State and compatibility
 
-SQLite stores non-secret settings, per-node model metadata, benchmark history, conversations, and
-launch profiles. Credentials are stored separately with DPAPI. Model directories remain untouched.
+JSON settings store non-secret preferences, peer records, and benchmark history. Chat stays in
+renderer memory for the session. Credentials are stored separately with DPAPI. Model directories
+remain untouched.
 
 Cache keys include model fingerprint, both hardware identities, drivers, runtime version, requested
 context, and route/adapter identity. Any change invalidates the result. Peer messages and persisted

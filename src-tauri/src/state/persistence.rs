@@ -75,15 +75,6 @@ pub(super) fn secrets_path() -> PathBuf {
     data_root().join("secrets.dat")
 }
 
-pub fn peer_secret_path(peer_id: &str) -> PathBuf {
-    let safe_id: String = peer_id
-        .chars()
-        .filter(|character| character.is_ascii_alphanumeric() || *character == '-')
-        .take(80)
-        .collect();
-    data_root().join("peers").join(format!("{safe_id}.dat"))
-}
-
 pub(super) fn new_api_key() -> String {
     format!(
         "sk-local-{}",

@@ -135,7 +135,10 @@ fn io_error(error: std::io::Error) -> ErrorPayload {
     ErrorPayload::new(
         "discovery_io",
         error.to_string(),
-        Some("Allow SharedLocalLLM on Private networks or enter the peer address manually.".into()),
+        Some(
+            "Allow SharedLocalLLM through Windows Firewall, or enter the peer address manually."
+                .into(),
+        ),
     )
 }
 

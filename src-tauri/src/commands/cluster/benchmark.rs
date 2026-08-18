@@ -8,7 +8,7 @@ use crate::{
     types::{ErrorPayload, InferenceBenchmark, ModelLoadConfig},
 };
 
-use super::{require_private_network, split};
+use super::split;
 
 #[tauri::command]
 pub async fn run_inference_benchmark(
@@ -69,7 +69,6 @@ pub async fn run_inference_benchmark(
     let allocations = fit_gpu_layers(&model, total_layers, &online_gpu_nodes)?;
     let distributed = allocations.len() == 2;
     let forwarder = if distributed {
-        require_private_network()?;
         let client = state.peer_client().await?;
         client.heartbeat().await?;
         Some(client.start_rpc_forwarder().await?)
@@ -140,6 +139,7 @@ pub async fn run_inference_benchmark(
         memory_peak_gb: 0.0,
         recommended: true,
         ran_at: format!("{}", crate::pairing::now()),
+        error: None,
     };
     state.lock()?.benchmarks.push(result.clone());
     state.persist()?;
@@ -165,6 +165,7 @@ fn fit_gpu_layers(
         let load_config = ModelLoadConfig {
             context_size: 4096,
             gpu_layers: allocations.clone(),
+            force: false,
         };
         if split::build_split_estimate(model, &load_config, nodes)
             .is_ok_and(|(estimate, _)| estimate.devices.iter().all(|device| device.fits))

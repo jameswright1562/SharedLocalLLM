@@ -30,6 +30,8 @@ export interface NodeCapabilities {
     kind: "ethernet" | "wifi" | "other";
     linkSpeedMbps?: number;
   };
+  clusterStatus?: string;
+  clusterModelId?: string;
 }
 
 export interface ModelLocation {
@@ -53,6 +55,7 @@ export interface ModelRecord {
   shards: number;
   locations: ModelLocation[];
   fit: ModelFit;
+  remoteOnly?: boolean;
 }
 
 export interface GpuLayerAllocation {
@@ -63,6 +66,7 @@ export interface GpuLayerAllocation {
 export interface ModelLoadConfig {
   contextSize: number;
   gpuLayers: GpuLayerAllocation[];
+  force?: boolean;
 }
 
 export interface DeviceVramEstimate {
@@ -98,6 +102,7 @@ export interface NetworkBenchmark {
   packetLossPercent: number;
   classification: "good" | "usable" | "poor";
   adapter: string;
+  windowsProfile?: string;
 }
 
 export interface InferenceBenchmark {
@@ -111,6 +116,7 @@ export interface InferenceBenchmark {
   memoryPeakGb: number;
   recommended: boolean;
   ranAt: string;
+  error?: string;
 }
 
 export interface ClusterSession {
@@ -153,6 +159,7 @@ export interface ChatMessage {
   role: "user" | "assistant" | "system";
   content: string;
   imageNames?: string[];
+  imageData?: string[];
   error?: boolean;
 }
 
@@ -166,6 +173,9 @@ export interface ChatResponse {
   content: string;
 }
 
+export type ChatStreamEvent =
+  { kind: "token"; content: string } | { kind: "status"; status: string };
+
 export interface AppService {
   getAppSnapshot(): Promise<AppSnapshot>;
   completeSetup(deviceName: string): Promise<AppSnapshot>;
@@ -176,15 +186,7 @@ export interface AppService {
   addModelDirectory(): Promise<ModelDirectory | null>;
   removeModelDirectory(id: string): Promise<void>;
   runNetworkTest(): Promise<NetworkBenchmark>;
-  generatePairingCode(allowPublicNetwork?: boolean): Promise<{
-    code: string;
-    expiresInSeconds: number;
-  }>;
-  pairWithPeer(
-    code: string,
-    allowPublicNetwork?: boolean,
-    manualEndpoint?: string,
-  ): Promise<NodeCapabilities>;
+  connectPeer(manualEndpoint?: string): Promise<NodeCapabilities>;
   resetPairing(): Promise<AppSnapshot>;
   estimateModelSplit(modelId: string, loadConfig: ModelLoadConfig): Promise<SplitEstimate>;
   startCluster(modelId: string, loadConfig: ModelLoadConfig): Promise<ClusterSession>;
@@ -195,6 +197,7 @@ export interface AppService {
     messages: ChatMessage[],
     settings: ChatSettings,
     images: string[],
+    onStream?: (event: ChatStreamEvent) => void,
   ): Promise<ChatResponse>;
   cancelGeneration(): Promise<void>;
   getApiConfig(): Promise<ApiConfig>;

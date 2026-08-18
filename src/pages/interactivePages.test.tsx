@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { cloneSnapshot, serviceWith } from "../test/fixtures";
@@ -35,7 +35,7 @@ describe("interactive pages", () => {
   it("sends chat, edits settings, attaches images, and cancels generation", async () => {
     const user = userEvent.setup();
     const snapshot = cloneSnapshot();
-    snapshot.cluster = { ...snapshot.cluster, status: "running", modelId: "model-text" };
+    snapshot.cluster = { ...snapshot.cluster, status: "running", modelId: "model-vision" };
     let resolveChat!: (value: { content: string }) => void;
     const sendChatMessage = vi
       .fn()
@@ -50,12 +50,12 @@ describe("interactive pages", () => {
     await user.click(screen.getByRole("button", { name: /close generation settings/i }));
 
     const file = new File(["image"], "diagram.png", { type: "image/png" });
-    await user.upload(screen.getByLabelText(/attach image/i).querySelector("input")!, file);
+    await user.upload(screen.getByLabelText(/attach image/i), file);
     expect(screen.getByText("diagram.png")).toBeInTheDocument();
     await user.type(screen.getByLabelText(/^message$/i), "Explain this route");
     await user.click(screen.getByRole("button", { name: /send message/i }));
-    expect(screen.getByText(/generating/i)).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: /stop/i }));
+    expect(screen.getByText(/processing prompt/i)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /■ stop/i }));
     expect(cancelGeneration).toHaveBeenCalled();
     const firstCall = sendChatMessage.mock.calls[0]!;
     expect(firstCall[2]).toHaveLength(1);
@@ -67,6 +67,32 @@ describe("interactive pages", () => {
     await user.type(screen.getByLabelText(/^message$/i), "Again");
     await user.keyboard("{Enter}");
     expect(await screen.findByText("Second answer")).toBeInTheDocument();
+  });
+
+  it("streams tokens into the message as they arrive", async () => {
+    const user = userEvent.setup();
+    const snapshot = cloneSnapshot();
+    snapshot.cluster = { ...snapshot.cluster, status: "running", modelId: "model-text" };
+    let resolveChat!: (value: { content: string }) => void;
+    const sendChatMessage = vi
+      .fn()
+      .mockImplementation((_messages, _settings, _images, onStream) => {
+        onStream?.({ kind: "status", status: "processing" });
+        onStream?.({ kind: "token", content: "Hello" });
+        onStream?.({ kind: "token", content: " world" });
+        return new Promise((resolve) => (resolveChat = resolve));
+      });
+    render(<ChatPage {...props(snapshot, { sendChatMessage })} />);
+    await user.type(screen.getByLabelText(/^message$/i), "Hi");
+    await user.click(screen.getByRole("button", { name: /send message/i }));
+
+    expect(await screen.findByText(/Hello world/)).toBeInTheDocument();
+
+    await act(async () => {
+      resolveChat({ content: "Hello world" });
+    });
+    expect(screen.getByText("Hello world")).toBeInTheDocument();
+    expect(screen.queryByText(/processing prompt/i)).not.toBeInTheDocument();
   });
 
   it("shows generation errors and retries the last user prompt", async () => {
@@ -154,6 +180,17 @@ describe("interactive pages", () => {
     await user.click(screen.getAllByRole("button", { name: /^copy$/i })[0]!);
     expect(await screen.findByRole("alert")).toHaveTextContent(/clipboard is unavailable/i);
     Object.defineProperty(navigator, "clipboard", { configurable: true, value: originalClipboard });
+  });
+
+  it("installs the runtime from settings", async () => {
+    const user = userEvent.setup();
+    const installRuntime = vi.fn().mockResolvedValue(cloneSnapshot());
+    const pageProps = props(cloneSnapshot(), { installRuntime });
+    render(<SettingsPage {...pageProps} />);
+    await user.click(screen.getByRole("tab", { name: /runtime/i }));
+    await user.click(screen.getByRole("button", { name: /repair runtime/i }));
+    expect(installRuntime).toHaveBeenCalled();
+    await waitFor(() => expect(pageProps.refreshSnapshot).toHaveBeenCalled());
   });
 
   it("manages model sources and opens logs", async () => {

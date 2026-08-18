@@ -29,6 +29,10 @@ pub struct NodeCapabilities {
     pub ram_available_gb: f64,
     pub gpu: GpuInfo,
     pub adapter: NetworkAdapterInfo,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cluster_status: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cluster_model_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -65,12 +69,14 @@ pub struct ModelRecord {
     pub shards: usize,
     pub locations: Vec<ModelLocation>,
     pub fit: String,
-    #[serde(skip_serializing)]
+    #[serde(default, skip_serializing)]
     pub shard_paths: Vec<String>,
-    #[serde(skip_serializing)]
+    #[serde(default, skip_serializing)]
     pub projector: Option<String>,
-    #[serde(skip_serializing)]
+    #[serde(default, skip_serializing)]
     pub vision_capable: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub remote_only: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -85,6 +91,8 @@ pub struct GpuLayerAllocation {
 pub struct ModelLoadConfig {
     pub context_size: u32,
     pub gpu_layers: Vec<GpuLayerAllocation>,
+    #[serde(default)]
+    pub force: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -98,6 +106,8 @@ pub struct NetworkBenchmark {
     pub packet_loss_percent: f64,
     pub classification: String,
     pub adapter: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub windows_profile: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -126,6 +136,8 @@ pub struct InferenceBenchmark {
     pub memory_peak_gb: f64,
     pub recommended: bool,
     pub ran_at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -206,13 +218,6 @@ pub struct ChatResponse {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PairingCode {
-    pub code: String,
-    pub expires_in_seconds: u64,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct AppSettings {
     pub device_name: String,

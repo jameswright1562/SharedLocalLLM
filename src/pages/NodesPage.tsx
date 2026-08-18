@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { PairingPanel } from "../components/PairingPanel";
 import { describeAppError } from "../services/errors";
 import type { PageProps } from "../types";
 import { StatusPill } from "../components/Telemetry";
@@ -8,11 +9,15 @@ export function NodesPage({ snapshot, service, refreshSnapshot }: PageProps) {
   const [refreshing, setRefreshing] = useState(false);
   const [confirmingReset, setConfirmingReset] = useState(false);
   const [message, setMessage] = useState("");
+  const [manualEndpoint, setManualEndpoint] = useState("");
   async function refresh() {
     setRefreshing(true);
+    setMessage("");
     try {
       await service.refreshHardware();
       await refreshSnapshot();
+    } catch (reason) {
+      setMessage(describeAppError(reason, "Hardware refresh failed."));
     } finally {
       setRefreshing(false);
     }
@@ -24,9 +29,23 @@ export function NodesPage({ snapshot, service, refreshSnapshot }: PageProps) {
       await service.resetPairing();
       await refreshSnapshot();
       setConfirmingReset(false);
-      setMessage("Paired node forgotten. Create a new pairing code to reconnect it.");
+      setMessage("Paired node forgotten. Connect again to rejoin the peer.");
     } catch (reason) {
       setMessage(describeAppError(reason, "The paired node could not be forgotten."));
+    } finally {
+      setRefreshing(false);
+    }
+  }
+  async function connect() {
+    setRefreshing(true);
+    setMessage("");
+    try {
+      const endpoint = manualEndpoint.trim();
+      await (endpoint ? service.connectPeer(endpoint) : service.connectPeer());
+      await refreshSnapshot();
+      setMessage("Connected to the other computer.");
+    } catch (reason) {
+      setMessage(describeAppError(reason, "Could not connect to the other computer."));
     } finally {
       setRefreshing(false);
     }
@@ -124,13 +143,22 @@ export function NodesPage({ snapshot, service, refreshSnapshot }: PageProps) {
           <div className="empty-state compact">
             <span>02</span>
             <div>
-              <h2>No worker paired</h2>
+              <h2>No worker connected</h2>
               <p>
-                The local node can still run models that fit. Pair another computer from Settings to
-                pool resources.
+                The local node can still run models that fit. Enter a peer IP or let discovery find
+                the other computer.
               </p>
             </div>
           </div>
+        )}
+        {snapshot.nodes.length < 2 && (
+          <PairingPanel
+            manualEndpoint={manualEndpoint}
+            setManualEndpoint={setManualEndpoint}
+            pairedNode={null}
+            busy={refreshing}
+            connect={() => void connect()}
+          />
         )}
       </div>
       {message && (

@@ -31,21 +31,19 @@ pub async fn get_api_config(state: State<'_, AppState>) -> Result<ApiConfig, Err
 pub async fn regenerate_api_key(state: State<'_, AppState>) -> Result<ApiConfig, ErrorPayload> {
     let was_running = state.lock()?.cluster.status == "running";
     if was_running {
-        state
-            .processes
-            .lock()
-            .map_err(|_| {
-                ErrorPayload::new(
-                    "process_state",
-                    "The runtime process manager is unavailable.",
-                    None,
-                )
-            })?
-            .stop();
-        state.lock()?.cluster.status = "ready".into();
+        crate::commands::cluster::halt_runtime(&state).await;
+        let mut inner = state.lock()?;
+        inner.cluster = crate::commands::cluster::idle_cluster(!inner.peers.is_empty());
     }
     let key = regenerate_key();
     secrets::store(&data_root().join("secrets.dat"), key.as_bytes())?;
-    state.lock()?.api_key = key;
+    let port = {
+        let mut inner = state.lock()?;
+        inner.api_key = key.clone();
+        inner.api_port
+    };
+    if let Some(server) = state.peer.lock().await.server.as_ref() {
+        server.set_api(key, port).await;
+    }
     get_api_config(state).await
 }

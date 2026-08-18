@@ -1,4 +1,12 @@
 /* Shell */
+.preview-banner {
+  width: 100%;
+  padding: 8px 16px;
+  background: #3a2a12;
+  color: #f3d7a0;
+  font: 0.72rem var(--mono);
+  text-align: center;
+}
 .app-shell {
   display: flex;
   min-height: 100vh;

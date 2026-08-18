@@ -15,6 +15,7 @@ export function ModelsPage({ snapshot, service, refreshSnapshot }: PageProps) {
   const [contextByModel, setContextByModel] = useState<Record<string, number>>({});
   const [manualByModel, setManualByModel] = useState<Record<string, boolean>>({});
   const [layersByModel, setLayersByModel] = useState<Record<string, GpuLayerAllocation[]>>({});
+  const [forceByModel, setForceByModel] = useState<Record<string, boolean>>({});
   const nodeLookup = new Map(snapshot.nodes.map((node) => [node.id, node.name]));
   const models = discoveredModels ?? snapshot.models;
   const visibleModels = useMemo(
@@ -38,6 +39,7 @@ export function ModelsPage({ snapshot, service, refreshSnapshot }: PageProps) {
     [snapshot.nodes],
   );
   const manualSplit = selected ? Boolean(manualByModel[selected.id]) : false;
+  const force = selected ? Boolean(forceByModel[selected.id]) : false;
   const gpuLayers = useMemo(
     () =>
       selected
@@ -81,6 +83,7 @@ export function ModelsPage({ snapshot, service, refreshSnapshot }: PageProps) {
         setMessage("No folder selected.");
         return;
       }
+      setDiscoveredModels(null);
       await refreshSnapshot();
       setMessage("Model folder added.");
     } catch (reason) {
@@ -91,16 +94,19 @@ export function ModelsPage({ snapshot, service, refreshSnapshot }: PageProps) {
   }
 
   async function launch() {
-    if (!selected || selected.fit === "does-not-fit" || splitInvalid) return;
+    if (!selected) return;
+    const forceLaunch = Boolean(forceByModel[selected.id]);
+    if (!forceLaunch && (selected.fit === "does-not-fit" || splitInvalid)) return;
     setBusy("launch");
     setMessage("");
     try {
       await service.startCluster(selected.id, {
         contextSize,
-        gpuLayers: manualSplit ? gpuLayers : [],
+        gpuLayers: selected.layerCount ? gpuLayers : [],
+        force: forceLaunch,
       });
       setMessage(
-        `${selected.name} is loading with ${manualSplit ? "the selected GPU layer split" : "automatic allocation"}.`,
+        `${selected.name} is loading with ${manualSplit ? "the selected GPU layer split" : "automatic allocation"}${forceLaunch ? " (forced)" : ""}.`,
       );
       await refreshSnapshot();
     } catch (reason) {
@@ -121,13 +127,21 @@ export function ModelsPage({ snapshot, service, refreshSnapshot }: PageProps) {
     }
   }
 
+  function setForce(next: boolean) {
+    if (!selected) return;
+    setForceByModel({ ...forceByModel, [selected.id]: next });
+  }
+
   return (
     <div className="page models-page">
       <header className="page-header split-header">
         <div>
           <p className="section-kicker">Catalogue</p>
           <h1>Model library</h1>
-          <p>GGUF models indexed across both computers. Source files stay where they are.</p>
+          <p>
+            GGUF models on this computer, plus names reported by a paired peer. Launch requires a
+            local file. Source files stay where they are.
+          </p>
         </div>
         <div className="button-row flush">
           <button
@@ -137,6 +151,15 @@ export function ModelsPage({ snapshot, service, refreshSnapshot }: PageProps) {
           >
             {busy === "refresh" ? "Indexing…" : "Refresh"}
           </button>
+          {(snapshot.cluster.status === "running" || snapshot.cluster.status === "loading") && (
+            <button
+              className="button stop-button"
+              disabled={!!busy}
+              onClick={() => void service.stopCluster().then(() => refreshSnapshot())}
+            >
+              Stop cluster
+            </button>
+          )}
           <button className="button primary" disabled={!!busy} onClick={() => void addFolder()}>
             Add folder
           </button>
@@ -191,6 +214,8 @@ export function ModelsPage({ snapshot, service, refreshSnapshot }: PageProps) {
           }
           busy={busy === "launch"}
           splitInvalid={splitInvalid}
+          force={force}
+          setForce={setForce}
           launch={() => void launch()}
         />
       </div>

@@ -1,7 +1,10 @@
+pub mod autostart;
 pub mod capacity;
 pub mod commands;
+pub mod firewall;
 pub mod gguf;
 pub mod hardware;
+pub mod inference;
 pub mod models;
 pub mod network;
 pub mod pairing;
@@ -12,16 +15,37 @@ pub mod state;
 pub mod types;
 
 use state::AppState;
+use tauri::{
+    menu::{Menu, MenuItem},
+    tray::TrayIconBuilder,
+    Manager,
+};
 
 pub fn run() {
+    crate::firewall::ensure_firewall_elevation();
     tauri::Builder::default()
         .manage(AppState::new())
         .setup(|app| {
+            inference::rpc_worker::start_rpc_worker().map_err(|error| error.to_string())?;
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 commands::pairing::lifecycle::start_persistent_peer_service(handle).await;
             });
+            install_tray(app)?;
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                let running = window
+                    .state::<AppState>()
+                    .lock()
+                    .map(|inner| inner.cluster.status == "running")
+                    .unwrap_or(false);
+                if running {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+            }
         })
         .invoke_handler(tauri::generate_handler![
             commands::app::get_app_snapshot,
@@ -33,8 +57,7 @@ pub fn run() {
             commands::models::add_model_directory,
             commands::models::remove_model_directory,
             commands::network::run_network_test,
-            commands::pairing::generate_pairing_code,
-            commands::pairing::pair_with_peer,
+            commands::pairing::connect_peer,
             commands::pairing::reset::reset_pairing,
             commands::cluster::split::estimate_model_split,
             commands::cluster::start_cluster,
@@ -50,4 +73,29 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running SharedLocalLLM");
+}
+
+fn install_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
+    let show = MenuItem::with_id(app, "show", "Show SharedLocalLLM", true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
+    let menu = Menu::with_items(app, &[&show, &quit])?;
+    TrayIconBuilder::new()
+        .icon(
+            app.default_window_icon()
+                .cloned()
+                .ok_or("missing tray icon")?,
+        )
+        .menu(&menu)
+        .on_menu_event(|app, event| match event.id().as_ref() {
+            "show" => {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                }
+            }
+            "quit" => app.exit(0),
+            _ => {}
+        })
+        .build(app)?;
+    Ok(())
 }

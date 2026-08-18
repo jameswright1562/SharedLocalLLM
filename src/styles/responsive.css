@@ -222,11 +222,6 @@
   .pair-grid {
     grid-template-columns: 1fr;
   }
-  .network-profile-help,
-  .network-profile-actions {
-    align-items: stretch;
-    flex-direction: column;
-  }
   .or-divider {
     min-height: 35px;
   }

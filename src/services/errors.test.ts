@@ -5,14 +5,14 @@ import { decodeAppError } from "./errors";
 describe("decodeAppError", () => {
   it("preserves structured Rust error details and recovery action", () => {
     const error = decodeAppError({
-      code: "private_network_required",
-      message: "Pairing requires a private network.",
-      action: "Change the Windows network profile to Private.",
+      code: "manual_peer_endpoint_invalid",
+      message: "not-an-address is not a valid Ethernet IP address.",
+      action: "Enter the other computer's IPv4 address.",
     });
 
-    expect(error).toMatchObject({ code: "private_network_required" });
-    expect(error.message).toBe("Pairing requires a private network.");
-    expect(error.action).toBe("Change the Windows network profile to Private.");
+    expect(error).toMatchObject({ code: "manual_peer_endpoint_invalid" });
+    expect(error.message).toBe("not-an-address is not a valid Ethernet IP address.");
+    expect(error.action).toBe("Enter the other computer's IPv4 address.");
   });
 
   it("normalizes Error, string, and malformed rejection values", () => {

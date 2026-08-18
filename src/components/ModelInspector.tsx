@@ -1,5 +1,8 @@
+import { useState } from "react";
 import type { GpuLayerAllocation, ModelRecord, NodeCapabilities, SplitEstimate } from "../types";
 import { fitLabels, formatContext } from "../pages/pageFormat";
+
+const MIN_CONTEXT = 4096;
 
 interface ModelInspectorProps {
   selected?: ModelRecord;
@@ -14,6 +17,8 @@ interface ModelInspectorProps {
   setGpuLayers: (layers: GpuLayerAllocation[]) => void;
   busy: boolean;
   splitInvalid: boolean;
+  force: boolean;
+  setForce: (force: boolean) => void;
   launch: () => void;
 }
 
@@ -30,6 +35,8 @@ export function ModelInspector({
   setGpuLayers,
   busy,
   splitInvalid,
+  force,
+  setForce,
   launch,
 }: ModelInspectorProps) {
   if (!selected)
@@ -74,18 +81,11 @@ export function ModelInspector({
         </div>
       </dl>
       <FitExplanation model={selected} />
-      <label className="field-label" htmlFor="context-select">
-        Requested context
-      </label>
-      <select
-        id="context-select"
-        value={String(contextSize)}
-        onChange={(event) => setContextSize(Number(event.target.value))}
-      >
-        <option value="4096">4,096 tokens</option>
-        <option value="8192">8,192 tokens</option>
-        {selected.contextLength >= 16384 && <option value="16384">16,384 tokens</option>}
-      </select>
+      <ContextSizeControl
+        contextSize={contextSize}
+        setContextSize={setContextSize}
+        maxContext={selected.contextLength}
+      />
       {selected.layerCount ? (
         <GpuAllocation
           selected={selected}
@@ -104,13 +104,106 @@ export function ModelInspector({
       )}
       <button
         className="button primary full"
-        disabled={busy || selected.fit === "does-not-fit" || splitInvalid}
+        disabled={
+          busy ||
+          selected.remoteOnly ||
+          ((selected.fit === "does-not-fit" || splitInvalid) && !force)
+        }
         onClick={launch}
         aria-label={`Launch ${selected.name}`}
       >
         {busy ? "Starting cluster…" : `Launch ${selected.name}`}
       </button>
+      {selected.remoteOnly ? (
+        <p className="metadata-note">
+          This GGUF is stored on the other computer. Launch it there, or copy the file locally.
+        </p>
+      ) : selected.fit === "does-not-fit" || splitInvalid ? (
+        <label className="force-launch">
+          <input
+            type="checkbox"
+            checked={force}
+            onChange={(event) => setForce(event.target.checked)}
+          />
+          <span>Force launch — ignore the memory estimate</span>
+        </label>
+      ) : null}
+      {force && (
+        <p className="metadata-note">
+          Forced launch disables the fit check. The model may load slowly, spill heavily, or fail to
+          start if memory is genuinely insufficient.
+        </p>
+      )}
     </aside>
+  );
+}
+
+function ContextSizeControl({
+  contextSize,
+  setContextSize,
+  maxContext,
+}: {
+  contextSize: number;
+  setContextSize: (value: number) => void;
+  maxContext: number;
+}) {
+  const max = Math.max(MIN_CONTEXT, maxContext);
+  const [draft, setDraft] = useState(String(contextSize));
+  const [previousContextSize, setPreviousContextSize] = useState(contextSize);
+
+  if (contextSize !== previousContextSize) {
+    setPreviousContextSize(contextSize);
+    setDraft(String(contextSize));
+  }
+
+  function commit(value: number) {
+    const clamped = Math.max(MIN_CONTEXT, Math.min(max, Math.round(value)));
+    setContextSize(clamped);
+    setDraft(String(clamped));
+  }
+
+  return (
+    <section className="context-control">
+      <label className="field-label" htmlFor="context-size-input">
+        Requested context
+      </label>
+      <input
+        type="range"
+        id="context-size-slider"
+        min={MIN_CONTEXT}
+        max={max}
+        step={1024}
+        value={Math.max(MIN_CONTEXT, Math.min(max, contextSize))}
+        onChange={(event) => commit(Number(event.target.value))}
+        aria-label="Requested context slider"
+      />
+      <div className="context-value-row">
+        <input
+          type="number"
+          id="context-size-input"
+          min={MIN_CONTEXT}
+          max={max}
+          value={draft}
+          onChange={(event) => {
+            const value = Number(event.target.value);
+            if (event.target.value === "") {
+              setDraft("");
+            } else if (Number.isFinite(value)) {
+              setDraft(event.target.value);
+            }
+          }}
+          onBlur={(event) => {
+            const value = Number(event.target.value);
+            if (event.target.value === "") {
+              setDraft(String(contextSize));
+            } else if (Number.isFinite(value)) {
+              commit(value);
+            }
+          }}
+        />
+        <span>{contextSize.toLocaleString()} tokens</span>
+      </div>
+    </section>
   );
 }
 

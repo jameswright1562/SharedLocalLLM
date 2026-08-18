@@ -27,3 +27,11 @@ Thumbs.db
 .runtime/
 diagnostics/
 runtime-downloads/
+
+graphify-out/
+
+.opencode/
+.codex/
+.aionrs/
+.junie/
+.cursor/

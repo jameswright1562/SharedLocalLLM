@@ -56,6 +56,49 @@ GitHub Actions builds an unsigned NSIS artifact on Windows. Before a public rele
 4. Sign the installer and publish its checksum.
 5. Install the artifact on clean supported Windows images rather than testing only a dev build.
 
+## Physical peer smoke test (two PCs)
+
+A lighter-weight network/firewall/loopback sanity check to run on one of the two machines before the
+manual matrix below. These are smoke checks only, not proof of distributed GPU inference; the
+physical two-computer acceptance matrix below remains authoritative for performance and correctness.
+
+### Rust ignored tests (`src-tauri/tests/physical_peer.rs`)
+
+With the SharedLocalLLM app running on the peer PC, on this PC:
+
+```powershell
+$env:SHARED_LOCAL_LLM_PEER_ENDPOINT = "10.10.10.2"
+$env:SHARED_LOCAL_LLM_PEER_CHANNEL_KEY = "<channel key shown by the app on the peer PC>"
+cargo test --manifest-path src-tauri/Cargo.toml --test physical_peer -- --ignored --nocapture
+```
+
+`SHARED_LOCAL_LLM_PEER_ENDPOINT` accepts a bare IP (`10.10.10.2`) or `IP:port`
+(`10.10.10.2:49158`); the port defaults to 49158. The three tests check that TCP 49158 is reachable
+over the cable, that discovery announcements arrive on UDP 49157 (non-empty `device_id` and
+`peer_port == 49158`), and that a heartbeat completes over the peer channel using the shared channel
+key. `SHARED_LOCAL_LLM_PEER_CHANNEL_KEY` is only needed by the third test.
+
+### PowerShell harness (`scripts/two-pc-acceptance.ps1`)
+
+```powershell
+.\scripts\two-pc-acceptance.ps1 -PeerAddress 10.10.10.2
+```
+
+Checks are reported per-check as PASS/FAIL/SKIP with a final `RESULT: PASS|FAIL` and an exit code of
+0 on pass or 1 on any FAIL:
+
+1. Firewall rules `SharedLocalLLM` (TCP 49158) and `SharedLocalLLM Discovery` (UDP 49157) exist,
+   are Enabled, Inbound, Allow, and `Profile = Any`.
+2. Something is listening on TCP 49158 with a non-loopback `LocalAddress` (the peer channel binds
+   `0.0.0.0`).
+3. A UDP endpoint is bound on port 49157.
+4. `Test-NetConnection` to `$PeerAddress` port 49158 succeeds.
+5. If `ggml-rpc-server` or `llama-server` is running, every listener owned by them is loopback-only
+   (`127.0.0.1`/`::1`); if neither is running the check is skipped, not failed.
+
+These are network/firewall/loopback smoke checks, not proof of distributed GPU inference; that
+remains the manual matrix below.
+
 ## Physical two-computer acceptance
 
 Record exact app/runtime versions, Windows builds, drivers, adapters, models, context, and results.
@@ -76,9 +119,18 @@ specific products into application logic.
 - Run a distributed benchmark and record the displayed per-computer GPU layer counts. Confirm both
   GPUs allocate memory while `llama-bench` runs and the result is labelled `distributed`; a browser
   demo or command-construction test is not physical acceptance.
-- Exercise Ethernet, Wi-Fi, manual IP, Private/Public profile behavior, firewall repair, occupied API
-  port, runtime mismatch, failed runtime update, and rollback.
+- Exercise Ethernet, Wi-Fi, manual IP, static direct Ethernet (`10.10.10.x`), automatic link-local
+  (`169.254.x.x`), operation while Windows reports the network as Public (which must now work without
+  any profile change), multiple simultaneous adapters (Wi-Fi + Ethernet) with a stable
+  manually-selected peer route, and Windows network-category changing while connected (the session
+  must not terminate).
 - Confirm model directories are unchanged after indexing, benchmarking, chat, and uninstall.
+
+Windows network-category enforcement has been removed: the Public/Private category is informational
+only, and the app pairs and launches identically on every category. The automated suite covers
+firewall-rule construction (program-scoped, Profile Any) and endpoint parsing for static and
+link-local addresses, but Public-profile and multi-adapter behaviour still needs physical two-PC
+validation.
 
 Keep failures visible. A benchmark failure record must preserve the actionable error and command
 context after secret/path redaction; it must not silently disappear from recommendation results.

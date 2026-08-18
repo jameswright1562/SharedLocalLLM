@@ -17,6 +17,7 @@ pub(super) fn append(logs: &mut Vec<String>, level: &str, event: &str, detail: &
     } else {
         format!("{timestamp} {level} {event}: {detail}")
     };
+    eprintln!("{line}");
     logs.push(line.clone());
     if logs.len() > MAX_LIVE_LINES {
         logs.drain(..logs.len() - MAX_LIVE_LINES);

@@ -32,8 +32,13 @@ describe("dashboard pages", () => {
     const { rerender } = render(<OverviewPage {...pageProps} />);
     expect(screen.getByRole("alert")).toHaveTextContent("Worker tunnel closed");
     expect(screen.getByText("Orchid 9B Q4_K_M")).toBeInTheDocument();
+    const stopCluster = vi.fn().mockResolvedValue({ status: "ready" });
+    const runningProps = props(snapshot, { stopCluster });
+    rerender(<OverviewPage {...runningProps} />);
+    await userEvent.click(screen.getByRole("button", { name: /stop cluster/i }));
+    expect(stopCluster).toHaveBeenCalled();
     await userEvent.click(screen.getByRole("button", { name: /choose model/i }));
-    expect(pageProps.navigate).toHaveBeenCalledWith("models");
+    expect(runningProps.navigate).toHaveBeenCalledWith("models");
 
     const empty = cloneSnapshot();
     empty.nodes = [];
@@ -59,7 +64,23 @@ describe("dashboard pages", () => {
 
     snapshot.nodes = snapshot.nodes.slice(0, 1);
     rerender(<NodesPage {...props(snapshot)} />);
-    expect(screen.getByText(/no worker paired/i)).toBeInTheDocument();
+    expect(screen.getByText(/no worker connected/i)).toBeInTheDocument();
+  });
+
+  it("connects a worker from the nodes page after a refresh error", async () => {
+    const user = userEvent.setup();
+    const snapshot = cloneSnapshot();
+    snapshot.nodes = snapshot.nodes.slice(0, 1);
+    const refreshHardware = vi.fn().mockRejectedValue("probe failed");
+    const connectPeer = vi.fn().mockResolvedValue(cloneSnapshot().nodes[1]);
+    const pageProps = props(snapshot, { refreshHardware, connectPeer });
+    render(<NodesPage {...pageProps} />);
+
+    await user.click(screen.getByRole("button", { name: /refresh hardware/i }));
+    expect(await screen.findByRole("status")).toHaveTextContent("probe failed");
+    await user.type(screen.getByLabelText(/ethernet ipv4 address/i), "10.10.10.2");
+    await user.click(screen.getByRole("button", { name: /^connect$/i }));
+    expect(connectPeer).toHaveBeenCalledWith("10.10.10.2");
   });
 
   it("forgets a paired worker only after explicit confirmation", async () => {
@@ -157,11 +178,13 @@ describe("dashboard pages", () => {
     const pageProps = props(snapshot, { addModelDirectory, startCluster });
     render(<ModelsPage {...pageProps} />);
 
-    await user.selectOptions(screen.getByLabelText(/requested context/i), "16384");
+    await user.clear(screen.getByLabelText("Requested context"));
+    await user.type(screen.getByLabelText("Requested context"), "12288");
     await user.click(screen.getByRole("button", { name: /launch orchid/i }));
     expect(startCluster).toHaveBeenCalledWith("model-text", {
-      contextSize: 16384,
-      gpuLayers: [],
+      contextSize: 12288,
+      gpuLayers: expect.any(Array),
+      force: false,
     });
 
     await user.click(screen.getByRole("button", { name: /^add folder$/i }));
@@ -196,6 +219,34 @@ describe("dashboard pages", () => {
         { nodeId: "node-a", layers: 24 },
         { nodeId: "node-b", layers: 16 },
       ],
+      force: false,
+    });
+  });
+
+  it("allows force launch for a model that does not fit and passes the flag through", async () => {
+    const user = userEvent.setup();
+    const snapshot = cloneSnapshot();
+    snapshot.models.push({
+      ...snapshot.models[0]!,
+      id: "too-large",
+      name: "Colossus 70B",
+      fit: "does-not-fit",
+    });
+    const startCluster = vi.fn().mockResolvedValue({ status: "loading", modelId: "too-large" });
+    render(<ModelsPage {...props(snapshot, { startCluster })} />);
+
+    await user.type(screen.getByRole("searchbox"), "Colossus");
+    const launchButton = screen.getByRole("button", { name: /launch colossus/i });
+    expect(launchButton).toBeDisabled();
+
+    await user.click(screen.getByRole("checkbox", { name: /force launch/i }));
+    expect(launchButton).toBeEnabled();
+
+    await user.click(launchButton);
+    expect(startCluster).toHaveBeenCalledWith("too-large", {
+      contextSize: 8192,
+      gpuLayers: expect.any(Array),
+      force: true,
     });
   });
 
@@ -212,6 +263,18 @@ describe("dashboard pages", () => {
     expect(screen.getByText(/no benchmark runs/i)).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: /benchmark a model/i }));
     expect(emptyProps.navigate).toHaveBeenCalledWith("models");
+  });
+
+  it("renders benchmark run times from epoch seconds and tolerates invalid values", () => {
+    const snapshot = cloneSnapshot();
+    const base = cloneSnapshot().benchmarks[0]!;
+    snapshot.benchmarks = [
+      { ...base, id: "epoch-run", ranAt: String(Math.floor(Date.now() / 1000)) },
+      { ...base, id: "broken-run", ranAt: "" },
+    ];
+    render(<BenchmarksPage {...props(snapshot)} />);
+    expect(screen.getAllByRole("row")).toHaveLength(3);
+    expect(screen.getAllByText("—")).toHaveLength(1);
   });
 
   it("runs and cancels inference benchmarks through the native service", async () => {

@@ -189,3 +189,21 @@
 .model-inspector .field-label {
   margin-top: 17px;
 }
+.context-value-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+}
+.context-value-row input[type="number"] {
+  width: 96px;
+  padding: 6px 8px;
+  background: #09141f;
+  border: 1px solid var(--line);
+  color: var(--foreground);
+  font: 0.72rem var(--mono);
+}
+.context-value-row span {
+  color: var(--cyan);
+  font: 0.62rem var(--mono);
+}

@@ -18,7 +18,10 @@ describe("SetupWizard", () => {
     render(
       <SetupWizard
         snapshot={snapshot}
-        service={serviceWith(snapshot, { installRuntime })}
+        service={serviceWith(snapshot, {
+          installRuntime,
+          refreshHardware: vi.fn().mockResolvedValue(snapshot),
+        })}
         onComplete={vi.fn()}
       />,
     );
@@ -49,90 +52,115 @@ describe("SetupWizard", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("Archive verification failed");
   });
 
-  it("explains the Private profile requirement and allows an explicit public-network retry", async () => {
+  it("connects to the other computer via manual IP", async () => {
     const user = userEvent.setup();
     const snapshot = cloneSnapshot();
-    const generatePairingCode = vi
-      .fn()
-      .mockRejectedValueOnce({
-        code: "private_network_required",
-        message: "Pairing is available only on a Windows Private network profile.",
-        action: "Change the trusted LAN profile to Private in Windows Settings.",
-      })
-      .mockResolvedValue({ code: "321 654", expiresInSeconds: 300 });
-    const openNetworkSettings = vi.fn().mockResolvedValue(undefined);
+    snapshot.nodes = snapshot.nodes.slice(0, 1);
+    const connectPeer = vi.fn().mockResolvedValue(cloneSnapshot().nodes[1]);
     render(
       <SetupWizard
         snapshot={snapshot}
-        service={serviceWith(snapshot, {
-          generatePairingCode,
-          openNetworkSettings,
-        })}
+        service={serviceWith(snapshot, { connectPeer })}
         onComplete={vi.fn()}
       />,
     );
 
     await user.click(screen.getByRole("button", { name: /continue/i }));
-    await user.click(screen.getByRole("button", { name: /create pairing code/i }));
+    await user.type(screen.getByLabelText(/ethernet ipv4 address/i), "10.10.10.2");
+    await user.click(screen.getByRole("button", { name: /^connect$/i }));
 
-    const alert = await screen.findByRole("alert");
-    expect(alert).toHaveTextContent(/home or work network you trust/i);
-    expect(alert).toHaveTextContent(/public networks can contain devices you do not trust/i);
-    expect(alert).toHaveTextContent(/cluster launch remains blocked/i);
-
-    await user.click(screen.getByRole("button", { name: /open windows network settings/i }));
-    expect(openNetworkSettings).toHaveBeenCalledTimes(1);
-
-    await user.click(screen.getByRole("button", { name: /use this public network/i }));
-
-    expect(await screen.findByText("321 654")).toBeInTheDocument();
-    expect(generatePairingCode).toHaveBeenNthCalledWith(1, false);
-    expect(generatePairingCode).toHaveBeenNthCalledWith(2, true);
-  });
-
-  it("applies the public-network override when entering a peer code", async () => {
-    const user = userEvent.setup();
-    const snapshot = cloneSnapshot();
-    const pairWithPeer = vi
-      .fn()
-      .mockRejectedValueOnce({
-        code: "private_network_required",
-        message: "Pairing is available only on a Windows Private network profile.",
-      })
-      .mockResolvedValue(cloneSnapshot().nodes[1]);
-    render(
-      <SetupWizard
-        snapshot={snapshot}
-        service={serviceWith(snapshot, { pairWithPeer })}
-        onComplete={vi.fn()}
-      />,
-    );
-
-    await user.click(screen.getByRole("button", { name: /continue/i }));
-    await user.type(screen.getByLabelText(/enter code/i), "123456");
-    await user.type(screen.getByLabelText(/ethernet ipv4 address/i), "192.168.50.2");
-    await user.click(screen.getByRole("button", { name: /pair computers/i }));
-    await user.click(await screen.findByRole("button", { name: /use this public network/i }));
-
+    expect(connectPeer).toHaveBeenCalledWith("10.10.10.2");
     expect(
       await screen.findByRole("heading", { name: /choose where models live/i }),
     ).toBeInTheDocument();
-    expect(pairWithPeer).toHaveBeenNthCalledWith(1, "123456", false, "192.168.50.2");
-    expect(pairWithPeer).toHaveBeenNthCalledWith(2, "123456", true, "192.168.50.2");
   });
 
-  it("handles code generation and pairing failures, then completes every setup step", async () => {
+  it("connects through automatic discovery when no IP is entered", async () => {
+    const user = userEvent.setup();
+    const snapshot = cloneSnapshot();
+    snapshot.nodes = snapshot.nodes.slice(0, 1);
+    const connectPeer = vi.fn().mockResolvedValue(cloneSnapshot().nodes[1]);
+    render(
+      <SetupWizard
+        snapshot={snapshot}
+        service={serviceWith(snapshot, { connectPeer })}
+        onComplete={vi.fn()}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: /continue/i }));
+    await user.click(screen.getByRole("button", { name: /^connect$/i }));
+
+    expect(connectPeer).toHaveBeenCalledTimes(1);
+    expect(connectPeer).toHaveBeenCalledWith();
+    expect(
+      await screen.findByRole("heading", { name: /choose where models live/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("lets the user navigate back through every setup step", async () => {
+    const user = userEvent.setup();
+    const snapshot = cloneSnapshot();
+    snapshot.nodes = snapshot.nodes.slice(0, 1);
+    render(
+      <SetupWizard snapshot={snapshot} service={serviceWith(snapshot)} onComplete={vi.fn()} />,
+    );
+
+    // Step 1 -> 2
+    await user.type(screen.getByLabelText(/device name/i), "Back tester");
+    await user.click(screen.getByRole("button", { name: /continue/i }));
+    expect(
+      screen.getByRole("heading", { name: /connect the second computer/i }),
+    ).toBeInTheDocument();
+
+    // Step 2 -> 1
+    await user.click(screen.getByRole("button", { name: /^back$/i }));
+    expect(screen.getByRole("heading", { name: /name this computer/i })).toBeInTheDocument();
+
+    // Step 1 -> 2 -> 3
+    await user.click(screen.getByRole("button", { name: /continue/i }));
+    await user.click(screen.getByRole("button", { name: /skip and use this computer only/i }));
+    expect(screen.getByRole("heading", { name: /choose where models live/i })).toBeInTheDocument();
+
+    // Step 3 -> 2
+    await user.click(screen.getByRole("button", { name: /^back$/i }));
+    expect(
+      screen.getByRole("heading", { name: /connect the second computer/i }),
+    ).toBeInTheDocument();
+
+    // Step 2 -> 3 -> 4
+    await user.click(screen.getByRole("button", { name: /skip and use this computer only/i }));
+    await user.click(screen.getByRole("button", { name: /use detected sources/i }));
+    expect(
+      screen.getByRole("heading", { name: /measure the path between nodes/i }),
+    ).toBeInTheDocument();
+
+    // Step 4 -> 3
+    await user.click(screen.getByRole("button", { name: /^back$/i }));
+    expect(screen.getByRole("heading", { name: /choose where models live/i })).toBeInTheDocument();
+
+    // Step 3 -> 4 -> 5
+    await user.click(screen.getByRole("button", { name: /use detected sources/i }));
+    await user.click(screen.getByRole("button", { name: /run network test/i }));
+    expect(
+      await screen.findByRole("heading", { name: /compute link is ready/i }),
+    ).toBeInTheDocument();
+
+    // Step 5 -> 4
+    await user.click(screen.getByRole("button", { name: /^back$/i }));
+    expect(
+      screen.getByRole("heading", { name: /measure the path between nodes/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("handles connection failures, then completes every setup step", async () => {
     const user = userEvent.setup();
     const snapshot = cloneSnapshot();
     snapshot.nodes = snapshot.nodes.slice(0, 1);
     snapshot.network = undefined;
-    const generatePairingCode = vi
+    const connectPeer = vi
       .fn()
-      .mockRejectedValueOnce("offline")
-      .mockResolvedValue({ code: "555 111", expiresInSeconds: 300 });
-    const pairWithPeer = vi
-      .fn()
-      .mockRejectedValueOnce(new Error("Code expired"))
+      .mockRejectedValueOnce(new Error("Peer not found"))
       .mockResolvedValue(cloneSnapshot().nodes[1]);
     const runNetworkTest = vi
       .fn()
@@ -142,7 +170,7 @@ describe("SetupWizard", () => {
     render(
       <SetupWizard
         snapshot={snapshot}
-        service={serviceWith(snapshot, { generatePairingCode, pairWithPeer, runNetworkTest })}
+        service={serviceWith(snapshot, { connectPeer, runNetworkTest })}
         onComplete={onComplete}
       />,
     );
@@ -152,16 +180,11 @@ describe("SetupWizard", () => {
     await user.type(screen.getByLabelText(/device name/i), "Compute lead");
     await user.click(screen.getByRole("button", { name: /continue/i }));
 
-    await user.click(screen.getByRole("button", { name: /create pairing code/i }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("offline");
-    await user.click(screen.getByRole("button", { name: /create pairing code/i }));
-    expect(await screen.findByText("555 111")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: /create new code/i }));
-
-    await user.type(screen.getByLabelText(/enter code/i), "123456");
-    await user.click(screen.getByRole("button", { name: /pair computers/i }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("Code expired");
-    await user.click(screen.getByRole("button", { name: /pair computers/i }));
+    await user.click(screen.getByRole("button", { name: /^connect$/i }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Peer not found");
+    await user.type(screen.getByLabelText(/ethernet ipv4 address/i), "10.10.10.2");
+    await user.click(screen.getByRole("button", { name: /^connect$/i }));
+    expect(connectPeer).toHaveBeenCalledWith("10.10.10.2");
     expect(
       await screen.findByRole("heading", { name: /choose where models live/i }),
     ).toBeInTheDocument();
@@ -196,8 +219,8 @@ describe("SetupWizard", () => {
       />,
     );
     await user.click(screen.getByRole("button", { name: /continue/i }));
-    await user.type(screen.getByLabelText(/enter code/i), "222333");
-    await user.click(screen.getByRole("button", { name: /pair computers/i }));
+    await user.type(screen.getByLabelText(/ethernet ipv4 address/i), "10.10.10.2");
+    await user.click(screen.getByRole("button", { name: /^connect$/i }));
     expect(
       await screen.findByRole("heading", { name: /choose where models live/i }),
     ).toBeInTheDocument();
@@ -227,8 +250,8 @@ describe("SetupWizard", () => {
     await user.clear(screen.getByLabelText(/device name/i));
     await user.type(screen.getByLabelText(/device name/i), "Persistent node");
     await user.click(screen.getByRole("button", { name: /continue/i }));
-    await user.type(screen.getByLabelText(/enter code/i), "123456");
-    await user.click(screen.getByRole("button", { name: /pair computers/i }));
+    await user.type(screen.getByLabelText(/ethernet ipv4 address/i), "10.10.10.2");
+    await user.click(screen.getByRole("button", { name: /^connect$/i }));
     await screen.findByRole("heading", { name: /choose where models live/i });
     await user.click(screen.getByRole("button", { name: /use detected sources/i }));
     await user.click(screen.getByRole("button", { name: /run network test/i }));
