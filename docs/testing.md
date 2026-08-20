@@ -111,6 +111,9 @@ specific products into application logic.
 - Run a model that fits one node; compare both valid single-node placements with distributed mode.
 - Run a model too large for either GPU but small enough for combined VRAM.
 - Run a valid model requiring coordinator RAM spill and confirm the operating-system reserve.
+- Enable "remote CPU" offload in the manual split, assign a few layers to the worker's CPU, and
+  confirm both GPUs plus the worker CPU allocate work while the model loads. Record that remote-CPU
+  offload is presented as an experimental manual placement, not a distributed speedup.
 - Exercise text and supported vision chat from both computers, including SSE and cancellation.
 - Disconnect during model load and generation; confirm clear failure and complete process cleanup.
 - Close and reopen each app independently; confirm the saved peer returns to Reachable without a

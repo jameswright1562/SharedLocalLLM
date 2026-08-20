@@ -17,8 +17,9 @@ PROTOCOL_VERSION = 4
 
 
 class RpcForwarder:
-    def __init__(self, peer: "PeerManager") -> None:
+    def __init__(self, peer: "PeerManager", include_cpu: bool = False) -> None:
         self.peer = peer
+        self.include_cpu = include_cpu
         self.server: asyncio.AbstractServer | None = None
         self.endpoint: str | None = None
 
@@ -43,7 +44,11 @@ class RpcForwarder:
         try:
             host, port = self.peer.endpoint()
             remote_reader, remote_writer = await asyncio.open_connection(host, port)
-            await _write_json(remote_writer, {"version": PROTOCOL_VERSION, "op": "rpc_tunnel"})
+            await _write_json(remote_writer, {
+                "version": PROTOCOL_VERSION,
+                "op": "rpc_tunnel",
+                "data": {"includeCpu": self.include_cpu},
+            })
             ready = await _read_json(remote_reader)
             if not ready.get("ok"):
                 raise BackendError("rpc_tunnel_failed", ready.get("message", "RPC tunnel failed"))
@@ -174,7 +179,8 @@ class PeerManager:
             op = request.get("op")
             data = request.get("data") or {}
             if op == "rpc_tunnel":
-                rpc_reader, rpc_writer = await self.runtime.inference.open_rpc_worker_connection()
+                include_cpu = bool(data.get("includeCpu", False))
+                rpc_reader, rpc_writer = await self.runtime.inference.open_rpc_worker_connection(include_cpu)
                 await _write_json(writer, {"ok": True})
                 await _bridge(reader, writer, rpc_reader, rpc_writer)
                 return

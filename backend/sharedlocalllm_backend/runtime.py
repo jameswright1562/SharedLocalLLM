@@ -230,14 +230,26 @@ class BackendRuntime:
         gpu_layers = 0
         for allocation in allocations:
             layers = int(allocation.get("layers", 0))
-            gpu_layers += layers
-            node = node_map.get(allocation["nodeId"], {"gpu": {"vramAvailableGb": 0}})
-            estimated = int(per_layer * layers / 1024**2 + 384)
-            available = int(float(node["gpu"].get("vramAvailableGb", 0)) * 1024)
-            devices.append({
-                "nodeId": allocation["nodeId"], "layers": layers, "estimatedVramMib": estimated,
-                "availableVramMib": available, "fits": estimated <= available,
-            })
+            node = node_map.get(
+                allocation["nodeId"], {"gpu": {"vramAvailableGb": 0}, "ramAvailableGb": 0}
+            )
+            if allocation.get("kind") == "cpu":
+                available = int(float(node.get("ramAvailableGb", 0)) * 1024)
+                estimated = int(per_layer * layers / 1024**2)
+                devices.append({
+                    "nodeId": allocation["nodeId"], "layers": layers, "kind": "cpu",
+                    "estimatedVramMib": estimated, "availableVramMib": available,
+                    "fits": estimated <= available,
+                })
+            else:
+                gpu_layers += layers
+                available = int(float(node["gpu"].get("vramAvailableGb", 0)) * 1024)
+                estimated = int(per_layer * layers / 1024**2 + 384)
+                devices.append({
+                    "nodeId": allocation["nodeId"], "layers": layers, "kind": "gpu",
+                    "estimatedVramMib": estimated, "availableVramMib": available,
+                    "fits": estimated <= available,
+                })
         return {
             "totalLayers": total, "gpuLayers": min(total, gpu_layers), "cpuLayers": max(0, total - gpu_layers),
             "estimatedCpuRamMib": int(per_layer * max(0, total - gpu_layers) / 1024**2),

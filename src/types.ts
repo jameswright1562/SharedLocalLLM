@@ -61,11 +61,13 @@ export interface ModelRecord {
 export interface GpuLayerAllocation {
   nodeId: string;
   layers: number;
+  kind?: "gpu" | "cpu";
 }
 
 export interface ModelLoadConfig {
   contextSize: number;
   gpuLayers: GpuLayerAllocation[];
+  includeRemoteCpu?: boolean;
   force?: boolean;
   flashAttention?: boolean;
   useMmap?: boolean;
@@ -85,6 +87,7 @@ export interface ModelLoadOptions {
 export interface DeviceVramEstimate {
   nodeId: string;
   layers: number;
+  kind?: "gpu" | "cpu";
   estimatedVramMib: number;
   availableVramMib: number;
   fits: boolean;

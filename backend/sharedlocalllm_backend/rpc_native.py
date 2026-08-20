@@ -34,14 +34,29 @@ class NativeRpcServer:
         self._thread: threading.Thread | None = None
         self._error: Exception | None = None
         self._dll_directory: Any = None
+        self.include_cpu = False
 
-    def start(self) -> str:
-        if self.endpoint and self._thread and self._thread.is_alive():
+    def start(self, include_cpu: bool = False) -> str:
+        if (
+            self.endpoint
+            and self._thread
+            and self._thread.is_alive()
+            and self.include_cpu == include_cpu
+        ):
             return self.endpoint
+        # The worker advertises its device set when the RPC server starts. If the
+        # caller wants a different device set than the one already served, start a
+        # fresh server; the previous daemon thread is abandoned and torn down with
+        # the process. Toggles are rare, so this bounded ephemeral-port reuse is
+        # acceptable for the preview.
+        self.include_cpu = include_cpu
+        self.endpoint = None
+        self._error = None
         port = _free_port()
         self.endpoint = f"127.0.0.1:{port}"
-        self._error = None
-        self._thread = threading.Thread(target=self._run, name="llama-rpc-worker", daemon=True)
+        self._thread = threading.Thread(
+            target=self._run, args=(include_cpu,), name="llama-rpc-worker", daemon=True
+        )
         self._thread.start()
         deadline = time.monotonic() + 15
         while time.monotonic() < deadline:
@@ -54,7 +69,7 @@ class NativeRpcServer:
                 time.sleep(0.1)
         raise BackendError("rpc_worker_timeout", "Embedded llama.cpp RPC worker did not start.")
 
-    def _run(self) -> None:
+    def _run(self, include_cpu: bool) -> None:
         try:
             ensure_backend_initialized()
 
@@ -69,19 +84,25 @@ class NativeRpcServer:
             dev_type.argtypes = [ctypes.c_void_p]
             dev_type.restype = ctypes.c_int
 
-            devices: list[int] = []
+            # GPU-class devices first, then the CPU device last. The fixed order is
+            # part of the RPC contract: the coordinator identifies the remote CPU as
+            # the final RPC device because llama.cpp reports every RPC device as a
+            # GPU regardless of its real type.
+            gpu_devices: list[int] = []
+            cpu_device: int | None = None
             for index in range(dev_count()):
                 device = dev_get(index)
                 # Current ggml enum: CPU=0, GPU=1, IGPU=2, ACCEL=3.
                 if device and dev_type(device) in (1, 2, 3):
-                    devices.append(device)
-            if not devices:
-                for index in range(dev_count()):
-                    device = dev_get(index)
-                    if device and dev_type(device) == 0:
-                        devices.append(device)
-                        break
-            if not devices:
+                    gpu_devices.append(device)
+                elif device and dev_type(device) == 0 and cpu_device is None:
+                    cpu_device = device
+            if gpu_devices:
+                devices = gpu_devices + ([cpu_device] if include_cpu and cpu_device else [])
+            elif cpu_device:
+                # No GPU present: keep the historical no-GPU fallback to the CPU.
+                devices = [cpu_device]
+            else:
                 raise RuntimeError("No llama.cpp backend device is available")
 
             array_type = ctypes.c_void_p * len(devices)
@@ -106,7 +127,7 @@ class NativeRpcServer:
 
 
 def prepare_rpc_load(
-    endpoint: str | None, remote_layers: int, local_layers: int
+    endpoint: str | None, remote_gpu_layers: int, remote_cpu_layers: int, local_layers: int
 ) -> list[float] | None:
     """Register the worker RPC device and stage the device list + tensor split.
 
@@ -115,21 +136,46 @@ def prepare_rpc_load(
     devices we intend to use (so stale RPC devices from earlier sessions never
     leak into a local load), and returns the tensor_split for the registered
     device order. Returns ``None`` when running without a remote worker.
+
+    ``remote_cpu_layers`` gates whether the worker's CPU is treated as an
+    offload target; when zero, the CPU device is not part of the model device
+    list and every RPC device is treated as a GPU (the historical behaviour).
     """
     ensure_backend_initialized()
+    fresh_count = 0
     if endpoint:
+        before = _rpc_device_count()
         register_rpc_client(endpoint)
+        fresh_count = _rpc_device_count() - before
     info = device_info()
     rpc, gpus = classify_devices(info)
+    # RPC backends from earlier loads accumulate for the process lifetime (there is
+    # no exported unregister/free symbol). The freshly registered server's devices
+    # are always the last ``fresh_count`` entries in registration order.
+    remote_gpus, remote_cpus = split_rpc_devices(
+        rpc[-fresh_count:] if fresh_count else [],
+        include_cpu=remote_cpu_layers > 0,
+    )
     devices: list[int] = []
     if endpoint:
-        # llama.cpp orders RPC devices before local GPUs; keep that order.
-        devices.extend(value["pointer"] for value in rpc)
+        # llama.cpp orders RPC devices before local GPUs; keep that order. The
+        # remote CPU is the final RPC device and is added only when layers are
+        # explicitly assigned to it.
+        devices.extend(value["pointer"] for value in remote_gpus)
+        devices.extend(value["pointer"] for value in remote_cpus)
     devices.extend(value["pointer"] for value in gpus)
     prepare_model_devices(devices)
     if not endpoint:
         return None
-    return tensor_split_for(len(rpc), len(gpus), remote_layers, local_layers)
+    return tensor_split_for(
+        len(remote_gpus), len(remote_cpus), len(gpus),
+        remote_gpu_layers, remote_cpu_layers, local_layers,
+    )
+
+
+def _rpc_device_count() -> int:
+    """Count RPC backend devices exactly as ``classify_devices`` sees them."""
+    return len(classify_devices(device_info())[0])
 
 
 def classify_devices(
@@ -149,13 +195,32 @@ def classify_devices(
     return rpc, gpus
 
 
+def split_rpc_devices(
+    rpc: list[dict[str, Any]], include_cpu: bool = False
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Split RPC devices into remote GPUs and the remote CPU device.
+
+    The worker exposes its devices in a fixed order (GPU-class devices first,
+    the CPU last). llama.cpp reports every RPC device as GPU type on the
+    coordinator, so that ordering is the only reliable way to identify the
+    remote CPU. When ``include_cpu`` is false the whole list is treated as
+    GPUs, preserving the historical no-GPU fallback behaviour.
+    """
+    if include_cpu and rpc:
+        return rpc[:-1], rpc[-1:]
+    return rpc, []
+
+
 def tensor_split_for(
-    rpc_count: int, gpu_count: int, remote_layers: int, local_layers: int
+    rpc_gpu_count: int, rpc_cpu_count: int, gpu_count: int,
+    remote_gpu_layers: int, remote_cpu_layers: int, local_layers: int,
 ) -> list[float]:
-    """Build the tensor_split in llama.cpp device order (RPC servers first)."""
+    """Build the tensor_split in llama.cpp device order (RPC GPUs, RPC CPU, local GPUs)."""
     split: list[float] = []
-    if rpc_count > 0:
-        split.extend([remote_layers / rpc_count] * rpc_count)
+    if rpc_gpu_count > 0:
+        split.extend([remote_gpu_layers / rpc_gpu_count] * rpc_gpu_count)
+    if rpc_cpu_count > 0:
+        split.extend([remote_cpu_layers / rpc_cpu_count] * rpc_cpu_count)
     if gpu_count > 0:
         split.extend([local_layers / gpu_count] * gpu_count)
     return split

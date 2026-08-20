@@ -11,7 +11,9 @@ export function estimateModelSplitLocally(
   const totalLayers = model.layerCount;
   if (!totalLayers) throw new Error("This model does not report a usable layer count.");
 
-  const gpuLayers = loadConfig.gpuLayers.reduce((total, item) => total + item.layers, 0);
+  const gpuLayers = loadConfig.gpuLayers
+    .filter((item) => item.kind !== "cpu")
+    .reduce((total, item) => total + item.layers, 0);
   if (gpuLayers > totalLayers)
     throw new Error(`The split selects ${gpuLayers} GPU layers, but the model has ${totalLayers}.`);
 
@@ -33,13 +35,24 @@ export function estimateModelSplitLocally(
 
   const devices = loadConfig.gpuLayers.map((allocation) => {
     const node = nodes.find((candidate) => candidate.id === allocation.nodeId);
-    const availableVramMib = Math.floor(Math.max(0, node?.gpu.vramAvailableGb ?? 0) * 1024);
     const weightMib = Math.ceil((modelMib * allocation.layers) / totalLayers);
+    if (allocation.kind === "cpu") {
+      const availableVramMib = Math.floor(Math.max(0, node?.ramAvailableGb ?? 0) * 1024);
+      return {
+        ...allocation,
+        kind: "cpu" as const,
+        estimatedVramMib: weightMib,
+        availableVramMib,
+        fits: weightMib <= availableVramMib,
+      };
+    }
+    const availableVramMib = Math.floor(Math.max(0, node?.gpu.vramAvailableGb ?? 0) * 1024);
     const estimatedVramMib = allocation.layers
       ? weightMib + kvMibPerLayer * allocation.layers + GPU_RUNTIME_ALLOWANCE_MIB
       : 0;
     return {
       ...allocation,
+      kind: "gpu" as const,
       estimatedVramMib,
       availableVramMib,
       fits: estimatedVramMib <= availableVramMib,

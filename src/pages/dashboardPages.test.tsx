@@ -198,6 +198,7 @@ describe("dashboard pages", () => {
     expect(startCluster).toHaveBeenCalledWith("model-text", {
       contextSize: 12288,
       gpuLayers: expect.any(Array),
+      includeRemoteCpu: false,
       force: false,
       flashAttention: false,
       useMmap: true,
@@ -242,6 +243,7 @@ describe("dashboard pages", () => {
         { nodeId: "node-a", layers: 24 },
         { nodeId: "node-b", layers: 16 },
       ],
+      includeRemoteCpu: false,
       force: false,
       flashAttention: false,
       useMmap: true,
@@ -249,6 +251,35 @@ describe("dashboard pages", () => {
       cpuThreads: 0,
       batchSize: 512,
     });
+  });
+
+  it("offloads a layer share to the worker's CPU when requested", async () => {
+    const user = userEvent.setup();
+    const snapshot = cloneSnapshot();
+    Object.assign(snapshot.models[0]!, { layerCount: 40 });
+    const startCluster = vi.fn().mockResolvedValue({ status: "running", modelId: "model-text" });
+    render(<ModelsPage {...props(snapshot, { startCluster })} />);
+
+    const orchidRow = within(screen.getByTestId("model-list"))
+      .getByText(/orchid 9b/i)
+      .closest("tr");
+    await user.click(orchidRow as HTMLElement);
+    await user.click(await screen.findByRole("button", { name: /manual gpu split/i }));
+
+    await user.click(screen.getByRole("checkbox", { name: /offload layers to remote node/i }));
+    const cpuLayers = await screen.findByLabelText(/cpu layers on remote node/i);
+    expect(cpuLayers).toBeInTheDocument();
+    await user.clear(cpuLayers);
+    await user.type(cpuLayers, "4");
+
+    await user.click(screen.getByRole("button", { name: /launch orchid/i }));
+    expect(startCluster).toHaveBeenCalledWith(
+      "model-text",
+      expect.objectContaining({
+        includeRemoteCpu: true,
+        gpuLayers: expect.arrayContaining([{ nodeId: "node-b", layers: 4, kind: "cpu" }]),
+      }),
+    );
   });
 
   it("describes advanced load options and forwards their values on launch", async () => {
@@ -287,6 +318,7 @@ describe("dashboard pages", () => {
     expect(startCluster).toHaveBeenCalledWith("model-text", {
       contextSize: 8192,
       gpuLayers: expect.any(Array),
+      includeRemoteCpu: false,
       force: false,
       flashAttention: true,
       useMmap: true,
@@ -323,6 +355,7 @@ describe("dashboard pages", () => {
     expect(startCluster).toHaveBeenCalledWith("too-large", {
       contextSize: 8192,
       gpuLayers: expect.any(Array),
+      includeRemoteCpu: false,
       force: true,
       flashAttention: false,
       useMmap: true,

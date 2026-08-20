@@ -45,6 +45,25 @@
   display: grid;
   gap: 8px;
 }
+.remote-cpu-offload {
+  display: grid;
+  gap: 8px;
+  padding: 9px;
+  border: 1px dashed var(--line-strong);
+}
+.remote-cpu-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.remote-cpu-toggle input[type="checkbox"] {
+  margin: 0;
+  accent-color: var(--cyan);
+}
+.remote-cpu-toggle span {
+  color: var(--text);
+  font-size: 0.7rem;
+}
 .gpu-device-allocation {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr);

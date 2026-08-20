@@ -43,6 +43,31 @@ def build_llama_kwargs(
     }
 
 
+def layer_totals(
+    allocations: list[dict[str, Any]], peer_id: str | None, local_id: str,
+    include_remote_cpu: bool = False,
+) -> tuple[int, int, int]:
+    """Sum layer allocations into (remote GPU, remote CPU, local) totals.
+
+    A remote allocation with ``kind == "cpu"`` targets the worker's CPU over
+    RPC, but only when ``include_remote_cpu`` is set; otherwise every allocation
+    counts as GPU layers. Local CPU offload stays implicit in llama.cpp (layers
+    not assigned to any device).
+    """
+    remote_gpu = remote_cpu = local = 0
+    for allocation in allocations:
+        node_id = allocation.get("nodeId")
+        layers = int(allocation.get("layers", 0))
+        if peer_id and node_id == peer_id:
+            if include_remote_cpu and allocation.get("kind") == "cpu":
+                remote_cpu += layers
+            else:
+                remote_gpu += layers
+        elif node_id == local_id:
+            local += layers
+    return remote_gpu, remote_cpu, local
+
+
 class InferenceEngine:
     def __init__(self, store: Any) -> None:
         self.store = store
@@ -63,30 +88,29 @@ class InferenceEngine:
             await self._unload_locked()
             allocations = load_config.get("gpuLayers") or []
             rpc_endpoint = None
-            remote_layers = 0
-            local_layers = 0
-            for allocation in allocations:
-                if peer_id and allocation.get("nodeId") == peer_id:
-                    remote_layers += int(allocation.get("layers", 0))
-                elif allocation.get("nodeId") == local_id:
-                    local_layers += int(allocation.get("layers", 0))
-            if peer_id and (remote_layers > 0 or model.get("fit") == "combined-gpu"):
-                self._forwarder = RpcForwarder(peer)
+            include_remote_cpu = bool(load_config.get("includeRemoteCpu"))
+            remote_gpu_layers, remote_cpu_layers, local_layers = layer_totals(
+                allocations, peer_id, local_id, include_remote_cpu
+            )
+            remote_total = remote_gpu_layers + remote_cpu_layers
+            if peer_id and (remote_total > 0 or model.get("fit") == "combined-gpu"):
+                self._forwarder = RpcForwarder(peer, include_cpu=remote_cpu_layers > 0)
                 rpc_endpoint = await self._forwarder.start()
-            total_layers = remote_layers + local_layers
+            total_layers = remote_gpu_layers + remote_cpu_layers + local_layers
             if rpc_endpoint and total_layers <= 0:
-                remote_layers = local_layers = 1
+                remote_gpu_layers = local_layers = 1
                 total_layers = 2
             # Registers the worker RPC device and stages the exact device list,
             # so llama.cpp enumerates the worker ahead of the local GPU and
             # actually splits layers across both computers.
             tensor_split = await asyncio.to_thread(
-                prepare_rpc_load, rpc_endpoint, remote_layers, local_layers
+                prepare_rpc_load, rpc_endpoint, remote_gpu_layers, remote_cpu_layers, local_layers
             )
             context = max(512, int(load_config.get("contextSize", 4096)))
             self.store.log(
                 "INFO", "model_load",
                 f"model={model['name']} ctx={context} rpc={rpc_endpoint} split={tensor_split} "
+                f"remote_gpu={remote_gpu_layers} remote_cpu={remote_cpu_layers} local={local_layers} "
                 f"flash_attn={bool(load_config.get('flashAttention', False))} "
                 f"mmap={bool(load_config.get('useMmap', True))} "
                 f"mlock={bool(load_config.get('useMlock', False))} "
@@ -138,9 +162,11 @@ class InferenceEngine:
             await self._forwarder.stop()
             self._forwarder = None
 
-    async def open_rpc_worker_connection(self) -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
-        endpoint = await asyncio.to_thread(self._rpc_worker.start)
-        self.store.log("INFO", "rpc_worker_ready", endpoint)
+    async def open_rpc_worker_connection(
+        self, include_cpu: bool = False
+    ) -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
+        endpoint = await asyncio.to_thread(self._rpc_worker.start, include_cpu)
+        self.store.log("INFO", "rpc_worker_ready", f"{endpoint} include_cpu={include_cpu}")
         host, port = endpoint.split(":", 1)
         return await asyncio.open_connection(host, int(port))
 

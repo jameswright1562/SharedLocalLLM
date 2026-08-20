@@ -55,4 +55,20 @@ Future work to enable remote CPU offload should include:
 - Benchmark before promoting: offloading to a remote CPU is generally slower than the local GPU and
   should not be presented as a distributed speedup.
 
-Until this is implemented, document and surface in the UI that RPC uses the peer's GPU only.
+Implemented in the Python backend (`python-backend-migration` branch) as an experimental preview:
+
+- `NativeRpcServer` exposes the worker's CPU as a final RPC device behind the `include_cpu` toggle,
+  preserving the no-GPU fallback when a GPU is absent.
+- The coordinator identifies the remote CPU as the last freshly-registered RPC device (llama.cpp
+  reports every RPC device as GPU type), and computes an explicit `tensor_split` that separates remote
+  GPU, remote CPU, and local GPU shares instead of the previous even split.
+- `ModelLoadConfig.includeRemoteCpu` plus `kind: "cpu"` layer allocations flow through the UI (a
+  "remote CPU" toggle and layer input in the manual split panel) and the peer `rpc_tunnel` handshake.
+- Placement remains manual: the user chooses how many layers to assign to the remote CPU. Automatic
+  allocation and `fit` classification still consider GPU VRAM only.
+
+Still outstanding: physical two-computer validation, and a benchmark that confirms remote-CPU offload
+is not presented as a distributed speedup. RPC device enumeration accumulates across loads because
+there is no exported unregister/free symbol; the coordinator isolates fresh devices by registration
+delta, which is sufficient for the controlled single-cluster case.
+

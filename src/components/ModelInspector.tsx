@@ -22,6 +22,9 @@ interface ModelInspectorProps {
   gpuLayers: GpuLayerAllocation[];
   splitEstimate?: SplitEstimate;
   setGpuLayers: (layers: GpuLayerAllocation[]) => void;
+  workerNode?: NodeCapabilities;
+  includeRemoteCpu: boolean;
+  setIncludeRemoteCpu: (value: boolean) => void;
   loadOptions: ModelLoadOptions;
   setLoadOptions: (options: ModelLoadOptions) => void;
   busy: boolean;
@@ -42,6 +45,9 @@ export function ModelInspector({
   gpuLayers,
   splitEstimate,
   setGpuLayers,
+  workerNode,
+  includeRemoteCpu,
+  setIncludeRemoteCpu,
   loadOptions,
   setLoadOptions,
   busy,
@@ -106,6 +112,9 @@ export function ModelInspector({
           gpuLayers={gpuLayers}
           splitEstimate={splitEstimate}
           setGpuLayers={setGpuLayers}
+          workerNode={workerNode}
+          includeRemoteCpu={includeRemoteCpu}
+          setIncludeRemoteCpu={setIncludeRemoteCpu}
         />
       ) : (
         <p className="metadata-note">
@@ -252,9 +261,20 @@ function GpuAllocation({
   gpuLayers,
   splitEstimate,
   setGpuLayers,
+  workerNode,
+  includeRemoteCpu,
+  setIncludeRemoteCpu,
 }: Pick<
   ModelInspectorProps,
-  "manualSplit" | "setManualSplit" | "gpuNodes" | "gpuLayers" | "splitEstimate" | "setGpuLayers"
+  | "manualSplit"
+  | "setManualSplit"
+  | "gpuNodes"
+  | "gpuLayers"
+  | "splitEstimate"
+  | "setGpuLayers"
+  | "workerNode"
+  | "includeRemoteCpu"
+  | "setIncludeRemoteCpu"
 > & { selected: ModelRecord }) {
   return (
     <section className="gpu-allocation" aria-label="GPU allocation mode">
@@ -322,6 +342,57 @@ function GpuAllocation({
               );
             })}
           </div>
+          {workerNode && (
+            <div className="remote-cpu-offload">
+              <label className="remote-cpu-toggle">
+                <input
+                  type="checkbox"
+                  checked={includeRemoteCpu}
+                  onChange={(event) => setIncludeRemoteCpu(event.target.checked)}
+                />
+                <span>Offload layers to {workerNode.name}&apos;s CPU</span>
+              </label>
+              {includeRemoteCpu && (
+                <div className="gpu-device-allocation">
+                  <label>
+                    <span>{workerNode.name} CPU</span>
+                    <input
+                      type="number"
+                      min="0"
+                      max={selected.layerCount}
+                      value={
+                        gpuLayers.find(
+                          (item) => item.nodeId === workerNode.id && item.kind === "cpu",
+                        )?.layers ?? 0
+                      }
+                      aria-label={`CPU layers on ${workerNode.name}`}
+                      onChange={(event) => {
+                        const layers = Math.max(
+                          0,
+                          Math.min(
+                            selected.layerCount ?? 0,
+                            Number.parseInt(event.target.value || "0", 10),
+                          ),
+                        );
+                        setGpuLayers([
+                          ...gpuLayers.filter(
+                            (item) => !(item.nodeId === workerNode.id && item.kind === "cpu"),
+                          ),
+                          { nodeId: workerNode.id, layers, kind: "cpu" },
+                        ]);
+                      }}
+                    />
+                  </label>
+                  <VramEstimate
+                    node={workerNode}
+                    estimate={splitEstimate?.devices.find(
+                      (device) => device.nodeId === workerNode.id && device.kind === "cpu",
+                    )}
+                  />
+                </div>
+              )}
+            </div>
+          )}
           {splitEstimate && (
             <p className="split-summary">
               {splitEstimate.cpuLayers
@@ -348,16 +419,18 @@ function VramEstimate({
   node: NodeCapabilities;
   estimate?: SplitEstimate["devices"][number];
 }) {
+  const cpu = estimate?.kind === "cpu";
+  const memory = cpu ? "RAM" : "VRAM";
+  const available =
+    estimate?.availableVramMib ?? (cpu ? node.ramAvailableGb : node.gpu.vramAvailableGb) * 1024;
   return (
     <div className="vram-estimate">
-      <span>Estimated VRAM</span>
+      <span>Estimated {memory}</span>
       <strong>{estimate ? formatMib(estimate.estimatedVramMib) : "—"}</strong>
-      <small>
-        {formatMib(estimate?.availableVramMib ?? node.gpu.vramAvailableGb * 1024)} available
-      </small>
+      <small>{formatMib(available)} available</small>
       {estimate && (
         <i className={estimate.fits ? "fits" : "over"}>
-          {estimate.fits ? "Fits current VRAM" : "Exceeds current VRAM"}
+          {estimate.fits ? `Fits current ${memory}` : `Exceeds current ${memory}`}
         </i>
       )}
     </div>

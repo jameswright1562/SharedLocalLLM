@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 
-from sharedlocalllm_backend.inference import build_llama_kwargs
+from sharedlocalllm_backend.inference import build_llama_kwargs, layer_totals
 
 
 def test_defaults_match_previous_behaviour() -> None:
@@ -53,3 +53,35 @@ def test_zero_threads_keeps_automatic_default() -> None:
 def test_batch_size_is_clamped_to_at_least_one() -> None:
     kwargs = build_llama_kwargs({"batchSize": 0}, "model.gguf", 4096, 0, None)
     assert kwargs["n_batch"] == 1
+
+
+def test_layer_totals_split_remote_gpu_cpu_and_local() -> None:
+    allocations = [
+        {"nodeId": "peer", "layers": 12},
+        {"nodeId": "peer", "layers": 4, "kind": "cpu"},
+        {"nodeId": "local", "layers": 16},
+    ]
+    assert layer_totals(allocations, "peer", "local", True) == (12, 4, 16)
+
+
+def test_layer_totals_default_all_allocations_to_gpu() -> None:
+    allocations = [
+        {"nodeId": "peer", "layers": 8},
+        {"nodeId": "local", "layers": 8},
+    ]
+    assert layer_totals(allocations, "peer", "local", True) == (8, 0, 8)
+
+
+def test_layer_totals_ignore_cpu_without_flag() -> None:
+    allocations = [
+        {"nodeId": "peer", "layers": 8, "kind": "cpu"},
+    ]
+    assert layer_totals(allocations, "peer", "local") == (8, 0, 0)
+
+
+def test_layer_totals_ignore_unknown_nodes_and_missing_peer() -> None:
+    allocations = [
+        {"nodeId": "peer", "layers": 8},
+        {"nodeId": "stranger", "layers": 99},
+    ]
+    assert layer_totals(allocations, None, "local", True) == (0, 0, 0)

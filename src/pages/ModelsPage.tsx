@@ -17,6 +17,7 @@ export function ModelsPage({ snapshot, service, refreshSnapshot }: PageProps) {
   const [contextByModel, setContextByModel] = useState<Record<string, number>>({});
   const [manualByModel, setManualByModel] = useState<Record<string, boolean>>({});
   const [layersByModel, setLayersByModel] = useState<Record<string, GpuLayerAllocation[]>>({});
+  const [remoteCpuByModel, setRemoteCpuByModel] = useState<Record<string, boolean>>({});
   const [forceByModel, setForceByModel] = useState<Record<string, boolean>>({});
   const [optionsByModel, setOptionsByModel] = useState<Record<string, ModelLoadOptions>>({});
   const [inspectorOpened, setInspectorOpened] = useState(false);
@@ -42,7 +43,9 @@ export function ModelsPage({ snapshot, service, refreshSnapshot }: PageProps) {
     () => snapshot.nodes.filter((node) => node.online && node.gpu.vramTotalGb > 0),
     [snapshot.nodes],
   );
+  const workerNode = snapshot.nodes.find((node) => node.role === "worker");
   const manualSplit = selected ? Boolean(manualByModel[selected.id]) : false;
+  const includeRemoteCpu = selected ? Boolean(remoteCpuByModel[selected.id]) : false;
   const force = selected ? Boolean(forceByModel[selected.id]) : false;
   const loadOptions = selected
     ? (optionsByModel[selected.id] ?? DEFAULT_LOAD_OPTIONS)
@@ -110,6 +113,7 @@ export function ModelsPage({ snapshot, service, refreshSnapshot }: PageProps) {
       await service.startCluster(selected.id, {
         contextSize,
         gpuLayers: selected.layerCount ? gpuLayers : [],
+        includeRemoteCpu,
         force: forceLaunch,
         flashAttention: loadOptions.flashAttention,
         useMmap: loadOptions.useMmap,
@@ -137,6 +141,22 @@ export function ModelsPage({ snapshot, service, refreshSnapshot }: PageProps) {
         [selected.id]: distributeLayersByVram(selected.layerCount ?? 0, gpuNodes),
       });
     }
+  }
+
+  function setIncludeRemoteCpu(value: boolean) {
+    if (!selected || !workerNode) return;
+    setRemoteCpuByModel({ ...remoteCpuByModel, [selected.id]: value });
+    const current =
+      layersByModel[selected.id] ?? distributeLayersByVram(selected.layerCount ?? 0, gpuNodes);
+    const withoutCpu = current.filter(
+      (item) => !(item.nodeId === workerNode.id && item.kind === "cpu"),
+    );
+    setLayersByModel({
+      ...layersByModel,
+      [selected.id]: value
+        ? [...withoutCpu, { nodeId: workerNode.id, layers: 0, kind: "cpu" }]
+        : withoutCpu,
+    });
   }
 
   function setForce(next: boolean) {
@@ -234,6 +254,9 @@ export function ModelsPage({ snapshot, service, refreshSnapshot }: PageProps) {
             setGpuLayers={(layers) =>
               selected && setLayersByModel({ ...layersByModel, [selected.id]: layers })
             }
+            workerNode={workerNode}
+            includeRemoteCpu={includeRemoteCpu}
+            setIncludeRemoteCpu={setIncludeRemoteCpu}
             loadOptions={loadOptions}
             setLoadOptions={(options) =>
               selected && setOptionsByModel({ ...optionsByModel, [selected.id]: options })
