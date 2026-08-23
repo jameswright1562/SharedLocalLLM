@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { describeAppError } from "../services/errors";
 import type { PageProps } from "../types";
+import { Switch } from "@mantine/core";
 
 export function SettingsPage({ snapshot, service, refreshSnapshot }: PageProps) {
   const [tab, setTab] = useState<"general" | "runtime" | "sources" | "logs">("general");
@@ -155,30 +156,25 @@ export function SettingsPage({ snapshot, service, refreshSnapshot }: PageProps) 
                   <strong>Require API key</strong>
                   <p>When off, local tools can call the loopback API without the bearer key.</p>
                 </div>
-                <button
+                <Switch
                   role="switch"
                   aria-label="Require API key"
                   aria-checked={authRequired}
-                  className="switch"
                   onClick={() => setAuthRequired(!authRequired)}
-                >
-                  <span />
-                </button>
+                />
               </div>
               <div className="settings-row">
                 <div>
                   <strong>Start with Windows</strong>
                   <p>Launch to the notification area.</p>
                 </div>
-                <button
+                <Switch
                   role="switch"
                   aria-label="Start with Windows"
                   aria-checked={autostart}
-                  className="switch"
-                  onClick={() => setAutostart(!autostart)}
-                >
-                  <span />
-                </button>
+                  checked={autostart}
+                  onClick={(e) => setAutostart(e.currentTarget.checked)}
+                />
               </div>
               <div className="button-row">
                 <button

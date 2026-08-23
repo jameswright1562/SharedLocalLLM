@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import socket
 import time
 
@@ -9,7 +10,13 @@ import httpx
 import pytest
 import uvicorn
 
-from sharedlocalllm_backend.api import create_openai_app
+from sharedlocalllm_backend.api import (
+    API_LOG_LOGGER,
+    create_control_app,
+    create_openai_app,
+    format_api_request,
+    prepare_logged_body,
+)
 from sharedlocalllm_backend.errors import BackendError
 from sharedlocalllm_backend.runtime import BackendRuntime
 
@@ -31,6 +38,10 @@ class Runtime:
         self.store = Store(auth_required)
         self.cluster = {"status": "running", "modelId": "loaded-model", "coordinatorNodeId": "local"}
         self.local_node = {"id": "local"}
+        self.models = [
+            {"id": "loaded-model", "name": "Orchid 9B", "quantization": "Q4_K_M"},
+            {"id": "other-model", "name": "Zephyr 8x7B", "quantization": "Q8_0"},
+        ]
 
     async def chat(self, *_args, **_kwargs):
         return {"content": "hello", "reasoning": "", "tokensPerSecond": 1.0}
@@ -47,24 +58,41 @@ def test_models_lists_only_the_active_model() -> None:
     response = asyncio.run(request())
     assert response.status_code == 200
     assert [model["id"] for model in response.json()["data"]] == ["loaded-model"]
+    assert response.json()["data"][0]["aliases"] == ["orchid 9b", "orchid-9b-q4_k_m"]
 
 
-def test_chat_rejects_a_model_that_is_not_loaded() -> None:
-    async def request():
+def test_chat_accepts_name_and_slug_aliases_for_the_active_model() -> None:
+    async def request(model: str):
         transport = httpx.ASGITransport(app=create_openai_app(Runtime()))
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             return await client.post(
                 "/v1/chat/completions",
                 headers={"Authorization": "Bearer secret"},
-                json={
-                    "model": "different-model",
-                    "messages": [{"role": "user", "content": "hi"}],
-                },
+                json={"model": model, "messages": [{"role": "user", "content": "hi"}]},
             )
 
-    response = asyncio.run(request())
-    assert response.status_code == 400
-    assert response.json()["error"]["type"] == "model_not_active"
+    assert asyncio.run(request("Orchid 9B")).status_code == 200
+    assert asyncio.run(request("orchid-9b-q4_k_m")).status_code == 200
+    assert asyncio.run(request("Zephyr 8x7B")).status_code == 200
+
+
+def test_chat_falls_back_to_the_loaded_model_for_any_other_model_field() -> None:
+    async def request(model: str | None):
+        transport = httpx.ASGITransport(app=create_openai_app(Runtime()))
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            payload: dict = {"messages": [{"role": "user", "content": "hi"}]}
+            if model is not None:
+                payload["model"] = model
+            return await client.post(
+                "/v1/chat/completions",
+                headers={"Authorization": "Bearer secret"},
+                json=payload,
+            )
+
+    for model in ("different-model", "totally-missing", "DUP MODEL", None, "active"):
+        response = asyncio.run(request(model))
+        assert response.status_code == 200, model
+        assert response.json()["model"] == "loaded-model"
 
 
 def test_chat_rejects_missing_and_wrong_keys_when_authentication_is_required() -> None:
@@ -151,3 +179,146 @@ def test_try_api_request_reports_an_unreachable_api() -> None:
 
     assert excinfo.value.code == "api_unavailable"
     assert "127.0.0.1" in excinfo.value.message
+
+
+class RecordingHandler(logging.Handler):
+    def __init__(self) -> None:
+        super().__init__()
+        self.lines: list[str] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.lines.append(record.getMessage())
+
+
+def test_every_openai_api_request_is_logged_with_status_and_duration() -> None:
+    logger = logging.getLogger(API_LOG_LOGGER)
+    handler = RecordingHandler()
+    logger.addHandler(handler)
+    try:
+        async def requests():
+            transport = httpx.ASGITransport(app=create_openai_app(Runtime()))
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                unauthorized = await client.post(
+                    "/v1/chat/completions",
+                    json={"messages": [{"role": "user", "content": "hi"}]},
+                )
+                authorized = await client.get(
+                    "/v1/models", headers={"Authorization": "Bearer secret"}
+                )
+            return unauthorized.status_code, authorized.status_code
+
+        statuses = asyncio.run(requests())
+    finally:
+        logger.removeHandler(handler)
+
+    assert statuses == (401, 200)
+    assert any("POST /v1/chat/completions -> 401" in line for line in handler.lines)
+    assert any("GET /v1/models -> 200" in line for line in handler.lines)
+    assert all(line.startswith("[api] ") for line in handler.lines)
+
+
+def test_request_bodies_are_logged_with_the_request_line() -> None:
+    logger = logging.getLogger(API_LOG_LOGGER)
+    handler = RecordingHandler()
+    logger.addHandler(handler)
+    try:
+        async def request():
+            transport = httpx.ASGITransport(app=create_openai_app(Runtime()))
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                return await client.post(
+                    "/v1/chat/completions",
+                    headers={"Authorization": "Bearer secret"},
+                    json={
+                        "model": "active",
+                        "messages": [{"role": "user", "content": "Explain layer splitting"}],
+                        "max_tokens": 32,
+                    },
+                )
+
+        asyncio.run(request())
+    finally:
+        logger.removeHandler(handler)
+
+    body_lines = [line for line in handler.lines if "body=" in line]
+    assert len(body_lines) == 1
+    assert '"content":"Explain layer splitting"' in body_lines[0]
+    assert "Bearer secret" not in body_lines[0]
+
+
+def test_logged_bodies_redact_image_data_and_truncate_oversized_payloads() -> None:
+    image = "data:image/png;base64," + "A" * 50_000
+    prepared = prepare_logged_body(
+        json.dumps({"messages": [{"role": "user", "content": [
+            {"type": "text", "text": "what is this"},
+            {"type": "image_url", "image_url": {"url": image}},
+        ]}]}).encode()
+    )
+    assert "AAAA" not in prepared
+    assert "data:image/png;base64," in prepared
+    assert "[redacted 50000 chars]" in prepared
+
+    prepared_long = prepare_logged_body(json.dumps({"prompt": "x" * 5_000}).encode())
+    assert len(prepared_long) < 5_000
+    assert prepared_long.startswith('{"prompt": "')
+    assert "[truncated " in prepared_long
+    assert "\n" not in prepared_long
+
+
+def test_responses_are_logged_in_full_without_truncation() -> None:
+    long_answer = "y" * 6_000
+
+    class LongChatRuntime(Runtime):
+        async def chat(self, *_args, **_kwargs):
+            return {"content": long_answer, "reasoning": "", "tokensPerSecond": 1.0}
+
+    logger = logging.getLogger(API_LOG_LOGGER)
+    handler = RecordingHandler()
+    logger.addHandler(handler)
+    try:
+        async def request():
+            transport = httpx.ASGITransport(app=create_openai_app(LongChatRuntime()))
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                return await client.post(
+                    "/v1/completions",
+                    headers={"Authorization": "Bearer secret"},
+                    json={"model": "active", "prompt": "hi", "max_tokens": 8},
+                )
+
+        response = asyncio.run(request())
+    finally:
+        logger.removeHandler(handler)
+
+    assert response.status_code == 200
+    assert len(handler.lines) == 1
+    line = handler.lines[0]
+    assert f'response={{"id":"cmpl-sharedlocalllm","object":"text_completion","choices":[{{"index":0,"text":"{long_answer}"' in line
+    assert "[truncated" not in line
+    assert "\n" not in line
+
+
+def test_internal_control_traffic_is_not_request_logged() -> None:
+    logger = logging.getLogger(API_LOG_LOGGER)
+    handler = RecordingHandler()
+    logger.addHandler(handler)
+    try:
+        async def request():
+            transport = httpx.ASGITransport(app=create_control_app(Runtime()))
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                return await client.get("/health")
+
+        response = asyncio.run(request())
+    finally:
+        logger.removeHandler(handler)
+
+    assert response.status_code == 200
+    assert handler.lines == []
+
+
+def test_format_api_request_is_a_single_redacted_line() -> None:
+    line = format_api_request("POST", "/v1/chat/completions", 200, 1234.5)
+    assert line == "[api] POST /v1/chat/completions -> 200 in 1234 ms"
+    assert "\n" not in line
+
+    with_body = format_api_request("POST", "/v1/chat/completions", 200, 12.0, '{"model": "active"}')
+    assert with_body == '[api] POST /v1/chat/completions -> 200 in 12 ms body={"model": "active"}'
+    assert "\n" not in with_body

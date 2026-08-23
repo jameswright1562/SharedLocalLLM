@@ -13,6 +13,14 @@ SHARD = re.compile(r"^(.*?)-(\d{5})-of-(\d{5})\.gguf$", re.IGNORECASE)
 QUANT = re.compile(r"(?:^|[-_.])(Q\d(?:_[A-Z0-9]+)+|Q\d_[A-Z0-9]+)(?:[-_.]|$)", re.IGNORECASE)
 
 
+def model_slug(name: str, quantization: str) -> str:
+    """Stable lowercase alias for a catalogue entry, e.g. orchid-9b-q4_k_m."""
+    base = name.strip().lower()
+    quant = (quantization or "").strip().lower()
+    label = base if not quant or quant in base else f"{base}-{quant}"
+    return re.sub(r"\s+", "-", label)
+
+
 def lm_studio_roots() -> list[Path]:
     home = Path.home()
     base = home / ".lmstudio"

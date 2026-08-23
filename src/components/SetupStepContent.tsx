@@ -1,4 +1,20 @@
-import type { Dispatch, SetStateAction } from "react";
+import type { Dispatch, ReactNode, SetStateAction } from "react";
+import {
+  Alert,
+  Badge,
+  Box,
+  Button,
+  Group,
+  Paper,
+  Progress,
+  SimpleGrid,
+  Stack,
+  Text,
+  TextInput,
+  Title,
+} from "@mantine/core";
+import { IconArrowRight, IconPlus } from "@tabler/icons-react";
+
 import type { AppService, AppSnapshot, NetworkBenchmark, NodeCapabilities } from "../types";
 import { PairingPanel } from "./PairingPanel";
 
@@ -37,6 +53,20 @@ export function SetupStepContent(props: SetupStepContentProps) {
   );
 }
 
+function StepHeading({ kicker, title, lede }: { kicker: string; title: string; lede: string }) {
+  return (
+    <>
+      <Text size="xs" fw={700} tt="uppercase" ls={1.5} c="cyan" mb={4}>
+        {kicker}
+      </Text>
+      <Title order={2}>{title}</Title>
+      <Text c="dimmed" mt="xs" mb="lg">
+        {lede}
+      </Text>
+    </>
+  );
+}
+
 function RuntimeStep({
   snapshot,
   busy,
@@ -47,42 +77,41 @@ function RuntimeStep({
   const ready = snapshot.runtime.status === "ready";
   return (
     <section>
-      <p className="section-kicker">Runtime readiness</p>
-      <h2>Install the inference runtime</h2>
-      <p className="lede">
-        SharedLocalLLM uses a verified llama.cpp CUDA runtime. Development tools and LM Studio are
-        not required.
-      </p>
-      <div className={`readiness-check ${ready ? "" : "error-panel"}`} role="status">
-        <span className={`status-dot ${ready ? "ready" : "warning"}`} />
-        <div>
-          <strong>{ready ? "Runtime ready" : "Runtime required"}</strong>
-          <p>
-            {ready
-              ? (snapshot.runtime.version ?? "The pinned runtime is installed.")
-              : "Complete the bundled runtime installation, then check again."}
-          </p>
-        </div>
-      </div>
+      <StepHeading
+        kicker="Runtime readiness"
+        title="Install the inference runtime"
+        lede="SharedLocalLLM uses a verified llama.cpp CUDA runtime. Development tools and LM Studio are not required."
+      />
+      <Alert
+        role="status"
+        variant="light"
+        color={ready ? "mint" : "amber"}
+        title={ready ? "Runtime ready" : "Runtime required"}
+        mb="md"
+      >
+        {ready
+          ? (snapshot.runtime.version ?? "The pinned runtime is installed.")
+          : "Complete the bundled runtime installation, then check again."}
+      </Alert>
       {busy && (
-        <div className="install-progress" aria-live="polite">
-          <div>
-            <span>{runtimeProgress.status}</span>
-            <strong>{runtimeProgress.percent}%</strong>
-          </div>
-          <span>
-            <i style={{ width: `${runtimeProgress.percent}%` }} />
-          </span>
-        </div>
+        <Box aria-live="polite" mb="md">
+          <Group justify="space-between" mb={4}>
+            <Text size="sm">{runtimeProgress.status}</Text>
+            <Text size="sm" fw={700}>
+              {runtimeProgress.percent}%
+            </Text>
+          </Group>
+          <Progress value={runtimeProgress.percent} animated color="cyan" size="sm" radius="xs" />
+        </Box>
       )}
-      <div className="button-row">
-        <button className="button secondary" disabled={busy} onClick={() => void checkAgain()}>
+      <Group gap="sm">
+        <Button variant="default" disabled={busy} onClick={() => void checkAgain()}>
           Check again
-        </button>
-        <button className="button primary" disabled={busy} onClick={() => void installRuntime()}>
+        </Button>
+        <Button disabled={busy} onClick={() => void installRuntime()}>
           {busy ? "Installing…" : ready ? "Reinstall runtime" : "Install runtime"}
-        </button>
-      </div>
+        </Button>
+      </Group>
     </section>
   );
 }
@@ -91,39 +120,40 @@ function IdentityStep({ snapshot, deviceName, setDeviceName, setStep }: SetupSte
   const valid = deviceName.trim().length > 0 && deviceName.trim().length <= 80;
   return (
     <section>
-      <p className="section-kicker">Identity</p>
-      <h2>Name this computer</h2>
-      <p className="lede">
-        Use a short name you will recognize when choosing a coordinator or reading benchmark
-        results.
-      </p>
-      <label className="field-label" htmlFor="device-name">
-        Device name
-      </label>
-      <input
-        id="device-name"
+      <StepHeading
+        kicker="Identity"
+        title="Name this computer"
+        lede="Use a short name you will recognize when choosing a coordinator or reading benchmark results."
+      />
+      <TextInput
+        label="Device name"
         maxLength={80}
         value={deviceName}
         onChange={(event) => setDeviceName(event.target.value)}
         autoFocus
+        mb="md"
       />
-      <div className="detected-hardware">
-        <span>Detected locally</span>
-        <strong>{snapshot.nodes[0]?.gpu.name ?? "GPU scan pending"}</strong>
-        <small>
-          {snapshot.nodes[0]
-            ? `${snapshot.nodes[0].ramTotalGb} GB system memory`
-            : "Hardware will appear after refresh"}
-        </small>
-      </div>
-      <div className="button-row">
-        <button className="button secondary" onClick={() => setStep(0)}>
+      <Paper withBorder p="md" bg="dark.8" mb="md">
+        <Stack gap={4}>
+          <Text size="xs" tt="uppercase" ls={1.5} c="dimmed" fw={600}>
+            Detected locally
+          </Text>
+          <Text fw={600}>{snapshot.nodes[0]?.gpu.name ?? "GPU scan pending"}</Text>
+          <Text size="xs" c="dimmed">
+            {snapshot.nodes[0]
+              ? `${snapshot.nodes[0].ramTotalGb} GB system memory`
+              : "Hardware will appear after refresh"}
+          </Text>
+        </Stack>
+      </Paper>
+      <Group gap="sm">
+        <Button variant="default" onClick={() => setStep(0)}>
           Back
-        </button>
-        <button className="button primary" disabled={!valid} onClick={() => setStep(2)}>
+        </Button>
+        <Button disabled={!valid} onClick={() => setStep(2)}>
           Continue
-        </button>
-      </div>
+        </Button>
+      </Group>
     </section>
   );
 }
@@ -138,12 +168,11 @@ function PairStep({
 }: SetupStepContentProps) {
   return (
     <section>
-      <p className="section-kicker">Peer connection</p>
-      <h2>Connect the second computer</h2>
-      <p className="lede">
-        Open SharedLocalLLM on the other computer and connect from either screen. You can finish
-        setup with one computer and connect later from Nodes.
-      </p>
+      <StepHeading
+        kicker="Peer connection"
+        title="Connect the second computer"
+        lede="Open SharedLocalLLM on the other computer and connect from either screen. You can finish setup with one computer and connect later from Nodes."
+      />
       <PairingPanel
         manualEndpoint={manualEndpoint}
         setManualEndpoint={setManualEndpoint}
@@ -152,14 +181,14 @@ function PairStep({
         connect={() => void connect()}
         onContinue={() => setStep(3)}
       />
-      <div className="button-row">
-        <button className="button secondary" onClick={() => setStep(1)}>
+      <Group gap="sm" mt="md">
+        <Button variant="default" onClick={() => setStep(1)}>
           Back
-        </button>
-        <button className="button secondary" onClick={() => setStep(3)}>
+        </Button>
+        <Button variant="default" onClick={() => setStep(3)}>
           Skip and use this computer only
-        </button>
-      </div>
+        </Button>
+      </Group>
     </section>
   );
 }
@@ -168,75 +197,115 @@ function SourcesStep({ snapshot, addFolder, setStep }: SetupStepContentProps) {
   const lmStudio = snapshot.modelDirectories.some((directory) => directory.source === "lm-studio");
   return (
     <section>
-      <p className="section-kicker">Model sources</p>
-      <h2>Choose where models live</h2>
-      <p className="lede">
-        LM Studio folders are discovered when present. Add any other directory without moving or
-        changing its files. This computer indexes its own files only.
-      </p>
-      <div className={`source-choice ${lmStudio ? "selected" : ""}`}>
-        <div>
-          <span className="source-glyph">LM</span>
-          <strong>LM Studio models</strong>
-          <p>Automatic per-computer discovery</p>
-        </div>
-        <span className={`tag ${lmStudio ? "cyan" : ""}`}>
-          {lmStudio ? "Detected" : "Not found"}
-        </span>
-      </div>
-      <button className="source-choice button-reset" onClick={() => void addFolder()}>
-        <div>
-          <span className="source-glyph">＋</span>
-          <strong>Add a custom folder</strong>
-          <p>Choose any directory containing GGUF files</p>
-        </div>
-        <span aria-hidden="true">→</span>
-      </button>
-      <div className="button-row">
-        <button className="button secondary" onClick={() => setStep(2)}>
+      <StepHeading
+        kicker="Model sources"
+        title="Choose where models live"
+        lede="LM Studio folders are discovered when present. Add any other directory without moving or changing its files. This computer indexes its own files only."
+      />
+      <Paper
+        withBorder
+        p="md"
+        mb="sm"
+        style={{
+          borderColor: lmStudio ? "var(--mantine-color-cyan-6)" : undefined,
+        }}
+      >
+        <Group justify="space-between" wrap="nowrap">
+          <Group gap="sm" wrap="nowrap">
+            <Badge size="lg" variant="light" color="cyan" ff="monospace">
+              LM
+            </Badge>
+            <Box>
+              <Text fw={600}>LM Studio models</Text>
+              <Text size="sm" c="dimmed">
+                Automatic per-computer discovery
+              </Text>
+            </Box>
+          </Group>
+          <Badge color={lmStudio ? "cyan" : "gray"} variant="light">
+            {lmStudio ? "Detected" : "Not found"}
+          </Badge>
+        </Group>
+      </Paper>
+      <Paper
+        component="button"
+        type="button"
+        withBorder
+        p="md"
+        w="100%"
+        onClick={() => void addFolder()}
+        style={{ cursor: "pointer", textAlign: "left" }}
+      >
+        <Group justify="space-between" wrap="nowrap">
+          <Group gap="sm" wrap="nowrap">
+            <ThemeGlyph glyph={<IconPlus size={16} />} />
+            <Box>
+              <Text fw={600}>Add a custom folder</Text>
+              <Text size="sm" c="dimmed">
+                Choose any directory containing GGUF files
+              </Text>
+            </Box>
+          </Group>
+          <IconArrowRight size={18} aria-hidden />
+        </Group>
+      </Paper>
+      <Group gap="sm" mt="md">
+        <Button variant="default" onClick={() => setStep(2)}>
           Back
-        </button>
-        <button className="button secondary" onClick={() => setStep(4)}>
+        </Button>
+        <Button variant="default" onClick={() => setStep(4)}>
           Use detected sources
-        </button>
-      </div>
+        </Button>
+      </Group>
     </section>
+  );
+}
+
+function ThemeGlyph({ glyph }: { glyph: ReactNode }) {
+  return (
+    <Badge size="lg" w={34} h={34} p={0} variant="light" color="cyan" radius="xl">
+      {glyph}
+    </Badge>
   );
 }
 
 function NetworkStep({ network, busy, testNetwork, setStep }: SetupStepContentProps) {
   return (
     <section>
-      <p className="section-kicker">Link test</p>
-      <h2>Measure the path between nodes</h2>
-      <p className="lede">
-        The test sends temporary data over the peer channel. One computer can still run models that
-        fit locally if you skip it.
-      </p>
-      <div className="network-illustration" aria-hidden="true">
-        <span>THIS PC</span>
-        <i aria-hidden="true" />
-        <b>↔</b>
-        <i aria-hidden="true" />
-        <span>PEER</span>
-      </div>
+      <StepHeading
+        kicker="Link test"
+        title="Measure the path between nodes"
+        lede="The test sends temporary data over the peer channel. One computer can still run models that fit locally if you skip it."
+      />
+      <Group justify="center" gap="md" aria-hidden="true" my="xl" wrap="nowrap">
+        <Text size="xs" tt="uppercase" ls={2} c="dimmed" fw={600}>
+          This PC
+        </Text>
+        <Box className="link-illustration-line" />
+        <Text c="cyan" fw={700}>
+          ↔
+        </Text>
+        <Box className="link-illustration-line" />
+        <Text size="xs" tt="uppercase" ls={2} c="dimmed" fw={600}>
+          Peer
+        </Text>
+      </Group>
       {network && (
-        <p className="inline-success">
-          <span>✓</span> Existing result: {Math.round(network.downMbps)} Mbit/s ·{" "}
-          {network.latencyP95Ms} ms p95
-        </p>
+        <Alert variant="light" color="mint" mb="md">
+          Existing result: {Math.round(network.downMbps)} Mbit/s · {network.latencyP95Ms} ms p95
+        </Alert>
       )}
-      <div className="button-row">
-        <button className="button secondary" onClick={() => setStep(3)}>
+      <Group gap="sm">
+        <Button variant="default" onClick={() => setStep(3)}>
           Back
-        </button>
-        <button className="button secondary" onClick={() => setStep(5)}>
+        </Button>
+        <Button variant="default" onClick={() => setStep(5)}>
           Skip and use this computer only
-        </button>
-        <button className="button primary" disabled={busy} onClick={() => void testNetwork()}>
+        </Button>
+        <Button disabled={busy} onClick={() => void testNetwork()}>
           {busy ? "Testing link…" : "Run network test"}
-        </button>
-      </div>
+        </Button>
+      </Group>
     </section>
   );
 }
@@ -251,34 +320,35 @@ function ReadyStep({
 }: SetupStepContentProps) {
   return (
     <section>
-      <p className="section-kicker">Ready</p>
-      <h2>Your compute link is ready</h2>
-      <p className="lede">
-        Models will be evaluated against available GPU memory, system memory, and the measured link
-        before launch.
-      </p>
-      <div className="ready-summary">
-        <div>
-          <span>Nodes</span>
-          <strong>{pairedNode || snapshot.nodes.length > 1 ? "2 online" : "1 local"}</strong>
-        </div>
-        <div>
-          <span>Runtime</span>
-          <strong>{snapshot.runtime.version ?? "Installed"}</strong>
-        </div>
-        <div>
-          <span>Network</span>
-          <strong className="capitalize">{network?.classification ?? "Not tested"}</strong>
-        </div>
-      </div>
-      <div className="button-row">
-        <button className="button secondary" onClick={() => setStep(4)}>
+      <StepHeading
+        kicker="Ready"
+        title="Your compute link is ready"
+        lede="Models will be evaluated against available GPU memory, system memory, and the measured link before launch."
+      />
+      <SimpleGrid cols={{ base: 1, xs: 3 }} spacing="sm" mb="md">
+        {[
+          { label: "Nodes", value: pairedNode || snapshot.nodes.length > 1 ? "2 online" : "1 local" },
+          { label: "Runtime", value: snapshot.runtime.version ?? "Installed" },
+          { label: "Network", value: network?.classification ?? "Not tested", capitalize: true },
+        ].map((stat) => (
+          <Paper key={stat.label} withBorder p="md" bg="dark.8">
+            <Text size="xs" tt="uppercase" ls={1} c="dimmed" fw={600}>
+              {stat.label}
+            </Text>
+            <Text fw={600} tt={stat.capitalize ? "capitalize" : undefined}>
+              {stat.value}
+            </Text>
+          </Paper>
+        ))}
+      </SimpleGrid>
+      <Group gap="sm">
+        <Button variant="default" onClick={() => setStep(4)}>
           Back
-        </button>
-        <button className="button primary" disabled={busy} onClick={() => void finish()}>
+        </Button>
+        <Button disabled={busy} onClick={() => void finish()}>
           {busy ? "Saving setup…" : "Open dashboard"}
-        </button>
-      </div>
+        </Button>
+      </Group>
     </section>
   );
 }

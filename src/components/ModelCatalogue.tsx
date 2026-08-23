@@ -1,5 +1,5 @@
 import type { ModelRecord } from "../types";
-import { NumberFormatter, Table } from "@mantine/core";
+import { Badge, Box, Button, NumberFormatter, Paper, Stack, Table, Text, Title } from "@mantine/core";
 import { useMemo, useState } from "react";
 import { IconChevronDown, IconChevronUp } from "@tabler/icons-react";
 
@@ -59,98 +59,122 @@ export function ModelCatalogue({
     });
   }, [visibleModels, sortBy, reverseSortDirection]);
 
-  return (
-    <div className="model-list" data-testid="model-list">
-      {sortedModels.length === 0 ? (
-        <div className="empty-state model-empty">
-          <span>GG</span>
-          <div>
-            <h2>{models.length ? "No models match" : "No models indexed"}</h2>
-            <p>
+  if (sortedModels.length === 0) {
+    return (
+      <Box data-testid="model-list">
+        <Paper withBorder p="xl">
+          <Stack align="center" gap="xs" ta="center">
+            <Badge size="xl" radius="md" variant="light" color="cyan" ff="monospace">
+              GG
+            </Badge>
+            <Title order={3}>{models.length ? "No models match" : "No models indexed"}</Title>
+            <Text c="dimmed" maw={420}>
               {models.length
                 ? "Clear the search or choose another filter."
                 : "Add an LM Studio or custom folder containing GGUF files."}
-            </p>
-            <button className="button secondary" onClick={addFolder}>
+            </Text>
+            <Button variant="default" mt="xs" onClick={addFolder}>
               Add folder
-            </button>
-          </div>
-        </div>
-      ) : (
-        <Table.ScrollContainer minWidth={500} maxHeight={700}>
-          <Table stickyHeader stickyHeaderOffset={0} highlightOnHover>
-            <Table.Thead>
-              <Table.Tr>
-                <Table.Th onClick={() => handleSort("name")}>
-                  Name
-                  {sortBy === "name" &&
-                    (reverseSortDirection ? (
-                      <IconChevronUp size={14} />
-                    ) : (
-                      <IconChevronDown size={14} />
-                    ))}
-                </Table.Th>
-                <Table.Th onClick={() => handleSort("architecture")}>
-                  Architecture
-                  {sortBy === "architecture" &&
-                    (reverseSortDirection ? (
-                      <IconChevronUp size={14} />
-                    ) : (
-                      <IconChevronDown size={14} />
-                    ))}
-                </Table.Th>
-                <Table.Th onClick={() => handleSort("capability")}>
-                  Modalities
-                  {sortBy === "capability" &&
-                    (reverseSortDirection ? (
-                      <IconChevronUp size={14} />
-                    ) : (
-                      <IconChevronDown size={14} />
-                    ))}
-                </Table.Th>
-                <Table.Th onClick={() => handleSort("contextLength")}>
-                  Max Context Size
-                  {sortBy === "contextLength" &&
-                    (reverseSortDirection ? (
-                      <IconChevronUp size={14} />
-                    ) : (
-                      <IconChevronDown size={14} />
-                    ))}
-                </Table.Th>
-                <Table.Th onClick={() => handleSort("locations")}>
-                  Location
-                  {sortBy === "locations" &&
-                    (reverseSortDirection ? (
-                      <IconChevronUp size={14} />
-                    ) : (
-                      <IconChevronDown size={14} />
-                    ))}
-                </Table.Th>
+            </Button>
+          </Stack>
+        </Paper>
+      </Box>
+    );
+  }
+
+  return (
+    <Box data-testid="model-list">
+      <Table.ScrollContainer minWidth={560} h={420}>
+        <Table stickyHeader stickyHeaderOffset={0} highlightOnHover verticalSpacing="sm">
+          <Table.Thead>
+            <Table.Tr>
+              <SortableTh
+                label="Name"
+                field="name"
+                sortBy={sortBy}
+                reverseSortDirection={reverseSortDirection}
+                onSort={handleSort}
+              />
+              <SortableTh
+                label="Architecture"
+                field="architecture"
+                sortBy={sortBy}
+                reverseSortDirection={reverseSortDirection}
+                onSort={handleSort}
+              />
+              <SortableTh
+                label="Modalities"
+                field="capability"
+                sortBy={sortBy}
+                reverseSortDirection={reverseSortDirection}
+                onSort={handleSort}
+              />
+              <SortableTh
+                label="Max Context Size"
+                field="contextLength"
+                sortBy={sortBy}
+                reverseSortDirection={reverseSortDirection}
+                onSort={handleSort}
+              />
+              <SortableTh
+                label="Location"
+                field="locations"
+                sortBy={sortBy}
+                reverseSortDirection={reverseSortDirection}
+                onSort={handleSort}
+              />
+            </Table.Tr>
+          </Table.Thead>
+          <Table.Tbody>
+            {sortedModels.map((model) => (
+              <Table.Tr
+                key={model.id}
+                className={selectedId === model.id ? "model-row-selected" : undefined}
+                onClick={() => select(model.id)}
+                aria-pressed={selectedId === model.id}
+                style={{ cursor: "pointer" }}
+              >
+                <Table.Td>{model.name}</Table.Td>
+                <Table.Td>{model.architecture}</Table.Td>
+                <Table.Td>
+                  <Badge variant="light" size="sm" tt="lowercase">
+                    {model.capability}
+                  </Badge>
+                </Table.Td>
+                <Table.Td>
+                  <NumberFormatter value={model.contextLength} thousandSeparator />
+                </Table.Td>
+                <Table.Td>
+                  {model.locations.map((location) => location.path).join(", ")}
+                </Table.Td>
               </Table.Tr>
-            </Table.Thead>
-            <Table.Tbody>
-              {sortedModels.map((model) => (
-                <Table.Tr
-                  className={`${selectedId === model.id ? "selected" : ""}`}
-                  key={model.id}
-                  onClick={() => select(model.id)}
-                  aria-pressed={selectedId === model.id}
-                >
-                  <Table.Td>{model.name}</Table.Td>
-                  <Table.Td>{model.architecture}</Table.Td>
-                  <Table.Td>
-                    <i>{model.capability}</i>
-                  </Table.Td>
-                  <Table.Td>
-                    <NumberFormatter value={model.contextLength} thousandSeparator />
-                  </Table.Td>
-                  <Table.Td>{model.locations.map((location) => location.path).join(", ")}</Table.Td>
-                </Table.Tr>
-              ))}
-            </Table.Tbody>
-          </Table>
-        </Table.ScrollContainer>
-      )}
-    </div>
+            ))}
+          </Table.Tbody>
+        </Table>
+      </Table.ScrollContainer>
+    </Box>
+  );
+}
+
+function SortableTh({
+  label,
+  field,
+  sortBy,
+  reverseSortDirection,
+  onSort,
+}: {
+  label: string;
+  field: keyof ModelRecord;
+  sortBy: keyof ModelRecord | null;
+  reverseSortDirection: boolean;
+  onSort: (field: keyof ModelRecord) => void;
+}) {
+  const active = sortBy === field;
+  return (
+    <Table.Th onClick={() => onSort(field)} style={{ cursor: "pointer", whiteSpace: "nowrap" }}>
+      {label}
+      {active &&
+        (reverseSortDirection ? <IconChevronUp size={14} /> : <IconChevronDown size={14} />)}
+    </Table.Th>
   );
 }

@@ -1,3 +1,5 @@
+import { Alert, Badge, Box, Button, Group, Paper, Stack, Text, TextInput, Title } from "@mantine/core";
+
 import type { NodeCapabilities } from "../types";
 
 interface PairingPanelProps {
@@ -19,41 +21,42 @@ export function PairingPanel({
 }: PairingPanelProps) {
   return (
     <>
-      <div className="pair-grid">
-        <div className="pair-option">
-          <span className="option-number">A</span>
-          <h3>Connect to the second computer</h3>
-          <p>
-            Both computers auto-discover each other. For a direct cable, enter the peer's IPv4
-            address.
-          </p>
-          <label className="field-label" htmlFor="manual-peer-endpoint">
-            Ethernet IPv4 address (optional)
-          </label>
-          <input
-            id="manual-peer-endpoint"
-            inputMode="decimal"
-            placeholder="10.10.10.2"
-            value={manualEndpoint}
-            onChange={(event) => setManualEndpoint(event.target.value)}
-          />
-          <small>Port 49158 is automatic.</small>
-          <button className="button primary" disabled={busy} onClick={connect}>
-            {busy ? "Connecting…" : "Connect"}
-          </button>
-        </div>
-      </div>
+      <Paper withBorder p="lg">
+        <Group gap="sm" mb="xs" wrap="nowrap">
+          <Badge size="lg" w={34} h={34} p={0} radius="xl" variant="light" color="cyan">
+            A
+          </Badge>
+          <Title order={3}>Connect to the second computer</Title>
+        </Group>
+        <Text c="dimmed" mb="md">
+          Both computers auto-discover each other. For a direct cable, enter the peer&apos;s IPv4
+          address.
+        </Text>
+        <TextInput
+          id="manual-peer-endpoint"
+          label="Ethernet IPv4 address (optional)"
+          inputMode="decimal"
+          placeholder="10.10.10.2"
+          value={manualEndpoint}
+          onChange={(event) => setManualEndpoint(event.target.value)}
+          mb={4}
+        />
+        <Text size="xs" c="dimmed" mb="md">
+          Port 49158 is automatic.
+        </Text>
+        <Button disabled={busy} onClick={connect}>
+          {busy ? "Connecting…" : "Connect"}
+        </Button>
+      </Paper>
       {pairedNode && (
-        <p className="inline-success">
-          <span>✓</span> Paired with {pairedNode.name}
-        </p>
+        <Alert variant="light" color="mint" mt="md">
+          Paired with {pairedNode.name}
+        </Alert>
       )}
       {pairedNode && onContinue && (
-        <div className="button-row">
-          <button className="button primary" onClick={onContinue}>
-            Continue
-          </button>
-        </div>
+        <Group mt="md">
+          <Button onClick={onContinue}>Continue</Button>
+        </Group>
       )}
     </>
   );

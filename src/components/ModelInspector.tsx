@@ -1,4 +1,17 @@
 import { useState } from "react";
+import {
+  Badge,
+  Button,
+  Checkbox,
+  DataList,
+  Group,
+  Paper,
+  Slider,
+  Stack,
+  Text,
+  TextInput,
+  Title,
+} from "@mantine/core";
 import type {
   GpuLayerAllocation,
   ModelLoadOptions,
@@ -8,6 +21,7 @@ import type {
 } from "../types";
 import { fitLabels, formatContext } from "../pages/pageFormat";
 import { AdvancedLoadOptions } from "./LoadOptions";
+import { GpuAllocation } from "./GpuAllocation";
 
 const MIN_CONTEXT = 4096;
 
@@ -34,6 +48,13 @@ interface ModelInspectorProps {
   launch: () => void;
 }
 
+const fitBadgeColors = {
+  "single-node": "mint",
+  "combined-gpu": "cyan",
+  "gpu-ram": "amber",
+  "does-not-fit": "coral",
+} as const;
+
 export function ModelInspector({
   selected,
   nodeLookup,
@@ -58,45 +79,52 @@ export function ModelInspector({
 }: ModelInspectorProps) {
   if (!selected)
     return (
-      <aside className="model-inspector" aria-label="Selected model details">
-        <div className="inspector-empty">Select a model to inspect fit and launch settings.</div>
-      </aside>
+      <Paper aria-label="Selected model details" p="md">
+        <Text c="dimmed">Select a model to inspect fit and launch settings.</Text>
+      </Paper>
     );
 
   return (
-    <aside className="model-inspector" aria-label="Selected model details">
-      <p className="section-kicker">Selected model</p>
-      <h2>{selected.name}</h2>
-      <dl>
-        <div>
-          <dt>Fit</dt>
-          <dd>
-            <span className={`fit-badge fit-${selected.fit}`}>{fitLabels[selected.fit]}</span>
-          </dd>
-        </div>
-        <div>
-          <dt>Context</dt>
-          <dd>{formatContext(selected.contextLength)} tokens</dd>
-        </div>
-        <div>
-          <dt>Format</dt>
-          <dd>{selected.quantization}</dd>
-        </div>
-        <div>
-          <dt>Files</dt>
-          <dd>
+    <Stack gap="sm" aria-label="Selected model details">
+      <Text size="xs" fw={700} tt="uppercase" ls={1.5} c="cyan">
+        Selected model
+      </Text>
+      <Title order={2}>{selected.name}</Title>
+      <DataList
+        size="sm"
+        styles={{ itemKey: { width: 90, color: "var(--mantine-color-dimmed)" } }}
+      >
+        <DataList.Item>
+          <DataList.ItemKey>Fit</DataList.ItemKey>
+          <DataList.ItemValue>
+            <Badge color={fitBadgeColors[selected.fit]} variant="light" className={`fit-${selected.fit}`}>
+              {fitLabels[selected.fit]}
+            </Badge>
+          </DataList.ItemValue>
+        </DataList.Item>
+        <DataList.Item>
+          <DataList.ItemKey>Context</DataList.ItemKey>
+          <DataList.ItemValue>{formatContext(selected.contextLength)} tokens</DataList.ItemValue>
+        </DataList.Item>
+        <DataList.Item>
+          <DataList.ItemKey>Format</DataList.ItemKey>
+          <DataList.ItemValue>{selected.quantization}</DataList.ItemValue>
+        </DataList.Item>
+        <DataList.Item>
+          <DataList.ItemKey>Files</DataList.ItemKey>
+          <DataList.ItemValue>
             {selected.shards} GGUF{selected.capability === "vision" ? " + projector" : ""}
-          </dd>
-        </div>
-        <div>
-          <dt>Location</dt>
-          <dd>
+          </DataList.ItemValue>
+        </DataList.Item>
+        <DataList.Item>
+          <DataList.ItemKey>Location</DataList.ItemKey>
+          <DataList.ItemValue>
             {selected.locations[0]
               ? (nodeLookup.get(selected.locations[0].nodeId) ?? "Unknown node")
               : "Unknown node"}
-          </dd>
-        </div>
-      </dl>
+          </DataList.ItemValue>
+        </DataList.Item>
+      </DataList>
       <FitExplanation model={selected} />
       <ContextSizeControl
         contextSize={contextSize}
@@ -117,43 +145,77 @@ export function ModelInspector({
           setIncludeRemoteCpu={setIncludeRemoteCpu}
         />
       ) : (
-        <p className="metadata-note">
+        <Note>
           Manual layer allocation is unavailable because this GGUF does not expose layer metadata.
           Automatic allocation remains available.
-        </p>
+        </Note>
       )}
       <AdvancedLoadOptions options={loadOptions} setOptions={setLoadOptions} />
-      <button
-        className="button primary full"
+      <Button
+        fullWidth
         disabled={busy || ((selected.fit === "does-not-fit" || splitInvalid) && !force)}
         onClick={launch}
         aria-label={`Launch ${selected.name}`}
       >
         {busy ? "Starting cluster…" : `Launch ${selected.name}`}
-      </button>
+      </Button>
       {selected.remoteOnly && (
-        <p className="metadata-note">
-          This GGUF is stored on the other computer. Launching here asks that computer to coordinate
-          the model while this app remains the controller.
-        </p>
+        <Note>
+          This GGUF is stored on the other computer. Launching here asks that computer to
+          coordinate the model while this app remains the controller.
+        </Note>
       )}
       {(selected.fit === "does-not-fit" || splitInvalid) && (
-        <label className="force-launch">
-          <input
-            type="checkbox"
-            checked={force}
-            onChange={(event) => setForce(event.target.checked)}
-          />
-          <span>Force launch — ignore the memory estimate</span>
-        </label>
+        <Checkbox
+          label={<Text size="sm">Force launch — ignore the memory estimate</Text>}
+          checked={force}
+          onChange={(event) => setForce(event.currentTarget.checked)}
+        />
       )}
       {force && (
-        <p className="metadata-note">
-          Forced launch disables the fit check. The model may load slowly, spill heavily, or fail to
-          start if memory is genuinely insufficient.
-        </p>
+        <Note>
+          Forced launch disables the fit check. The model may load slowly, spill heavily, or fail
+          to start if memory is genuinely insufficient.
+        </Note>
       )}
-    </aside>
+    </Stack>
+  );
+}
+
+function Note({ children }: { children: string }) {
+  return (
+    <Text size="xs" c="dimmed" lh={1.4}>
+      {children}
+    </Text>
+  );
+}
+
+function FitExplanation({ model }: { model: ModelRecord }) {
+  const heading =
+    model.fit === "single-node"
+      ? "Fast local placement"
+      : model.fit === "combined-gpu"
+        ? "Both GPUs required"
+        : model.fit === "gpu-ram"
+          ? "System memory assists"
+          : "Insufficient safe memory";
+  const detail =
+    model.fit === "single-node"
+      ? "This model fits on at least one GPU. Benchmarks decide whether distribution is worthwhile."
+      : model.fit === "combined-gpu"
+        ? "The model will be layer-split across the private link."
+        : model.fit === "gpu-ram"
+          ? "Some layers will use coordinator RAM, which can reduce speed."
+          : "Free memory or choose a smaller quantization.";
+  return (
+    <Paper p="sm" bg="dark.8">
+      <Text size="sm" fw={600}>
+        {heading}
+      </Text>
+      <Text size="sm" c="dimmed">
+        {detail}
+      </Text>
+    </Paper>
   );
 }
 
@@ -182,26 +244,28 @@ function ContextSizeControl({
   }
 
   return (
-    <section className="context-control">
-      <label className="field-label" htmlFor="context-size-input">
+    <Paper component="section" withBorder p="md">
+      <Text component="label" htmlFor="context-size-input" size="sm" fw={500}>
         Requested context
-      </label>
-      <input
-        type="range"
-        id="context-size-slider"
+      </Text>
+      <Slider
+        aria-label="Requested context slider"
         min={MIN_CONTEXT}
         max={max}
         step={1024}
         value={Math.max(MIN_CONTEXT, Math.min(max, contextSize))}
-        onChange={(event) => commit(Number(event.target.value))}
-        aria-label="Requested context slider"
+        onChange={(event) => commit(event)}
+        color="cyan"
+        my="sm"
+        label={(value) => value.toLocaleString()}
       />
-      <div className="context-value-row">
-        <input
-          type="number"
+      <Group justify="space-between" align="center" wrap="nowrap">
+        <TextInput
           id="context-size-input"
+          type="number"
           min={MIN_CONTEXT}
           max={max}
+          w={130}
           value={draft}
           onChange={(event) => {
             const value = Number(event.target.value);
@@ -220,240 +284,12 @@ function ContextSizeControl({
             }
           }}
         />
-        <span>{contextSize.toLocaleString()} tokens</span>
-      </div>
-    </section>
+        <Group gap={4}>
+          <Text size="sm" c="dimmed">
+            {contextSize.toLocaleString()} tokens
+          </Text>
+        </Group>
+      </Group>
+    </Paper>
   );
-}
-
-function FitExplanation({ model }: { model: ModelRecord }) {
-  const heading =
-    model.fit === "single-node"
-      ? "Fast local placement"
-      : model.fit === "combined-gpu"
-        ? "Both GPUs required"
-        : model.fit === "gpu-ram"
-          ? "System memory assists"
-          : "Insufficient safe memory";
-  const detail =
-    model.fit === "single-node"
-      ? "This model fits on at least one GPU. Benchmarks decide whether distribution is worthwhile."
-      : model.fit === "combined-gpu"
-        ? "The model will be layer-split across the private link."
-        : model.fit === "gpu-ram"
-          ? "Some layers will use coordinator RAM, which can reduce speed."
-          : "Free memory or choose a smaller quantization.";
-  return (
-    <div className="fit-explanation">
-      <strong>{heading}</strong>
-      <p>{detail}</p>
-    </div>
-  );
-}
-
-function GpuAllocation({
-  selected,
-  manualSplit,
-  setManualSplit,
-  gpuNodes,
-  gpuLayers,
-  splitEstimate,
-  setGpuLayers,
-  workerNode,
-  includeRemoteCpu,
-  setIncludeRemoteCpu,
-}: Pick<
-  ModelInspectorProps,
-  | "manualSplit"
-  | "setManualSplit"
-  | "gpuNodes"
-  | "gpuLayers"
-  | "splitEstimate"
-  | "setGpuLayers"
-  | "workerNode"
-  | "includeRemoteCpu"
-  | "setIncludeRemoteCpu"
-> & { selected: ModelRecord }) {
-  return (
-    <section className="gpu-allocation" aria-label="GPU allocation mode">
-      <div className="segmented allocation-mode" role="group" aria-label="GPU allocation">
-        <button
-          className={!manualSplit ? "active" : ""}
-          aria-pressed={!manualSplit}
-          onClick={() => setManualSplit(false)}
-        >
-          Automatic allocation
-        </button>
-        <button
-          className={manualSplit ? "active" : ""}
-          aria-pressed={manualSplit}
-          onClick={() => setManualSplit(true)}
-        >
-          Manual GPU split
-        </button>
-      </div>
-      {manualSplit && (
-        <div className="gpu-split-panel">
-          <div className="gpu-split-heading">
-            <div>
-              <h3>GPU layer allocation</h3>
-              <p>Choose how many transformer layers each computer loads.</p>
-            </div>
-            <strong className={splitEstimate ? "" : "invalid"}>
-              {splitEstimate
-                ? `${splitEstimate.gpuLayers} of ${splitEstimate.totalLayers} layers on GPU`
-                : `Too many of ${selected.layerCount} layers selected`}
-            </strong>
-          </div>
-          <div className="gpu-device-list">
-            {gpuNodes.map((node) => {
-              const allocation = gpuLayers.find((item) => item.nodeId === node.id);
-              const estimate = splitEstimate?.devices.find((device) => device.nodeId === node.id);
-              return (
-                <div className="gpu-device-allocation" key={node.id}>
-                  <label>
-                    <span>{node.name}</span>
-                    <input
-                      type="number"
-                      min="0"
-                      max={selected.layerCount}
-                      value={allocation?.layers ?? 0}
-                      aria-label={`GPU layers on ${node.name}`}
-                      onChange={(event) => {
-                        const layers = Math.max(
-                          0,
-                          Math.min(
-                            selected.layerCount ?? 0,
-                            Number.parseInt(event.target.value || "0", 10),
-                          ),
-                        );
-                        setGpuLayers(
-                          gpuLayers.map((item) =>
-                            item.nodeId === node.id ? { ...item, layers } : item,
-                          ),
-                        );
-                      }}
-                    />
-                  </label>
-                  <VramEstimate node={node} estimate={estimate} />
-                </div>
-              );
-            })}
-          </div>
-          {workerNode && (
-            <div className="remote-cpu-offload">
-              <label className="remote-cpu-toggle">
-                <input
-                  type="checkbox"
-                  checked={includeRemoteCpu}
-                  onChange={(event) => setIncludeRemoteCpu(event.target.checked)}
-                />
-                <span>Offload layers to {workerNode.name}&apos;s CPU</span>
-              </label>
-              {includeRemoteCpu && (
-                <div className="gpu-device-allocation">
-                  <label>
-                    <span>{workerNode.name} CPU</span>
-                    <input
-                      type="number"
-                      min="0"
-                      max={selected.layerCount}
-                      value={
-                        gpuLayers.find(
-                          (item) => item.nodeId === workerNode.id && item.kind === "cpu",
-                        )?.layers ?? 0
-                      }
-                      aria-label={`CPU layers on ${workerNode.name}`}
-                      onChange={(event) => {
-                        const layers = Math.max(
-                          0,
-                          Math.min(
-                            selected.layerCount ?? 0,
-                            Number.parseInt(event.target.value || "0", 10),
-                          ),
-                        );
-                        const gpuOnly = gpuLayers.filter(
-                          (item) => !(item.nodeId === workerNode.id && item.kind === "cpu"),
-                        );
-                        let overflow = Math.max(
-                          0,
-                          gpuOnly.reduce((total, item) => total + item.layers, 0) +
-                            layers -
-                            (selected.layerCount ?? 0),
-                        );
-                        const adjusted = gpuOnly.map((item) => {
-                          if (overflow === 0 || item.nodeId !== workerNode.id) return item;
-                          const removed = Math.min(item.layers, overflow);
-                          overflow -= removed;
-                          return { ...item, layers: item.layers - removed };
-                        });
-                        const fullyAdjusted = adjusted.map((item) => {
-                          if (overflow === 0) return item;
-                          const removed = Math.min(item.layers, overflow);
-                          overflow -= removed;
-                          return { ...item, layers: item.layers - removed };
-                        });
-                        setGpuLayers([
-                          ...fullyAdjusted,
-                          { nodeId: workerNode.id, layers, kind: "cpu" },
-                        ]);
-                      }}
-                    />
-                  </label>
-                  <VramEstimate
-                    node={workerNode}
-                    estimate={splitEstimate?.devices.find(
-                      (device) => device.nodeId === workerNode.id && device.kind === "cpu",
-                    )}
-                  />
-                </div>
-              )}
-            </div>
-          )}
-          {splitEstimate && (
-            <p className="split-summary">
-              {splitEstimate.cpuLayers
-                ? `${splitEstimate.cpuLayers} layers remain on CPU · about ${formatMib(splitEstimate.estimatedCpuRamMib)} model RAM`
-                : "All model layers are assigned to GPUs"}
-              {!splitEstimate.usesAttentionMetadata && " · KV cache uses a conservative fallback"}
-            </p>
-          )}
-          <p className="estimate-note">
-            Estimates include model weights, F16 KV cache, and a 512 MiB runtime allowance per
-            active GPU. Layer counts are target proportions; llama.cpp may round placement at tensor
-            boundaries.
-          </p>
-        </div>
-      )}
-    </section>
-  );
-}
-
-function VramEstimate({
-  node,
-  estimate,
-}: {
-  node: NodeCapabilities;
-  estimate?: SplitEstimate["devices"][number];
-}) {
-  const cpu = estimate?.kind === "cpu";
-  const memory = cpu ? "RAM" : "VRAM";
-  const available =
-    estimate?.availableVramMib ?? (cpu ? node.ramAvailableGb : node.gpu.vramAvailableGb) * 1024;
-  return (
-    <div className="vram-estimate">
-      <span>Estimated {memory}</span>
-      <strong>{estimate ? formatMib(estimate.estimatedVramMib) : "—"}</strong>
-      <small>{formatMib(available)} available</small>
-      {estimate && (
-        <i className={estimate.fits ? "fits" : "over"}>
-          {estimate.fits ? `Fits current ${memory}` : `Exceeds current ${memory}`}
-        </i>
-      )}
-    </div>
-  );
-}
-
-function formatMib(value: number) {
-  return value >= 1024 ? `${(value / 1024).toFixed(2)} GiB` : `${Math.ceil(value)} MiB`;
 }

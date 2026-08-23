@@ -1,4 +1,21 @@
 import { useRef, useState } from "react";
+import {
+  Alert,
+  Badge,
+  Box,
+  Button,
+  Flex,
+  Group,
+  NativeSelect,
+  Paper,
+  Stack,
+  Table,
+  Text,
+  ThemeIcon,
+  Title,
+} from "@mantine/core";
+import { IconInfoCircle, IconPlayerPlay } from "@tabler/icons-react";
+
 import { describeAppError } from "../services/errors";
 import { fitLayersByVram } from "../services/splitEstimate";
 import type { InferenceBenchmark, PageProps } from "../types";
@@ -66,129 +83,159 @@ export function BenchmarksPage({ snapshot, service, refreshSnapshot, navigate }:
   }
 
   return (
-    <div className="page">
-      <header className="page-header split-header">
-        <div>
-          <p className="section-kicker">Placement evidence</p>
-          <h1>Performance benchmarks</h1>
-          <p>Measured results for this exact model, hardware pair, context, and network route.</p>
-        </div>
-        <div className="benchmark-actions">
-          <label htmlFor="benchmark-model">Benchmark model</label>
-          <select
+    <Box>
+      <Flex justify="space-between" align="flex-start" gap="md" wrap="wrap" mb="lg">
+        <Box>
+          <Text size="xs" fw={700} tt="uppercase" ls={1.5} c="cyan">
+            Placement evidence
+          </Text>
+          <Title order={1}>Performance benchmarks</Title>
+          <Text c="dimmed">
+            Measured results for this exact model, hardware pair, context, and network route.
+          </Text>
+        </Box>
+        <Box w={320} maw="100%">
+          <NativeSelect
             id="benchmark-model"
+            label="Benchmark model"
             value={modelId}
             disabled={running || snapshot.models.length === 0}
             onChange={(event) => setModelId(event.target.value)}
-          >
-            {snapshot.models.map((model) => (
-              <option key={model.id} value={model.id}>
-                {model.name}
-              </option>
-            ))}
-          </select>
+            data={snapshot.models.map((model) => ({ value: model.id, label: model.name }))}
+            mb="xs"
+          />
           {usesRunningInstance ? (
-            <p className="benchmark-split" role="status">
-              {selectedModel?.name} is running — benchmarks the loaded instance without reloading.
-            </p>
+            <Alert role="status" variant="light" color="cyan" p="xs">
+              <Text size="xs">
+                {selectedModel?.name} is running — benchmarks the loaded instance without
+                reloading.
+              </Text>
+            </Alert>
           ) : (
             plannedSplit.length > 0 && (
-              <p className="benchmark-split" role="status">
-                Automatic GPU split:{" "}
-                {plannedSplit
-                  .map((allocation) => {
-                    const name = gpuNodes.find((node) => node.id === allocation.nodeId)?.name;
-                    return `${name ?? "Unknown node"}: ${allocation.layers} layers`;
-                  })
-                  .join(" · ")}
-              </p>
+              <Alert role="status" variant="light" color="cyan" p="xs">
+                <Text size="xs">
+                  Automatic GPU split:{" "}
+                  {plannedSplit
+                    .map((allocation) => {
+                      const name = gpuNodes.find((node) => node.id === allocation.nodeId)?.name;
+                      return `${name ?? "Unknown node"}: ${allocation.layers} layers`;
+                    })
+                    .join(" · ")}
+                </Text>
+              </Alert>
             )
           )}
-          {running ? (
-            <button className="button stop-button" onClick={() => void cancelBenchmark()}>
-              Cancel benchmark
-            </button>
-          ) : (
-            <button
-              className="button primary"
-              disabled={!modelId}
-              onClick={() => void runBenchmark()}
-            >
-              Run benchmark
-            </button>
-          )}
-          <button className="text-button" onClick={() => navigate("models")}>
-            Benchmark a model
-          </button>
-        </div>
-      </header>
+        </Box>
+      </Flex>
+
+      <Group gap="sm" mb="lg">
+        {running ? (
+          <Button color="coral" variant="light" onClick={() => void cancelBenchmark()}>
+            Cancel benchmark
+          </Button>
+        ) : (
+          <Button disabled={!modelId} onClick={() => void runBenchmark()}>
+            Run benchmark
+          </Button>
+        )}
+        <Button variant="subtle" onClick={() => navigate("models")}>
+          Benchmark a model
+        </Button>
+      </Group>
+
       {error && (
-        <div className="error-panel" role="alert">
+        <Alert role="alert" variant="light" color="coral" mb="md">
           {error}
-        </div>
+        </Alert>
       )}
+
       {runs.length === 0 ? (
-        <div className="empty-state">
-          <span>▶</span>
-          <div>
-            <h2>No benchmark runs</h2>
-            <p>Choose a model to compare valid single-node and distributed placements.</p>
-          </div>
-        </div>
+        <Paper withBorder p="xl">
+          <Stack align="center" gap="xs" ta="center">
+            <ThemeIcon variant="light" color="cyan" size="xl" radius="xl">
+              <IconPlayerPlay size={20} />
+            </ThemeIcon>
+            <Title order={3}>No benchmark runs</Title>
+            <Text c="dimmed" maw={420}>
+              Choose a model to compare valid single-node and distributed placements.
+            </Text>
+          </Stack>
+        </Paper>
       ) : (
-        <div className="benchmark-table-wrap">
-          <table className="benchmark-table">
-            <thead>
-              <tr>
-                <th>Model / topology</th>
-                <th>Prompt</th>
-                <th>Generation</th>
-                <th>Duration</th>
-                <th>Peak memory</th>
-                <th>Run</th>
-              </tr>
-            </thead>
-            <tbody>
+        <Table.ScrollContainer minWidth={720} mb="md">
+          <Table verticalSpacing="sm" horizontalSpacing="md">
+            <Table.Thead>
+              <Table.Tr>
+                <Table.Th>Model / topology</Table.Th>
+                <Table.Th>Prompt</Table.Th>
+                <Table.Th>Generation</Table.Th>
+                <Table.Th>Duration</Table.Th>
+                <Table.Th>Peak memory</Table.Th>
+                <Table.Th>Run</Table.Th>
+              </Table.Tr>
+            </Table.Thead>
+            <Table.Tbody>
               {runs.map((benchmark) => (
-                <tr key={benchmark.id} className={benchmark.recommended ? "recommended" : ""}>
-                  <td>
-                    <strong>{benchmark.modelName}</strong>
-                    <span className="capitalize">
-                      {benchmark.error ? `Failed · ${benchmark.error}` : ""}
-                      {benchmark.topology}
-                      {benchmark.gpuLayers?.length
-                        ? ` · ${benchmark.gpuLayers.map((item) => item.layers).join("/")} GPU layers`
-                        : ""}
-                      {benchmark.recommended && <i>Recommended</i>}
-                    </span>
-                  </td>
-                  <td>
-                    <strong>{benchmark.promptTokensPerSecond.toFixed(1)}</strong>
-                    <small>tok/s</small>
-                  </td>
-                  <td>
-                    <strong>{benchmark.generationTokensPerSecond.toFixed(1)}</strong>
-                    <small>tok/s</small>
-                  </td>
-                  <td>{benchmark.loadTimeSeconds.toFixed(1)} s</td>
-                  <td>
+                <Table.Tr key={benchmark.id} data-recommended={benchmark.recommended || undefined}>
+                  <Table.Td>
+                    <Stack gap={0}>
+                      <Text fw={600}>{benchmark.modelName}</Text>
+                      <Group gap={6} align="center">
+                        <Text size="xs" c="dimmed" tt="capitalize">
+                          {benchmark.error ? `Failed · ${benchmark.error}` : ""}
+                          {benchmark.topology}
+                          {benchmark.gpuLayers?.length
+                            ? ` · ${benchmark.gpuLayers.map((item) => item.layers).join("/")} GPU layers`
+                            : ""}
+                        </Text>
+                        {benchmark.recommended && (
+                          <Badge variant="light" color="mint" size="xs">
+                            Recommended
+                          </Badge>
+                        )}
+                      </Group>
+                    </Stack>
+                  </Table.Td>
+                  <ThroughputCell value={benchmark.promptTokensPerSecond} />
+                  <ThroughputCell value={benchmark.generationTokensPerSecond} />
+                  <Table.Td>{benchmark.loadTimeSeconds.toFixed(1)} s</Table.Td>
+                  <Table.Td>
                     {benchmark.memoryPeakGb > 0 ? `${benchmark.memoryPeakGb.toFixed(1)} GB` : "—"}
-                  </td>
-                  <td>{formatRunTime(benchmark.ranAt)}</td>
-                </tr>
+                  </Table.Td>
+                  <Table.Td>{formatRunTime(benchmark.ranAt)}</Table.Td>
+                </Table.Tr>
               ))}
-            </tbody>
-          </table>
-        </div>
+            </Table.Tbody>
+          </Table>
+        </Table.ScrollContainer>
       )}
-      <div className="benchmark-note">
-        <span>i</span>
-        <p>
-          <strong>Why results differ</strong> Prompt processing and token generation stress the link
-          differently. SharedLocalLLM recommends the fastest valid result; distribution is not
-          assumed to be faster.
-        </p>
-      </div>
-    </div>
+
+      <Paper withBorder p="md" bg="dark.8">
+        <Group gap="sm" wrap="nowrap" align="flex-start">
+          <ThemeIcon variant="light" color="amber" size="md" mt={2}>
+            <IconInfoCircle size={14} />
+          </ThemeIcon>
+          <Text size="sm" c="dimmed">
+            <b>Why results differ</b> Prompt processing and token generation stress the link
+            differently. SharedLocalLLM recommends the fastest valid result; distribution is not
+            assumed to be faster.
+          </Text>
+        </Group>
+      </Paper>
+    </Box>
+  );
+}
+
+function ThroughputCell({ value }: { value: number }) {
+  return (
+    <Table.Td>
+      <Stack gap={0}>
+        <Text fw={600}>{value.toFixed(1)}</Text>
+        <Text size="xs" c="dimmed">
+          tok/s
+        </Text>
+      </Stack>
+    </Table.Td>
   );
 }

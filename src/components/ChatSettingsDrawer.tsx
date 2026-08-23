@@ -1,3 +1,15 @@
+import {
+  CloseButton,
+  Drawer,
+  Group,
+  Slider,
+  Stack,
+  Text,
+  Textarea,
+  TextInput,
+  Title,
+} from "@mantine/core";
+
 import type { ChatSettings } from "../types";
 
 interface ChatSettingsDrawerProps {
@@ -8,46 +20,57 @@ interface ChatSettingsDrawerProps {
 
 export function ChatSettingsDrawer({ settings, setSettings, close }: ChatSettingsDrawerProps) {
   return (
-    <aside className="chat-settings" aria-label="Generation settings">
-      <header>
-        <h2>Generation settings</h2>
-        <button className="icon-button" aria-label="Close generation settings" onClick={close}>
-          ×
-        </button>
-      </header>
-      <label className="field-label" htmlFor="system-prompt">
-        System prompt
-      </label>
-      <textarea
-        id="system-prompt"
-        value={settings.systemPrompt}
-        onChange={(event) => setSettings({ ...settings, systemPrompt: event.target.value })}
-        rows={6}
-      />
-      <label className="range-label" htmlFor="temperature">
-        <span>Temperature</span>
-        <output>{settings.temperature.toFixed(1)}</output>
-      </label>
-      <input
-        id="temperature"
-        type="range"
-        min="0"
-        max="2"
-        step="0.1"
-        value={settings.temperature}
-        onChange={(event) => setSettings({ ...settings, temperature: Number(event.target.value) })}
-      />
-      <label className="field-label" htmlFor="max-tokens">
-        Maximum response tokens
-      </label>
-      <input
-        id="max-tokens"
-        type="number"
-        min="64"
-        max="8192"
-        value={settings.maxTokens}
-        onChange={(event) => setSettings({ ...settings, maxTokens: Number(event.target.value) })}
-      />
-    </aside>
+    <Drawer
+      opened
+      onClose={close}
+      position="right"
+      withCloseButton={false}
+    >
+      <Stack gap="md">
+        <Group justify="space-between" wrap="nowrap">
+          <Title order={3}>Generation settings</Title>
+          <CloseButton aria-label="Close generation settings" onClick={close} />
+        </Group>
+        <Textarea
+          id="system-prompt"
+          label="System prompt"
+          value={settings.systemPrompt}
+          onChange={(event) => setSettings({ ...settings, systemPrompt: event.target.value })}
+          autosize
+          minRows={6}
+          maxRows={14}
+        />
+        <Stack gap={4}>
+          <Group justify="space-between">
+            <Text size="sm" fw={500}>
+              Temperature
+            </Text>
+            <Text size="sm" ff="monospace" fw={600}>
+              {settings.temperature.toFixed(1)}
+            </Text>
+          </Group>
+          <Slider
+            aria-label="Temperature"
+            min={0}
+            max={2}
+            step={0.1}
+            value={settings.temperature}
+            onChange={(value) => setSettings({ ...settings, temperature: value })}
+            color="cyan"
+            label={(value) => value.toFixed(1)}
+          />
+        </Stack>
+        <TextInput
+          id="max-tokens"
+          label="Maximum response tokens"
+          type="number"
+          min={64}
+          max={8192}
+          w={160}
+          value={settings.maxTokens}
+          onChange={(event) => setSettings({ ...settings, maxTokens: Number(event.target.value) })}
+        />
+      </Stack>
+    </Drawer>
   );
 }

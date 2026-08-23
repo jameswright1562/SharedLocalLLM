@@ -1,5 +1,29 @@
 import { useCallback, useEffect, useState } from "react";
 import type { ReactElement } from "react";
+import {
+  Alert,
+  AppShell,
+  Badge,
+  Box,
+  Burger,
+  Button,
+  Group,
+  Loader,
+  NavLink,
+  Stack,
+  Text,
+  Title,
+} from "@mantine/core";
+import {
+  IconApi,
+  IconArrowsExchange,
+  IconBox,
+  IconGauge,
+  IconHome,
+  IconMessage,
+  IconServer2,
+  IconSettings,
+} from "@tabler/icons-react";
 
 import { ComputePath } from "./components/ComputePath";
 import { SetupWizard } from "./components/SetupWizard";
@@ -15,15 +39,19 @@ import { appService, demoService } from "./services/appService";
 import { describeAppError } from "./services/errors";
 import type { AppService, AppSnapshot, PageId, PageProps } from "./types";
 
-const navigation: Array<{ id: PageId; label: string; icon: string }> = [
-  { id: "overview", label: "Overview", icon: "⌂" },
-  { id: "nodes", label: "Nodes", icon: "▦" },
-  { id: "network", label: "Network", icon: "↔" },
-  { id: "models", label: "Models", icon: "◫" },
-  { id: "benchmarks", label: "Benchmarks", icon: "⌁" },
-  { id: "chat", label: "Chat", icon: "◌" },
-  { id: "api", label: "API", icon: "{}" },
-  { id: "settings", label: "Settings", icon: "⚙" },
+const navigation: Array<{
+  id: PageId;
+  label: string;
+  icon: typeof IconHome;
+}> = [
+  { id: "overview", label: "Overview", icon: IconHome },
+  { id: "nodes", label: "Nodes", icon: IconServer2 },
+  { id: "network", label: "Network", icon: IconArrowsExchange },
+  { id: "models", label: "Models", icon: IconBox },
+  { id: "benchmarks", label: "Benchmarks", icon: IconGauge },
+  { id: "chat", label: "Chat", icon: IconMessage },
+  { id: "api", label: "API", icon: IconApi },
+  { id: "settings", label: "Settings", icon: IconSettings },
 ];
 
 const pageComponents: Record<PageId, (props: PageProps) => ReactElement> = {
@@ -36,6 +64,15 @@ const pageComponents: Record<PageId, (props: PageProps) => ReactElement> = {
   api: ApiPage,
   settings: SettingsPage,
 };
+
+function BrandMark() {
+  return (
+    <div className="brand-mark" aria-hidden="true">
+      <span />
+      <span />
+    </div>
+  );
+}
 
 export default function App({ service = appService }: { service?: AppService }) {
   const [snapshot, setSnapshot] = useState<AppSnapshot | null>(null);
@@ -84,25 +121,23 @@ export default function App({ service = appService }: { service?: AppService }) 
 
   if (!snapshot) {
     return (
-      <main className="boot-screen">
-        <div className="boot-mark">
-          <span />
-          <span />
-        </div>
-        <h1>SharedLocalLLM</h1>
+      <Stack align="center" justify="center" mih="100vh" gap="lg">
+        <BrandMark />
+        <Title order={1}>SharedLocalLLM</Title>
         {loadingError ? (
-          <>
-            <p role="alert">{loadingError}</p>
-            <button className="button primary" onClick={() => void refreshSnapshot()}>
-              Try again
-            </button>
-          </>
+          <Stack align="center" gap="md" w={420} maw="90vw">
+            <Alert color="coral" variant="light" role="alert" w="100%">
+              {loadingError}
+            </Alert>
+            <Button onClick={() => void refreshSnapshot()}>Try again</Button>
+          </Stack>
         ) : (
-          <p>
-            <span className="spinner" /> Reading local capabilities…
-          </p>
+          <Group gap="xs">
+            <Loader size="xs" type="dots" />
+            <Text c="dimmed">Reading local capabilities…</Text>
+          </Group>
         )}
-      </main>
+      </Stack>
     );
   }
 
@@ -110,9 +145,9 @@ export default function App({ service = appService }: { service?: AppService }) 
     return (
       <>
         {service === demoService && (
-          <div className="preview-banner" role="status">
+          <Alert variant="light" color="cyan" role="status" radius={0}>
             Browser preview — simulated hardware. This is not a live two-computer cluster.
-          </div>
+          </Alert>
         )}
         <SetupWizard snapshot={snapshot} service={service} onComplete={setSnapshot} />
       </>
@@ -125,93 +160,117 @@ export default function App({ service = appService }: { service?: AppService }) 
   const preview = service === demoService;
 
   return (
-    <div className="app-shell">
-      {preview && (
-        <div className="preview-banner" role="status">
-          Browser preview — simulated hardware. This is not a live two-computer cluster.
-        </div>
-      )}
-      {loadingError && snapshot && (
-        <div className="preview-banner" role="alert">
-          Latest refresh failed: {loadingError}
-        </div>
-      )}
-      <button
-        className="mobile-menu"
-        aria-label="Open navigation"
-        aria-expanded={sidebarOpen}
-        onClick={() => setSidebarOpen(!sidebarOpen)}
-      >
-        ☰
-      </button>
-      <aside className={`sidebar ${sidebarOpen ? "open" : ""}`}>
-        <header className="brand">
-          <div className="brand-mark" aria-hidden="true">
-            <span />
-            <span />
-          </div>
-          <div>
-            <strong>SharedLocal</strong>
-            <span>LLM</span>
-          </div>
-        </header>
-        <nav aria-label="Primary navigation">
-          {navigation.map((item) => (
-            <button
-              key={item.id}
-              className={page === item.id ? "active" : ""}
-              aria-current={page === item.id ? "page" : undefined}
-              onClick={() => navigate(item.id)}
-            >
-              <span className="nav-icon" aria-hidden="true">
-                {item.icon}
-              </span>
-              <span>{item.label}</span>
-              {item.id === "nodes" && <i>{onlineNodes}</i>}
-            </button>
-          ))}
-        </nav>
-        <footer>
-          <div className="sidebar-runtime">
-            <span
-              className={`status-dot ${snapshot.runtime.status === "ready" ? "ready" : "warning"}`}
-              aria-hidden="true"
+    <AppShell
+      header={{ height: 56 }}
+      navbar={{ width: 248, breakpoint: "sm", collapsed: { mobile: !sidebarOpen } }}
+      padding="md"
+    >
+      <AppShell.Header px="md">
+        <Group h="100%" justify="space-between" wrap="nowrap" gap="md">
+          <Group gap="sm" wrap="nowrap">
+            <Burger
+              opened={sidebarOpen}
+              onClick={() => setSidebarOpen(!sidebarOpen)}
+              hiddenFrom="sm"
+              size="sm"
+              aria-label="Toggle navigation"
             />
-            <div>
-              <strong>Runtime {snapshot.runtime.status}</strong>
-              <small>{snapshot.runtime.version ?? "Action required"}</small>
-            </div>
-          </div>
-          <span className="app-version">SHAREDLOCALLLM · LOCAL ONLY</span>
-        </footer>
-      </aside>
-      {sidebarOpen && (
-        <button
-          className="sidebar-scrim"
-          aria-label="Close navigation"
-          onClick={() => setSidebarOpen(false)}
-        />
-      )}
-      <div className="app-main">
-        <header className="topbar">
-          <ComputePath cluster={snapshot.cluster} nodes={snapshot.nodes} compact />
-          <div className="top-status">
-            <span>{onlineNodes}/2 nodes online</span>
-            <i aria-hidden="true" />
-            <span className="capitalize">
+            <ComputePath cluster={snapshot.cluster} nodes={snapshot.nodes} compact />
+          </Group>
+          <Group gap="sm" wrap="nowrap" visibleFrom="xs">
+            <Text size="sm" c="dimmed" style={{ whiteSpace: "nowrap" }}>
+              {onlineNodes}/2 nodes online
+            </Text>
+            <Text size="sm" tt="capitalize" c="dimmed" visibleFrom="md" style={{ whiteSpace: "nowrap" }}>
               {snapshot.network?.classification ?? "link untested"}
-            </span>
-          </div>
-        </header>
-        <main className="content">
-          <CurrentPage
-            snapshot={snapshot}
-            service={service}
-            refreshSnapshot={refreshSnapshot}
-            navigate={navigate}
-          />
-        </main>
-      </div>
-    </div>
+            </Text>
+          </Group>
+        </Group>
+      </AppShell.Header>
+
+      <AppShell.Navbar component="nav" aria-label="Primary navigation" p={0}>
+        <AppShell.Section p="md" pb="sm">
+          <Group gap="sm" wrap="nowrap">
+            <BrandMark />
+            <Box>
+              <Text fw={700} lh={1.1}>
+                SharedLocal
+              </Text>
+              <Text size="xs" c="cyan" ff="monospace" fw={600} lh={1.4}>
+                LLM · LOCAL ONLY
+              </Text>
+            </Box>
+          </Group>
+        </AppShell.Section>
+        <AppShell.Section grow component="div" px="xs">
+          {navigation.map((item) => (
+            <NavLink
+              key={item.id}
+              component="button"
+              type="button"
+              active={page === item.id}
+              label={<Text size="sm">{item.label}</Text>}
+              leftSection={<item.icon size={17} stroke={1.6} />}
+              rightSection={
+                item.id === "nodes" ? (
+                  <Badge size="xs" variant="light" color="cyan" aria-hidden>
+                    {onlineNodes}
+                  </Badge>
+                ) : undefined
+              }
+              onClick={() => navigate(item.id)}
+            />
+          ))}
+        </AppShell.Section>
+        <AppShell.Section p="md" pt="sm">
+          <Group gap="xs" wrap="nowrap" mb="xs">
+            <span
+              aria-hidden="true"
+              style={{
+                display: "inline-block",
+                width: 8,
+                height: 8,
+                borderRadius: "50%",
+                flex: "0 0 auto",
+                background:
+                  snapshot.runtime.status === "ready"
+                    ? "var(--mantine-color-mint-4)"
+                    : "var(--mantine-color-amber-4)",
+              }}
+            />
+            <Box>
+              <Text size="xs" fw={600}>
+                Runtime {snapshot.runtime.status}
+              </Text>
+              <Text size="10px" c="dimmed">
+                {snapshot.runtime.version ?? "Action required"}
+              </Text>
+            </Box>
+          </Group>
+          <Text size="9px" c="dimmed" tt="uppercase" ls={2}>
+            SHAREDLOCALLLM · LOCAL ONLY
+          </Text>
+        </AppShell.Section>
+      </AppShell.Navbar>
+
+      <AppShell.Main>
+        {preview && (
+          <Alert variant="light" color="amber" role="status" mb="md">
+            Browser preview — simulated hardware. This is not a live two-computer cluster.
+          </Alert>
+        )}
+        {loadingError && (
+          <Alert variant="light" color="coral" role="alert" mb="md">
+            Latest refresh failed: {loadingError}
+          </Alert>
+        )}
+        <CurrentPage
+          snapshot={snapshot}
+          service={service}
+          refreshSnapshot={refreshSnapshot}
+          navigate={navigate}
+        />
+      </AppShell.Main>
+    </AppShell>
   );
 }

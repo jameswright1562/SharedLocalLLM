@@ -1,7 +1,31 @@
 import { useState } from "react";
+import {
+  Alert,
+  Badge,
+  Box,
+  Button,
+  Card,
+  Flex,
+  Group,
+  Paper,
+  Progress,
+  SimpleGrid,
+  Stack,
+  Text,
+  ThemeIcon,
+  Title,
+} from "@mantine/core";
+import { IconActivity, IconBolt } from "@tabler/icons-react";
+
 import { describeAppError } from "../services/errors";
 import type { NetworkBenchmark, PageProps } from "../types";
-import { Meter } from "../components/Telemetry";
+
+const verdictCopy: Record<NetworkBenchmark["classification"], string> = {
+  good: "This path is well suited to layer-split inference.",
+  usable:
+    "Distributed inference should work, but compare it with single-node placement.",
+  poor: "Prefer single-node inference when the model fits. The link may constrain token speed.",
+};
 
 export function NetworkPage({ snapshot, service }: PageProps) {
   const [result, setResult] = useState<NetworkBenchmark | undefined>(snapshot.network);
@@ -22,146 +46,179 @@ export function NetworkPage({ snapshot, service }: PageProps) {
 
   const slowest = result ? Math.min(result.downMbps, result.upMbps) : 0;
   return (
-    <div className="page">
-      <header className="page-header split-header">
-        <div>
-          <p className="section-kicker">Transport</p>
-          <h1>Link diagnostics</h1>
-          <p>Measure the peer route used for distributed inference.</p>
-        </div>
-        <button
-          className="button primary"
+    <Box>
+      <Flex justify="space-between" align="flex-start" gap="md" wrap="wrap" mb="lg">
+        <Box>
+          <Text size="xs" fw={700} tt="uppercase" ls={1.5} c="cyan">
+            Transport
+          </Text>
+          <Title order={1}>Link diagnostics</Title>
+          <Text c="dimmed">Measure the peer route used for distributed inference.</Text>
+        </Box>
+        <Button
           disabled={testing || snapshot.nodes.length < 2}
           onClick={() => void runTest()}
         >
           {testing ? "Testing the peer channel…" : "Run network test"}
-        </button>
-      </header>
+        </Button>
+      </Flex>
+
       {error && (
-        <div className="error-panel" role="alert">
-          <span className="status-dot danger" aria-hidden="true" />
-          <div>
-            <strong>Test failed</strong>
-            <p>{error}</p>
-          </div>
-        </div>
+        <Alert role="alert" variant="light" color="coral" title="Test failed" mb="md">
+          {error}
+        </Alert>
       )}
+
       {!result ? (
-        <div className="empty-state">
-          <span>↔</span>
-          <div>
-            <h2>No link result yet</h2>
-            <p>
+        <Paper withBorder p="xl">
+          <Stack align="center" gap="xs" ta="center">
+            <Text size="28px" c="cyan">
+              ↔
+            </Text>
+            <Title order={3}>No link result yet</Title>
+            <Text c="dimmed" maw={420}>
               Pair a worker, close large transfers, and run the test to get a topology
               recommendation.
-            </p>
-          </div>
-        </div>
+            </Text>
+          </Stack>
+        </Paper>
       ) : (
         <div data-testid="network-test-result">
-          <section className={`network-verdict verdict-${result.classification}`}>
-            <div>
-              <span className="signal-bars" aria-hidden="true">
-                <i />
-                <i />
-                <i />
-              </span>
+          <Paper
+            withBorder
+            p="xl"
+            bg="dark.8"
+            mb="md"
+            component="section"
+            aria-label={`Link classification ${result.classification}`}
+          >
+            <Group gap="md" mb="xs" wrap="nowrap">
+              <ThemeIcon variant="light" size="xl" color={verdictColor(result.classification)}>
+                <IconActivity size={22} />
+              </ThemeIcon>
               <div>
-                <p className="section-kicker">Link classification</p>
-                <strong className="classification capitalize">{result.classification}</strong>
+                <Text size="xs" fw={700} tt="uppercase" ls={1.5} c="cyan">
+                  Link classification
+                </Text>
+                <Text className="classification" tt="capitalize" fw={700} size="xl" lh={1.2}>
+                  {result.classification}
+                </Text>
               </div>
-            </div>
-            <p>
-              {result.classification === "good"
-                ? "This path is well suited to layer-split inference."
-                : result.classification === "usable"
-                  ? "Distributed inference should work, but compare it with single-node placement."
-                  : "Prefer single-node inference when the model fits. The link may constrain token speed."}
-            </p>
-          </section>
-          <section className="metric-rack">
-            <div className="primary-metric">
-              <span>Sustained throughput</span>
-              <strong>{Math.round(slowest)}</strong>
-              <b>Mbit/s</b>
-              <small>slower direction</small>
-            </div>
-            <div>
-              <span>Median latency</span>
-              <strong>
-                {result.latencyMedianMs.toFixed(1)} <b>ms</b>
-              </strong>
-            </div>
-            <div>
-              <span>p95 latency</span>
-              <strong>
-                {result.latencyP95Ms.toFixed(1)} <b>ms</b>
-              </strong>
-            </div>
+            </Group>
+            <Text c="dimmed">{verdictCopy[result.classification]}</Text>
+          </Paper>
+
+          <SimpleGrid cols={{ base: 2, sm: 3 }} spacing="sm" mb="md" component="section" aria-label="Measured link metrics">
+            <MetricCard label="Sustained throughput" value={`${Math.round(slowest)}`} unit="Mbit/s" note="slower direction" primary />
+            <MetricCard label="Median latency" value={result.latencyMedianMs.toFixed(1)} unit="ms" />
+            <MetricCard label="p95 latency" value={result.latencyP95Ms.toFixed(1)} unit="ms" />
             {result.jitterMs >= 0 && (
-              <div>
-                <span>Jitter</span>
-                <strong>
-                  {result.jitterMs.toFixed(1)} <b>ms</b>
-                </strong>
-              </div>
+              <MetricCard label="Jitter" value={result.jitterMs.toFixed(1)} unit="ms" />
             )}
             {result.packetLossPercent >= 0 && (
-              <div>
-                <span>Packet loss</span>
-                <strong>
-                  {result.packetLossPercent.toFixed(1)} <b>%</b>
-                </strong>
-              </div>
+              <MetricCard label="Packet loss" value={result.packetLossPercent.toFixed(1)} unit="%" />
             )}
-          </section>
-          <div className="throughput-detail">
-            <span>
-              Measured peer download <b>{Math.round(result.downMbps)} Mbit/s</b>
-            </span>
-            <Meter value={result.downMbps} max={Math.max(result.downMbps, 1000)} />
-            <small>One measured direction; not separate up/down links.</small>
-          </div>
+          </SimpleGrid>
+
+          <Paper withBorder p="md" mb="md">
+            <Text size="sm" mb={4}>
+              Measured peer download{" "}
+              <b>{Math.round(result.downMbps)} Mbit/s</b>
+            </Text>
+            <Progress
+              value={(result.downMbps / Math.max(result.downMbps, 1000)) * 100}
+              color="cyan"
+              size="sm"
+              radius="xs"
+              mb={4}
+            />
+            <Text size="xs" c="dimmed">
+              One measured direction; not separate up/down links.
+            </Text>
+          </Paper>
+
           {result.windowsProfile && (
-            <p className="network-profile-note">
+            <Text size="sm" c="dimmed">
               Windows network profile: <b>{result.windowsProfile}</b> — informational only, it does
               not affect operation.
-            </p>
+            </Text>
           )}
         </div>
       )}
-      <section className="guidance-grid">
-        <article>
-          <span className="guidance-icon">⌁</span>
-          <div>
-            <h3>Prefer wired Ethernet</h3>
-            <p>
-              Connect both nodes to the same switch. A direct 2.5 GbE link can improve larger model
-              splits.
-            </p>
-          </div>
-        </article>
-        <article>
-          <span className="guidance-icon">⌁</span>
-          <div>
-            <h3>If you use Wi-Fi</h3>
-            <p>
-              Use 5 GHz or 6 GHz near the access point, pause downloads, and retest after changing
-              rooms.
-            </p>
-          </div>
-        </article>
-        <article>
-          <span className="guidance-icon">⌁</span>
-          <div>
-            <h3>Direct Ethernet cable</h3>
-            <p>
-              A cable directly between the two computers works with static 10.10.10.x addresses or
-              automatic 169.254.x.x link-local addresses — no router and no network-profile change.
-            </p>
-          </div>
-        </article>
-      </section>
-    </div>
+
+      <SimpleGrid cols={{ base: 1, sm: 3 }} spacing="md" mt="xl" component="section" aria-label="Link guidance">
+        <GuidanceCard title="Prefer wired Ethernet">
+          Connect both nodes to the same switch. A direct 2.5 GbE link can improve larger model
+          splits.
+        </GuidanceCard>
+        <GuidanceCard title="If you use Wi-Fi">
+          Use 5 GHz or 6 GHz near the access point, pause downloads, and retest after changing
+          rooms.
+        </GuidanceCard>
+        <GuidanceCard title="Direct Ethernet cable">
+          A cable directly between the two computers works with static 10.10.10.x addresses or
+          automatic 169.254.x.x link-local addresses — no router and no network-profile change.
+        </GuidanceCard>
+      </SimpleGrid>
+    </Box>
+  );
+}
+
+function verdictColor(classification: NetworkBenchmark["classification"]) {
+  if (classification === "good") return "mint";
+  if (classification === "usable") return "amber";
+  return "coral";
+}
+
+function MetricCard({
+  label,
+  value,
+  unit,
+  note,
+  primary,
+}: {
+  label: string;
+  value: string;
+  unit: string;
+  note?: string;
+  primary?: boolean;
+}) {
+  return (
+    <Paper withBorder p="md">
+      <Text size="xs" tt="uppercase" ls={1} c="dimmed" fw={600}>
+        {label}
+      </Text>
+      <Group gap={4} align="baseline">
+        <Text size={primary ? "30px" : "lg"} fw={700}>
+          {value}
+        </Text>
+        <Badge variant="light" size="sm" color="cyan">
+          {unit}
+        </Badge>
+      </Group>
+      {note && (
+        <Text size="10px" c="dimmed">
+          {note}
+        </Text>
+      )}
+    </Paper>
+  );
+}
+
+function GuidanceCard({ title, children }: { title: string; children: string }) {
+  return (
+    <Card withBorder p="md" component="article">
+      <Stack gap="xs">
+        <Group gap="sm">
+          <ThemeIcon variant="light" color="amber" size="md">
+            <IconBolt size={14} />
+          </ThemeIcon>
+          <Title order={4}>{title}</Title>
+        </Group>
+        <Text size="sm" c="dimmed">
+          {children}
+        </Text>
+      </Stack>
+    </Card>
   );
 }

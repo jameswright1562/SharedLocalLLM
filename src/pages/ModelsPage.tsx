@@ -1,7 +1,20 @@
 import { useMemo, useState } from "react";
+import {
+  Box,
+  Button,
+  Flex,
+  Group,
+  Modal,
+  SegmentedControl,
+  TextInput,
+  Title,
+  Text,
+} from "@mantine/core";
+import { IconSearch } from "@tabler/icons-react";
+
 import { ModelCatalogue, type CapabilityFilter } from "../components/ModelCatalogue";
 import { ModelInspector } from "../components/ModelInspector";
-import { Modal } from "@mantine/core";
+import { StatusBanner } from "../components/StatusBanner";
 import { describeAppError } from "../services/errors";
 import { DEFAULT_LOAD_OPTIONS } from "../services/loadOptions";
 import {
@@ -18,6 +31,13 @@ import {
   fitLayersByVram,
 } from "../services/splitEstimate";
 import type { PageProps } from "../types";
+
+const capabilityFilters: Array<{ value: CapabilityFilter; label: string }> = [
+  { value: "all", label: "All" },
+  { value: "text", label: "Text" },
+  { value: "vision", label: "Vision" },
+  { value: "split", label: "Split" },
+];
 
 export function ModelsPage({ snapshot, service, refreshSnapshot }: PageProps) {
   const [query, setQuery] = useState("");
@@ -177,115 +197,105 @@ export function ModelsPage({ snapshot, service, refreshSnapshot }: PageProps) {
   }
 
   return (
-    <div className="page models-page">
-      <header className="page-header split-header">
-        <div>
-          <p className="section-kicker">Catalogue</p>
-          <h1>Model library</h1>
-          <p>
+    <Box>
+      <Flex justify="space-between" align="flex-start" gap="md" wrap="wrap" mb="lg">
+        <Box>
+          <Text size="xs" fw={700} tt="uppercase" ls={1.5} c="cyan">
+            Catalogue
+          </Text>
+          <Title order={1}>Model library</Title>
+          <Text c="dimmed" maw={560}>
             GGUF models on this computer, plus names reported by a paired peer. Launch requires a
             local file. Source files stay where they are.
-          </p>
-        </div>
-        <div className="button-row flush">
-          <button
-            className="button secondary"
-            disabled={!!busy}
-            onClick={() => void refreshModels()}
-          >
+          </Text>
+        </Box>
+        <Group gap="sm">
+          <Button variant="default" disabled={!!busy} onClick={() => void refreshModels()}>
             {busy === "refresh" ? "Indexing…" : "Refresh"}
-          </button>
+          </Button>
           {(snapshot.cluster.status === "running" || snapshot.cluster.status === "loading") && (
-            <button
-              className="button stop-button"
+            <Button
+              color="coral"
+              variant="light"
               disabled={!!busy}
               onClick={() => void service.stopCluster().then(() => refreshSnapshot())}
             >
               Stop cluster
-            </button>
+            </Button>
           )}
-          <button className="button primary" disabled={!!busy} onClick={() => void addFolder()}>
+          <Button disabled={!!busy} onClick={() => void addFolder()}>
             Add folder
-          </button>
-        </div>
-      </header>
-      <div className="model-toolbar">
-        <label className="search-field">
-          <span aria-hidden="true">⌕</span>
-          <input
-            type="search"
-            aria-label="Search models"
-            placeholder="Search name, architecture, quantization…"
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-          />
-        </label>
-        <div className="segmented" role="group" aria-label="Filter model type">
-          {(["all", "text", "vision", "split"] as CapabilityFilter[]).map((value) => (
-            <button
-              key={value}
-              className={filter === value ? "active" : ""}
-              onClick={() => setFilter(value)}
-              aria-pressed={filter === value}
-            >
-              {value}
-            </button>
-          ))}
-        </div>
-      </div>
-      <div className="model-layout">
-        <ModelCatalogue
-          models={models}
-          visibleModels={visibleModels}
-          selectedId={selectedId}
-          select={(id) => {
-            setSelectedId(id);
-            setInspectorOpened(true);
-          }}
-          addFolder={() => void addFolder()}
+          </Button>
+        </Group>
+      </Flex>
+
+      <Flex gap="md" wrap="wrap" mb="md">
+        <TextInput
+          type="search"
+          aria-label="Search models"
+          placeholder="Search name, architecture, quantization…"
+          leftSection={<IconSearch size={16} />}
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          style={{ flex: 1, minWidth: 220 }}
         />
-        <Modal
-          opened={inspectorOpened}
-          onClose={() => setInspectorOpened(false)}
-          title="Model inspector"
-          size="xl"
-          centered
-        >
-          <ModelInspector
-            selected={selected}
-            nodeLookup={nodeLookup}
-            contextSize={contextSize}
-            setContextSize={(value) =>
-              selected && setContextByModel({ ...contextByModel, [selected.id]: value })
-            }
-            manualSplit={manualSplit}
-            setManualSplit={setManualSplit}
-            gpuNodes={gpuNodes}
-            gpuLayers={gpuLayers}
-            splitEstimate={splitEstimate}
-            setGpuLayers={(layers) =>
-              selected && setLayersByModel({ ...layersByModel, [selected.id]: layers })
-            }
-            workerNode={workerNode}
-            includeRemoteCpu={includeRemoteCpu}
-            setIncludeRemoteCpu={setIncludeRemoteCpu}
-            loadOptions={loadOptions}
-            setLoadOptions={(options) =>
-              selected && setOptionsByModel({ ...optionsByModel, [selected.id]: options })
-            }
-            busy={busy === "launch"}
-            splitInvalid={splitInvalid}
-            force={force}
-            setForce={setForce}
-            launch={() => void launch()}
-          />
-        </Modal>
-      </div>
-      {message && (
-        <div className="toast-message" role="status">
-          {message}
-        </div>
-      )}
-    </div>
+        <SegmentedControl
+          aria-label="Filter model type"
+          value={filter}
+          onChange={(value) => setFilter(value as CapabilityFilter)}
+          data={capabilityFilters}
+        />
+      </Flex>
+
+      <ModelCatalogue
+        models={models}
+        visibleModels={visibleModels}
+        selectedId={selectedId}
+        select={(id) => {
+          setSelectedId(id);
+          setInspectorOpened(true);
+        }}
+        addFolder={() => void addFolder()}
+      />
+
+      <Modal
+        opened={inspectorOpened}
+        onClose={() => setInspectorOpened(false)}
+        title="Model inspector"
+        size="xl"
+        centered
+      >
+        <ModelInspector
+          selected={selected}
+          nodeLookup={nodeLookup}
+          contextSize={contextSize}
+          setContextSize={(value) =>
+            selected && setContextByModel({ ...contextByModel, [selected.id]: value })
+          }
+          manualSplit={manualSplit}
+          setManualSplit={setManualSplit}
+          gpuNodes={gpuNodes}
+          gpuLayers={gpuLayers}
+          splitEstimate={splitEstimate}
+          setGpuLayers={(layers) =>
+            selected && setLayersByModel({ ...layersByModel, [selected.id]: layers })
+          }
+          workerNode={workerNode}
+          includeRemoteCpu={includeRemoteCpu}
+          setIncludeRemoteCpu={setIncludeRemoteCpu}
+          loadOptions={loadOptions}
+          setLoadOptions={(options) =>
+            selected && setOptionsByModel({ ...optionsByModel, [selected.id]: options })
+          }
+          busy={busy === "launch"}
+          splitInvalid={splitInvalid}
+          force={force}
+          setForce={setForce}
+          launch={() => void launch()}
+        />
+      </Modal>
+
+      {message && <StatusBanner message={message} />}
+    </Box>
   );
 }
