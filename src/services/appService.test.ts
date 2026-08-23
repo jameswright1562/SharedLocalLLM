@@ -49,14 +49,26 @@ describe("app services", () => {
       demoService.updateSettings({
         deviceName: "Renamed coordinator",
         apiPort: 12000,
+        authRequired: false,
         autostart: true,
       }),
     );
     expect(updated).toMatchObject({
       deviceName: "Renamed coordinator",
       apiPort: 12000,
+      authRequired: false,
       autostart: true,
     });
+    expect(await settle(demoService.getApiConfig())).toMatchObject({
+      url: "http://127.0.0.1:11435",
+      authRequired: true,
+      healthy: true,
+    });
+    const tried = await settle(demoService.tryApiRequest());
+    expect(tried.status).toBe(400);
+    expect(tried.body).toContain("model_not_loaded");
+    await settle(demoService.startCluster("meridian-12b", { contextSize: 4096, gpuLayers: [] }));
+    expect((await settle(demoService.tryApiRequest())).status).toBe(200);
 
     const progress = vi.fn();
     const installed = await settle(demoService.installRuntime(progress));
@@ -91,6 +103,7 @@ describe("app services", () => {
     await nativeService.updateSettings({
       deviceName: "Main node",
       apiPort: 11435,
+      authRequired: true,
       autostart: true,
     });
     await nativeService.installRuntime(progress);
@@ -126,6 +139,7 @@ describe("app services", () => {
     await nativeService.cancelGeneration();
     await nativeService.getApiConfig();
     await nativeService.regenerateApiKey();
+    await nativeService.tryApiRequest();
     await nativeService.openNetworkSettings();
     await nativeService.openLogsFolder();
 
@@ -153,6 +167,7 @@ describe("app services", () => {
       "cancel_generation",
       "get_api_config",
       "regenerate_api_key",
+      "try_api_request",
     ]);
     expect(invokeMock).toHaveBeenCalledWith("pick_model_directory", undefined);
     expect(invokeMock).toHaveBeenCalledWith("open_network_settings", undefined);

@@ -172,7 +172,8 @@ class InferenceEngine:
         self, include_cpu: bool = False
     ) -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
         endpoint = await asyncio.to_thread(self._rpc_worker.start, include_cpu)
-        self.store.log("INFO", "rpc_worker_ready", f"{endpoint} include_cpu={include_cpu}")
+        cache_state = self._rpc_worker.cache_dir or "off"
+        self.store.log("INFO", "rpc_worker_ready", f"{endpoint} include_cpu={include_cpu} cache={cache_state}")
         host, port = endpoint.split(":", 1)
         return await asyncio.open_connection(host, int(port))
 
@@ -313,15 +314,34 @@ class InferenceEngine:
             return await asyncio.to_thread(self._benchmark_sync)
 
     def _benchmark_sync(self) -> tuple[float, float]:
+        from llama_cpp import LogitsProcessorList
+
         prompt = "SharedLocalLLM benchmark: explain why local inference is useful in one paragraph."
         with self._sync_lock:
+            if self._cancel.is_set():
+                raise BackendError("generation_cancelled", "The benchmark was cancelled.")
             tokens = self.llm.tokenize(prompt.encode(), add_bos=True)
             self.llm.reset()
             started = time.perf_counter()
             self.llm.eval(tokens)
             prompt_rate = len(tokens) / max(time.perf_counter() - started, 0.001)
-            started = time.perf_counter()
-            result = self.llm.create_completion(prompt=prompt, max_tokens=64, temperature=0.0)
+
+            def abort_on_cancel(_tokens: object, logits: object) -> object:
+                if self._cancel.is_set():
+                    raise InterruptedError
+                return logits
+
+            try:
+                started = time.perf_counter()
+                result = self.llm.create_completion(
+                    prompt=prompt,
+                    max_tokens=64,
+                    temperature=0.0,
+                    logits_processor=LogitsProcessorList([abort_on_cancel]),
+                )
+            except InterruptedError:
+                self.llm.reset()
+                raise BackendError("generation_cancelled", "The benchmark was cancelled.") from None
             elapsed = max(time.perf_counter() - started, 0.001)
             text = str(result["choices"][0].get("text") or "")
             generated = max(1, len(self.llm.tokenize(text.encode(), add_bos=False)))

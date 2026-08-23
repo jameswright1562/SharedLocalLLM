@@ -117,6 +117,7 @@ export const nativeService: AppService = {
   cancelGeneration: () => backend("cancel_generation"),
   getApiConfig: () => backend("get_api_config"),
   regenerateApiKey: () => backend("regenerate_api_key"),
+  tryApiRequest: () => backend("try_api_request"),
   openNetworkSettings: () => invoke("open_network_settings"),
   openLogsFolder: () => invoke("open_logs_folder"),
 };

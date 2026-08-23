@@ -97,6 +97,27 @@
   color: #a9dfe1;
   font: 0.7rem/1.7 var(--mono);
 }
+.code-actions {
+  display: flex;
+  gap: 8px;
+}
+.try-result {
+  border-top: 1px solid var(--line);
+}
+.try-result-meta {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding: 14px 22px 0;
+  color: var(--muted);
+}
+.try-result pre {
+  overflow-x: auto;
+  margin: 0;
+  padding: 14px 22px 22px;
+  color: #9fe0b7;
+  font: 0.7rem/1.7 var(--mono);
+}
 .endpoint-list {
   margin-top: 30px;
 }

@@ -106,6 +106,10 @@ specific products into application logic.
 - Close and reopen each app independently; confirm the saved peer returns to Reachable without a
   new pairing code. Then use **Nodes > Forget**, confirm both peers require a fresh pairing, and
   verify every configured model path and file remains unchanged.
+- Adjust a model's context size, GPU split, and advanced options, launch it, quit both apps, start
+  them again, and confirm the model inspector pre-fills the same values. Relaunching must reuse the
+  saved configuration instead of defaults; then run an inference benchmark and confirm the saved
+  configuration was not replaced by the benchmark's temporary settings.
 - Run a distributed benchmark and record the displayed per-computer GPU layer counts. Confirm both
   GPUs allocate memory while `llama-bench` runs and the result is labelled `distributed`; a browser
   demo or command-construction test is not physical acceptance.

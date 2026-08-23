@@ -154,6 +154,7 @@ const baseSnapshot: AppSnapshot = {
     "14:22:11  READY Local API listening on 127.0.0.1:11435",
   ],
   apiPort: 11435,
+  authRequired: true,
   autostart: false,
 };
 
@@ -161,5 +162,6 @@ export const demoSnapshot = structuredClone(baseSnapshot);
 export const demoApi: ApiConfig = {
   url: "http://127.0.0.1:11435",
   apiKey: "sk-local-demo-8f3d7a19",
+  authRequired: true,
   healthy: true,
 };

@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import ctypes
+from pathlib import Path
 
 import pytest
 
 from sharedlocalllm_backend.rpc_native import (
     classify_devices,
     prepare_model_devices,
+    server_start_arguments,
     split_rpc_devices,
     tensor_split_for,
 )
@@ -104,12 +106,55 @@ def test_pending_devices_are_injected_into_model_params() -> None:
     assert array[2] is None
 
 
-def test_prepare_rpc_load_distributed_builds_remote_first_split() -> None:
+def test_rpc_cache_dir_resolves_and_creates_the_llama_cpp_default(monkeypatch, tmp_path) -> None:
+    from sharedlocalllm_backend.rpc_native import _rpc_cache_dir
+
+    monkeypatch.setenv("LLAMA_CACHE", str(tmp_path))
+    result = _rpc_cache_dir()
+    assert result is not None
+    assert (tmp_path / "llama.cpp" / "rpc").is_dir()
+    assert Path(result).resolve() == (tmp_path / "llama.cpp" / "rpc").resolve()
+    assert result.endswith(("/", "\\"))
+
+
+def test_rpc_cache_dir_is_disabled_without_any_base_directory(monkeypatch, tmp_path) -> None:
+    from sharedlocalllm_backend import rpc_native
+
+    monkeypatch.setenv("LLAMA_CACHE", str(tmp_path))
+    for key in ("LOCALAPPDATA", "XDG_CACHE_HOME", "HOME"):
+        monkeypatch.delenv(key, raising=False)
+    assert rpc_native._rpc_cache_root() == str(tmp_path)
+
+    monkeypatch.delenv("LLAMA_CACHE", raising=False)
+    assert rpc_native._rpc_cache_dir() is None
+
+
+def test_server_start_arguments_pass_the_cache_directory() -> None:
+    array = (ctypes.c_void_p * 1)(ctypes.c_void_p(7))
+    endpoint, cache, threads, count, devices = server_start_arguments(
+        "127.0.0.1:5000", "C:\\cache\\llama.cpp\\rpc\\", 8, 1, array
+    )
+    assert endpoint == b"127.0.0.1:5000"
+    assert cache == b"C:\\cache\\llama.cpp\\rpc\\"
+    assert threads == 8
+    assert count == 1
+    assert devices is array
+
+
+def test_server_start_arguments_allow_a_disabled_cache() -> None:
+    array = (ctypes.c_void_p * 1)(ctypes.c_void_p(7))
+    _, cache, *_ = server_start_arguments("127.0.0.1:5000", None, 8, 1, array)
+    assert cache is None
+
+
+def test_prepare_rpc_load_distributed_builds_remote_first_split(monkeypatch, tmp_path) -> None:
     import asyncio
 
     pytest.importorskip("llama_cpp")
 
     from sharedlocalllm_backend.rpc_native import NativeRpcServer, prepare_rpc_load
+
+    monkeypatch.setenv("LLAMA_CACHE", str(tmp_path))
 
     async def scenario() -> None:
         server = NativeRpcServer()
@@ -118,16 +163,20 @@ def test_prepare_rpc_load_distributed_builds_remote_first_split() -> None:
         assert split is not None
         assert split[0] == 16.0
         assert abs(sum(split) - 32.0) < 0.001
+        assert server.cache_dir is not None
+        assert Path(server.cache_dir.rstrip("/\\")).is_dir()
 
     asyncio.run(scenario())
 
 
-def test_prepare_rpc_load_reserves_remote_cpu_device() -> None:
+def test_prepare_rpc_load_reserves_remote_cpu_device(monkeypatch, tmp_path) -> None:
     import asyncio
 
     pytest.importorskip("llama_cpp")
 
     from sharedlocalllm_backend.rpc_native import NativeRpcServer, prepare_rpc_load
+
+    monkeypatch.setenv("LLAMA_CACHE", str(tmp_path))
 
     async def scenario() -> None:
         server = NativeRpcServer()

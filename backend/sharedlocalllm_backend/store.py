@@ -28,8 +28,10 @@ class Store:
             "setupComplete": False,
             "apiPort": 11435,
             "apiKey": secrets.token_urlsafe(32),
+            "authRequired": True,
             "autostart": False,
             "customModelDirectories": [],
+            "modelLoadConfigs": {},
             "peer": None,
             "benchmarks": [],
         }
@@ -88,6 +90,22 @@ class Store:
             values.append(value)
             self._settings["benchmarks"] = values[-100:]
             self._write(self._settings)
+
+    def save_model_load_config(self, model_id: str, config: dict[str, Any]) -> None:
+        """Remember the exact load configuration that launched a model.
+
+        The next launch of the same model restores these values instead of
+        falling back to defaults.
+        """
+        with self._lock:
+            configs = dict(self._settings.get("modelLoadConfigs") or {})
+            configs[model_id] = config
+            self._settings["modelLoadConfigs"] = configs
+            self._write(self._settings)
+
+    def model_load_configs(self) -> dict[str, dict[str, Any]]:
+        with self._lock:
+            return dict(self._settings.get("modelLoadConfigs") or {})
 
     def log(self, level: str, event: str, detail: str) -> None:
         line = f"{level} {event}: {detail}"

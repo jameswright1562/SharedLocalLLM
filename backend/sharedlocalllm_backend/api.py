@@ -65,6 +65,8 @@ def create_openai_app(runtime: Any) -> FastAPI:
     app = FastAPI(title="SharedLocalLLM OpenAI API", docs_url=None, redoc_url=None)
 
     def authorize(authorization: str | None) -> None:
+        if not runtime.store.get("authRequired", True):
+            return
         expected = f"Bearer {runtime.store.get('apiKey')}"
         if authorization != expected:
             raise BackendError("api_unauthorized", "A valid SharedLocalLLM bearer key is required.")

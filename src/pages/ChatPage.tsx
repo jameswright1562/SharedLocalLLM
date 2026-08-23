@@ -1,12 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import { ChatComposer } from "../components/ChatComposer";
 import { ChatSettingsDrawer } from "../components/ChatSettingsDrawer";
+import { clearStoredChat, loadStoredChat, saveStoredChat } from "../services/chatStorage";
 import { describeAppError } from "../services/errors";
 import { fileToDataUrl } from "../services/media";
 import type { ChatMessage, ChatSettings, PageProps } from "../types";
 
 export function ChatPage({ snapshot, service, navigate, refreshSnapshot }: PageProps) {
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [stored] = useState(loadStoredChat);
+  const [messages, setMessages] = useState<ChatMessage[]>(stored.messages);
   const [draft, setDraft] = useState("");
   const [images, setImages] = useState<File[]>([]);
   const [generating, setGenerating] = useState(false);
@@ -14,11 +16,7 @@ export function ChatPage({ snapshot, service, navigate, refreshSnapshot }: PageP
   const [streamingReasoning, setStreamingReasoning] = useState("");
   const [phase, setPhase] = useState<"processing" | "generating">("processing");
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [settings, setSettings] = useState<ChatSettings>({
-    systemPrompt: "You are a concise and helpful assistant.",
-    temperature: 0.7,
-    maxTokens: 1024,
-  });
+  const [settings, setSettings] = useState<ChatSettings>(stored.settings);
   const bottomRef = useRef<HTMLDivElement>(null);
   const generationRef = useRef(0);
   const streamedTps = useRef<number | undefined>(undefined);
@@ -44,8 +42,17 @@ export function ChatPage({ snapshot, service, navigate, refreshSnapshot }: PageP
         : "";
 
   useEffect(() => {
+    saveStoredChat(messages, settings);
+  }, [messages, settings]);
+
+  useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, generating, streaming]);
+
+  function clearChat() {
+    clearStoredChat();
+    setMessages([]);
+  }
 
   async function submit(content = draft, existing?: ChatMessage[], retryImages: string[] = []) {
     if (!content.trim() || disabledReason || generating) return;
@@ -167,12 +174,17 @@ export function ChatPage({ snapshot, service, navigate, refreshSnapshot }: PageP
             <i aria-hidden="true" />
             {!noActiveModel ? "Model ready" : "No model"}
           </span>
-          {localRunning && (
+          {(localRunning || peerRunning) && (
             <button
               className="button stop-button compact-button"
               onClick={() => void service.stopCluster().then(() => refreshSnapshot())}
             >
               Stop cluster
+            </button>
+          )}
+          {messages.length > 0 && (
+            <button className="button secondary compact-button" onClick={clearChat}>
+              Clear chat
             </button>
           )}
           <button

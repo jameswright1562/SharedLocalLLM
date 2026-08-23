@@ -3,6 +3,7 @@ from __future__ import annotations
 import ctypes
 import os
 import socket
+import sys
 import threading
 import time
 from pathlib import Path
@@ -36,6 +37,7 @@ class NativeRpcServer:
         self._error: Exception | None = None
         self._dll_directory: Any = None
         self.include_cpu = True
+        self.cache_dir: str | None = None
 
     def start(self, include_cpu: bool = False) -> str:
         if (
@@ -51,10 +53,13 @@ class NativeRpcServer:
         self.include_cpu = True
         self.endpoint = None
         self._error = None
+        # Same file cache as rpc-server's -c/--cache flag: tensors persist in a
+        # local directory to cut repeated transfers over the peer link.
+        self.cache_dir = _rpc_cache_dir()
         port = _free_port()
         self.endpoint = f"127.0.0.1:{port}"
         self._thread = threading.Thread(
-            target=self._run, args=(True,), name="llama-rpc-worker", daemon=True
+            target=self._run, args=(True, self.cache_dir), name="llama-rpc-worker", daemon=True
         )
         self._thread.start()
         deadline = time.monotonic() + 15
@@ -68,7 +73,7 @@ class NativeRpcServer:
                 time.sleep(0.1)
         raise BackendError("rpc_worker_timeout", "Embedded llama.cpp RPC worker did not start.")
 
-    def _run(self, include_cpu: bool) -> None:
+    def _run(self, include_cpu: bool, cache_dir: str | None) -> None:
         try:
             ensure_backend_initialized()
 
@@ -115,14 +120,67 @@ class NativeRpcServer:
             ]
             start_server.restype = None
             start_server(
-                (self.endpoint or "127.0.0.1:0").encode(),
-                None,
-                max(1, (os.cpu_count() or 8) // 2),
-                len(devices),
-                device_array,
+                *server_start_arguments(
+                    self.endpoint or "127.0.0.1:0", cache_dir,
+                    max(1, (os.cpu_count() or 8) // 2),
+                    len(devices),
+                    device_array,
+                )
             )
         except Exception as error:  # native bootstrap errors must reach the control plane
             self._error = error
+
+
+def _rpc_cache_root() -> str | None:
+    """Base cache directory, honouring LLAMA_CACHE like llama.cpp's rpc-server."""
+    override = os.environ.get("LLAMA_CACHE")
+    if override:
+        return override
+    if os.name == "nt":
+        return os.environ.get("LOCALAPPDATA") or None
+    if sys.platform == "darwin":
+        home = os.environ.get("HOME")
+        return os.path.join(home, "Library", "Caches") if home else None
+    return os.environ.get("XDG_CACHE_HOME") or (os.environ.get("HOME") or None)
+
+
+def _rpc_cache_dir() -> str | None:
+    """Directory passed to ggml_backend_rpc_start_server as the ``-c`` equivalent.
+
+    Mirrors tools/rpc/rpc-server.cpp at the pinned revision: the base directory
+    gains ``llama.cpp/rpc`` and a trailing separator. Returns None when no base
+    directory can be resolved or created; the RPC worker then simply starts
+    with the cache disabled.
+    """
+    root = _rpc_cache_root()
+    if not root:
+        return None
+    directory = Path(root) / "llama.cpp" / "rpc"
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return None
+    text = str(directory)
+    if not text.endswith(("/", "\\")):
+        text += os.sep
+    return text
+
+
+def server_start_arguments(
+    endpoint: str,
+    cache_dir: str | None,
+    n_threads: int,
+    n_devices: int,
+    device_array: Any,
+) -> tuple[bytes, bytes | None, int, int, Any]:
+    """Assemble ggml_backend_rpc_start_server arguments in native order."""
+    return (
+        endpoint.encode(),
+        cache_dir.encode() if cache_dir else None,
+        max(1, n_threads),
+        n_devices,
+        device_array,
+    )
 
 
 def prepare_rpc_load(

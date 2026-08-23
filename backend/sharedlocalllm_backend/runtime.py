@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import json
 import secrets
 import socket
 import time
@@ -30,6 +31,7 @@ class BackendRuntime:
         self.models: list[dict[str, Any]] = []
         self.network: dict[str, Any] | None = None
         self.cluster: dict[str, Any] = {"status": "idle"}
+        self.peer_active_model_id: str | None = None
         self.inference = InferenceEngine(self.store)
         self.peer = PeerManager(self)
         self.api_port_changed: Callable[[int], Awaitable[None]] | None = None
@@ -62,14 +64,19 @@ class BackendRuntime:
     async def refresh_peer(self) -> None:
         peer = self.store.get("peer")
         if not peer:
+            self.peer_active_model_id = None
             self._merge_models()
             return
         node = await self.peer.heartbeat()
         if node:
             node["online"] = True
             node["role"] = "worker"
+            self.peer_active_model_id = (
+                node.get("clusterModelId") if node.get("clusterStatus") == "running" else None
+            )
         elif peer.get("capabilities", {}).get("online", True):
             peer["capabilities"]["online"] = False
+            self.peer_active_model_id = None
             self.store.update(peer=peer)
         refresh_fits(self.local_models, self.local_node, self._peer_node())
         self._merge_models()
@@ -107,9 +114,11 @@ class BackendRuntime:
             "runtime": dict(self._runtime),
             "deviceName": self.local_node["name"],
             "apiPort": int(self.store.get("apiPort", 11435)),
+            "authRequired": bool(self.store.get("authRequired", True)),
             "autostart": bool(self.store.get("autostart")),
             "nodes": nodes,
             "models": self.models,
+            "modelLoadConfigs": self.store.model_load_configs(),
             "modelDirectories": self._directories(),
             "network": self.network,
             "cluster": self.cluster,
@@ -139,6 +148,7 @@ class BackendRuntime:
             "cancel_generation": self.cancel_generation,
             "get_api_config": self.get_api_config,
             "regenerate_api_key": self.regenerate_api_key,
+            "try_api_request": self.try_api_request,
         }
         handler = handlers.get(command)
         if not handler:
@@ -182,7 +192,12 @@ class BackendRuntime:
         if port != old_port and self.api_port_changed:
             await self.api_port_changed(port)
         self.local_node["name"] = name
-        self.store.update(deviceName=name, apiPort=port, autostart=bool(settings.get("autostart")))
+        self.store.update(
+            deviceName=name,
+            apiPort=port,
+            autostart=bool(settings.get("autostart")),
+            authRequired=bool(settings.get("authRequired", True)),
+        )
         return self.snapshot()
 
     def refresh_hardware(self) -> dict[str, Any]:
@@ -241,6 +256,7 @@ class BackendRuntime:
                 await self.inference.unload()
         self.store.update(peer=None)
         self.peer.remote_models = []
+        self.peer_active_model_id = None
         self.network = None
         self.cluster = {"status": "idle"}
         self._publish_local_cluster()
@@ -259,7 +275,8 @@ class BackendRuntime:
         return estimate_split(model, normalized, nodes)
 
     async def start_cluster(
-        self, model_id: str, load_config: dict[str, Any], allow_peer: bool = True
+        self, model_id: str, load_config: dict[str, Any], allow_peer: bool = True,
+        save_config: bool = True,
     ) -> dict[str, Any]:
         model = self._model(model_id)
         peer = self.store.get("peer")
@@ -267,6 +284,8 @@ class BackendRuntime:
             if not allow_peer or not peer:
                 raise BackendError("model_not_local", "This model is stored only on the other computer.")
             await self.peer.request("start_cluster", {"modelId": model_id, "loadConfig": load_config})
+            if save_config:
+                self.store.save_model_load_config(model_id, load_config)
             self.cluster = {
                 "status": "running", "coordinatorNodeId": peer["id"],
                 "workerNodeId": self.local_node["id"], "modelId": model_id,
@@ -290,6 +309,8 @@ class BackendRuntime:
             await self.inference.load(
                 model, path, normalized_config, self.peer, self.local_node["id"], peer_id
             )
+            if save_config:
+                self.store.save_model_load_config(model_id, normalized_config)
             uses_peer = bool(peer_id and any(
                 x.get("nodeId") == peer_id and x.get("layers", 0) > 0
                 for x in normalized_config.get("gpuLayers", [])
@@ -311,9 +332,27 @@ class BackendRuntime:
                 raise
             raise BackendError("model_load_failed", str(error)) from error
 
+    def _remote_coordinator(self) -> str | None:
+        """Id of the other computer that is running this computer's model.
+
+        Prefers the locally recorded cluster session (this computer joined a
+        peer-launched cluster). When no local session exists, trusts the peer
+        heartbeat: a model loaded entirely on the other computer never opens an
+        RPC tunnel here, so its heartbeat is the only signal available.
+        """
+        if self.cluster.get("status") in ("loading", "running", "stopping"):
+            coordinator = self.cluster.get("coordinatorNodeId")
+            if coordinator and coordinator != self.local_node["id"]:
+                return str(coordinator)
+            return None
+        peer = self.store.get("peer")
+        if peer and self.peer_active_model_id:
+            return str(peer["id"])
+        return None
+
     async def stop_cluster(self, proxy_peer: bool = True) -> dict[str, Any]:
-        coordinator = self.cluster.get("coordinatorNodeId")
-        if proxy_peer and coordinator and coordinator != self.local_node["id"] and self.store.get("peer"):
+        remote_coordinator = self._remote_coordinator() if proxy_peer else None
+        if remote_coordinator and self.store.get("peer"):
             try:
                 await self.peer.request("stop_cluster")
             except BackendError as error:
@@ -336,16 +375,14 @@ class BackendRuntime:
     async def chat(
         self, messages: list[dict[str, Any]], settings: dict[str, Any], images: list[str], proxy_peer: bool = True
     ) -> dict[str, Any]:
-        coordinator = self.cluster.get("coordinatorNodeId")
-        if proxy_peer and coordinator and coordinator != self.local_node["id"]:
+        if proxy_peer and self._remote_coordinator():
             return await self.peer.request("chat", {"messages": messages, "settings": settings, "images": images})
         return await self.inference.chat(messages, settings, images)
 
     async def chat_stream_events(
         self, messages: list[dict[str, Any]], settings: dict[str, Any], images: list[str]
     ) -> AsyncIterator[dict[str, Any]]:
-        coordinator = self.cluster.get("coordinatorNodeId")
-        if coordinator and coordinator != self.local_node["id"]:
+        if self._remote_coordinator():
             result = await self.chat(messages, settings, images)
             if result.get("reasoning"):
                 yield {"type": "reasoning", "content": result["reasoning"]}
@@ -358,12 +395,20 @@ class BackendRuntime:
         async for event in self.inference.chat_stream(messages, settings, images):
             yield event
 
-    def cancel_generation(self) -> None:
+    async def cancel_generation(self) -> None:
+        if self._remote_coordinator():
+            try:
+                await self.peer.request("cancel_generation")
+            except BackendError as error:
+                self.store.log("WARN", "peer_cancel_failed", error.message)
         self.inference.cancel()
 
     async def run_inference_benchmark(self, model_id: str, proxy_peer: bool = True) -> list[dict[str, Any]]:
         model = self._model(model_id)
-        if model.get("remoteOnly") and proxy_peer:
+        runs_on_peer = proxy_peer and self.inference.model_id != model_id and (
+            model.get("remoteOnly") or self.peer_active_model_id == model_id
+        )
+        if runs_on_peer:
             return await self.peer.request("benchmark_inference", {"modelId": model_id})
         load_started = time.perf_counter()
         temporary = self.inference.model_id != model_id
@@ -383,6 +428,7 @@ class BackendRuntime:
                     model_id,
                     {"contextSize": 4096, "gpuLayers": allocations},
                     allow_peer=proxy_peer,
+                    save_config=False,
                 )
             prompt, generation = await self.inference.benchmark()
         except Exception as error:
@@ -410,12 +456,32 @@ class BackendRuntime:
         return {
             "url": f"http://127.0.0.1:{port}",
             "apiKey": self.store.get("apiKey"),
+            "authRequired": bool(self.store.get("authRequired", True)),
             "healthy": healthy,
         }
 
     def regenerate_api_key(self) -> dict[str, Any]:
         self.store.update(apiKey=secrets.token_urlsafe(32))
         return self.get_api_config()
+
+    async def try_api_request(self) -> dict[str, Any]:
+        """Run the API page's example chat completion against the real loopback server."""
+        port = int(self.store.get("apiPort", 11435))
+        headers = {"Content-Type": "application/json"}
+        if bool(self.store.get("authRequired", True)):
+            headers["Authorization"] = f"Bearer {self.store.get('apiKey')}"
+        payload = {
+            "model": "active",
+            "messages": [{"role": "user", "content": "Hello"}],
+            "max_tokens": 64,
+        }
+        started = time.perf_counter()
+        status, body = await _loopback_post(port, "/v1/chat/completions", headers, payload)
+        return {
+            "status": status,
+            "durationMs": round((time.perf_counter() - started) * 1000),
+            "body": body[:_MAX_TRY_BODY_CHARS],
+        }
 
     def _model(self, model_id: str) -> dict[str, Any]:
         model = next((value for value in self.models if value["id"] == model_id), None)
@@ -431,3 +497,49 @@ def _port_available(port: int) -> bool:
         return True
     except OSError:
         return False
+
+
+_TRY_TIMEOUT_SECONDS = 120
+_MAX_TRY_BODY_CHARS = 20000
+
+
+async def _loopback_post(
+    port: int, path: str, headers: dict[str, str], payload: dict[str, Any]
+) -> tuple[int, str]:
+    """POST JSON to the local API server and return (HTTP status, body text)."""
+    body = json.dumps(payload).encode()
+    request = "\r\n".join(
+        [
+            f"POST {path} HTTP/1.1",
+            f"Host: 127.0.0.1:{port}",
+            "Connection: close",
+            *[f"{key}: {value}" for key, value in headers.items()],
+            f"Content-Length: {len(body)}",
+        ]
+    )
+    writer: asyncio.StreamWriter | None = None
+    raw = bytearray()
+    try:
+        reader, writer = await asyncio.wait_for(asyncio.open_connection("127.0.0.1", port), 5)
+        writer.write(request.encode() + b"\r\n\r\n" + body)
+        await writer.drain()
+        while True:
+            chunk = await asyncio.wait_for(reader.read(64 * 1024), _TRY_TIMEOUT_SECONDS)
+            if not chunk:
+                break
+            raw.extend(chunk)
+    except (OSError, asyncio.TimeoutError) as error:
+        raise BackendError(
+            "api_unavailable",
+            f"The local API did not answer on 127.0.0.1:{port}.",
+            "Start the cluster or check the API port in Settings.",
+        ) from error
+    finally:
+        if writer is not None:
+            writer.close()
+    text = bytes(raw).decode("utf-8", errors="replace")
+    header_block, _, response_body = text.partition("\r\n\r\n")
+    status_line = header_block.splitlines()[0] if header_block else ""
+    parts = status_line.split()
+    status = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 0
+    return status, response_body

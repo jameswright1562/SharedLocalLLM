@@ -123,6 +123,13 @@ fields from the previous `settings.json`, including install identity, device nam
 folders, peer record, autostart preference, and benchmark history. The previous DPAPI API key is not
 read by Python; a new local bearer key is generated for this branch.
 
+A successful `start_cluster` also records the model's normalized load configuration under
+`modelLoadConfigs`: context size, GPU layer split, remote-CPU offload, force flag, and the advanced
+options (flash attention, mmap, mlock, CPU threads, batch size). The snapshot exposes these entries
+and the renderer pre-fills the model inspector with them, so relaunching a model reuses the exact
+values that launched it previously. A failed load never replaces the saved entry, and temporary
+loads for inference benchmarks skip saving so they cannot overwrite the user's configuration.
+
 ## Windows firewall
 
 The Python process owns the peer sockets, so old program-scoped rules for the Rust executable cannot

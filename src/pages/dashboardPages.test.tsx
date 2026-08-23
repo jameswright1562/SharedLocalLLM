@@ -212,6 +212,49 @@ describe("dashboard pages", () => {
     expect(pageProps.refreshSnapshot).toHaveBeenCalledTimes(1);
   });
 
+  it("relaunches a model with its saved load configuration", async () => {
+    const user = userEvent.setup();
+    const snapshot = cloneSnapshot();
+    Object.assign(snapshot.models[0]!, { layerCount: 40 });
+    snapshot.modelLoadConfigs = {
+      "model-text": {
+        contextSize: 4096,
+        gpuLayers: [{ nodeId: "node-a", layers: 12 }],
+        includeRemoteCpu: false,
+        force: false,
+        flashAttention: true,
+        useMmap: false,
+        useMlock: true,
+        cpuThreads: 6,
+        batchSize: 1024,
+      },
+    };
+    const startCluster = vi.fn().mockResolvedValue({ status: "running", modelId: "model-text" });
+    render(<ModelsPage {...props(snapshot, { startCluster })} />);
+
+    const orchidRow = within(screen.getByTestId("model-list"))
+      .getByText(/orchid 9b/i)
+      .closest("tr");
+    await user.click(orchidRow as HTMLElement);
+
+    expect(await screen.findByLabelText("Requested context")).toHaveValue(4096);
+    expect(screen.getByRole("checkbox", { name: /flash attention/i })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: /lock model in ram/i })).toBeChecked();
+
+    await user.click(screen.getByRole("button", { name: /launch orchid/i }));
+    expect(startCluster).toHaveBeenCalledWith("model-text", {
+      contextSize: 4096,
+      gpuLayers: [{ nodeId: "node-a", layers: 12 }],
+      includeRemoteCpu: false,
+      force: false,
+      flashAttention: true,
+      useMmap: false,
+      useMlock: true,
+      cpuThreads: 6,
+      batchSize: 1024,
+    });
+  });
+
   it("configures GPU layers per computer and previews estimated VRAM before launch", async () => {
     const user = userEvent.setup();
     const snapshot = cloneSnapshot();
@@ -380,6 +423,27 @@ describe("dashboard pages", () => {
     expect(emptyProps.navigate).toHaveBeenCalledWith("models");
   });
 
+  it("benchmarks a running model in place instead of planning a reload", async () => {
+    const user = userEvent.setup();
+    const snapshot = cloneSnapshot();
+    snapshot.cluster = { status: "running", coordinatorNodeId: "node-a", modelId: "model-text" };
+    const runInferenceBenchmark = vi.fn().mockResolvedValue([]);
+    const pageProps = props(snapshot, { runInferenceBenchmark });
+    const view = render(<BenchmarksPage {...pageProps} />);
+
+    expect(screen.getByText(/benchmarks the loaded instance/i)).toBeInTheDocument();
+    expect(screen.queryByText(/automatic gpu split/i)).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /run benchmark/i }));
+    expect(runInferenceBenchmark).toHaveBeenCalledWith("model-text");
+
+    const peerRunning = cloneSnapshot();
+    peerRunning.cluster = { status: "ready" };
+    peerRunning.nodes[1]!.clusterStatus = "running";
+    peerRunning.nodes[1]!.clusterModelId = "model-text";
+    view.rerender(<BenchmarksPage key="peer" {...props(peerRunning, { runInferenceBenchmark })} />);
+    expect(screen.getByText(/benchmarks the loaded instance/i)).toBeInTheDocument();
+  });
+
   it("renders benchmark run times from epoch seconds and tolerates invalid values", () => {
     const snapshot = cloneSnapshot();
     const base = cloneSnapshot().benchmarks[0]!;
@@ -390,6 +454,27 @@ describe("dashboard pages", () => {
     render(<BenchmarksPage {...props(snapshot)} />);
     expect(screen.getAllByRole("row")).toHaveLength(3);
     expect(screen.getAllByText("—")).toHaveLength(1);
+  });
+
+  it("benchmarks a running model in place instead of planning a reload", async () => {
+    const user = userEvent.setup();
+    const snapshot = cloneSnapshot();
+    snapshot.cluster = { status: "running", coordinatorNodeId: "node-a", modelId: "model-text" };
+    const runInferenceBenchmark = vi.fn().mockResolvedValue([]);
+    const pageProps = props(snapshot, { runInferenceBenchmark });
+    const view = render(<BenchmarksPage {...pageProps} />);
+
+    expect(screen.getByText(/benchmarks the loaded instance/i)).toBeInTheDocument();
+    expect(screen.queryByText(/automatic gpu split/i)).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /run benchmark/i }));
+    expect(runInferenceBenchmark).toHaveBeenCalledWith("model-text");
+
+    const peerRunning = cloneSnapshot();
+    peerRunning.cluster = { status: "ready" };
+    peerRunning.nodes[1]!.clusterStatus = "running";
+    peerRunning.nodes[1]!.clusterModelId = "model-text";
+    view.rerender(<BenchmarksPage key="peer" {...props(peerRunning, { runInferenceBenchmark })} />);
+    expect(screen.getByText(/benchmarks the loaded instance/i)).toBeInTheDocument();
   });
 
   it("runs and cancels inference benchmarks through the native service", async () => {

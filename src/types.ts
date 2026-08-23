@@ -152,22 +152,32 @@ export interface AppSnapshot {
   modelDirectories: ModelDirectory[];
   network?: NetworkBenchmark;
   cluster: ClusterSession;
+  modelLoadConfigs?: Record<string, ModelLoadConfig>;
   benchmarks: InferenceBenchmark[];
   logs: string[];
   apiPort: number;
+  authRequired: boolean;
   autostart: boolean;
 }
 
 export interface AppSettings {
   deviceName: string;
   apiPort: number;
+  authRequired: boolean;
   autostart: boolean;
 }
 
 export interface ApiConfig {
   url: string;
   apiKey: string;
+  authRequired: boolean;
   healthy: boolean;
+}
+
+export interface ApiTryResult {
+  status: number;
+  durationMs: number;
+  body: string;
 }
 
 export interface ChatMessage {
@@ -226,6 +236,7 @@ export interface AppService {
   cancelGeneration(): Promise<void>;
   getApiConfig(): Promise<ApiConfig>;
   regenerateApiKey(): Promise<ApiConfig>;
+  tryApiRequest(): Promise<ApiTryResult>;
   openNetworkSettings(): Promise<void>;
   openLogsFolder(): Promise<void>;
 }

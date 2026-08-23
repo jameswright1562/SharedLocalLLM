@@ -5,11 +5,19 @@ import { Modal } from "@mantine/core";
 import { describeAppError } from "../services/errors";
 import { DEFAULT_LOAD_OPTIONS } from "../services/loadOptions";
 import {
+  savedContextSizes,
+  savedForceLaunches,
+  savedLayerSplits,
+  savedManualSplits,
+  savedOptionValues,
+  savedRemoteCpuFlags,
+} from "../services/savedLoadConfigs";
+import {
   distributeLayersByVram,
   estimateModelSplitLocally,
   fitLayersByVram,
 } from "../services/splitEstimate";
-import type { GpuLayerAllocation, ModelLoadOptions, PageProps } from "../types";
+import type { PageProps } from "../types";
 
 export function ModelsPage({ snapshot, service, refreshSnapshot }: PageProps) {
   const [query, setQuery] = useState("");
@@ -18,12 +26,13 @@ export function ModelsPage({ snapshot, service, refreshSnapshot }: PageProps) {
   const [discoveredModels, setDiscoveredModels] = useState<typeof snapshot.models | null>(null);
   const [busy, setBusy] = useState<"refresh" | "add" | "launch" | "">("");
   const [message, setMessage] = useState("");
-  const [contextByModel, setContextByModel] = useState<Record<string, number>>({});
-  const [manualByModel, setManualByModel] = useState<Record<string, boolean>>({});
-  const [layersByModel, setLayersByModel] = useState<Record<string, GpuLayerAllocation[]>>({});
-  const [remoteCpuByModel, setRemoteCpuByModel] = useState<Record<string, boolean>>({});
-  const [forceByModel, setForceByModel] = useState<Record<string, boolean>>({});
-  const [optionsByModel, setOptionsByModel] = useState<Record<string, ModelLoadOptions>>({});
+  const savedConfigs = snapshot.modelLoadConfigs ?? {};
+  const [contextByModel, setContextByModel] = useState(() => savedContextSizes(savedConfigs));
+  const [manualByModel, setManualByModel] = useState(() => savedManualSplits(savedConfigs));
+  const [layersByModel, setLayersByModel] = useState(() => savedLayerSplits(savedConfigs));
+  const [remoteCpuByModel, setRemoteCpuByModel] = useState(() => savedRemoteCpuFlags(savedConfigs));
+  const [forceByModel, setForceByModel] = useState(() => savedForceLaunches(savedConfigs));
+  const [optionsByModel, setOptionsByModel] = useState(() => savedOptionValues(savedConfigs));
   const [inspectorOpened, setInspectorOpened] = useState(false);
   const nodeLookup = new Map(snapshot.nodes.map((node) => [node.id, node.name]));
   const models = discoveredModels ?? snapshot.models;

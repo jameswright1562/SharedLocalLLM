@@ -1,4 +1,4 @@
-import type { AppService, ModelDirectory, NetworkBenchmark } from "../types";
+import type { ApiTryResult, AppService, ModelDirectory, NetworkBenchmark } from "../types";
 import { demoApi, demoNodes, demoSnapshot } from "./demoData";
 import { estimateModelSplitLocally } from "./splitEstimate";
 
@@ -21,6 +21,7 @@ export const demoService: AppService = {
     demoSnapshot.deviceName = settings.deviceName.trim();
     demoSnapshot.nodes[0]!.name = demoSnapshot.deviceName;
     demoSnapshot.apiPort = settings.apiPort;
+    demoSnapshot.authRequired = settings.authRequired;
     demoSnapshot.autostart = settings.autostart;
     return structuredClone(demoSnapshot);
   },
@@ -87,8 +88,12 @@ export const demoService: AppService = {
     if (!model) throw new Error("The model is unavailable.");
     return estimateModelSplitLocally(model, demoSnapshot.nodes, loadConfig);
   },
-  async startCluster(modelId) {
+  async startCluster(modelId, loadConfig) {
     await delay(900);
+    demoSnapshot.modelLoadConfigs = {
+      ...demoSnapshot.modelLoadConfigs,
+      [modelId]: structuredClone(loadConfig),
+    };
     demoSnapshot.cluster = {
       status: "running",
       coordinatorNodeId: "local-node",
@@ -155,6 +160,43 @@ export const demoService: AppService = {
     await delay(200);
     demoApi.apiKey = `sk-local-${crypto.randomUUID().replaceAll("-", "").slice(0, 16)}`;
     return structuredClone(demoApi);
+  },
+  async tryApiRequest(): Promise<ApiTryResult> {
+    await delay(900);
+    if (demoSnapshot.cluster.status !== "running") {
+      return {
+        status: 400,
+        durationMs: 4,
+        body: JSON.stringify({
+          error: {
+            message: "No model is loaded. Start a cluster, then try the request again.",
+            type: "model_not_loaded",
+          },
+        }),
+      };
+    }
+    const model = demoSnapshot.models.find((item) => item.id === demoSnapshot.cluster.modelId);
+    return {
+      status: 200,
+      durationMs: 640,
+      body: JSON.stringify({
+        id: "chatcmpl-sharedlocalllm",
+        object: "chat.completion",
+        model: model?.id ?? "active",
+        choices: [
+          {
+            index: 0,
+            message: {
+              role: "assistant",
+              content:
+                "This browser preview simulates the response. Native mode returns the completion produced by the loaded model.",
+            },
+            finish_reason: "stop",
+          },
+        ],
+        usage: { prompt_tokens: 9, completion_tokens: 24, total_tokens: 33 },
+      }),
+    };
   },
   async openNetworkSettings() {
     await delay(80);

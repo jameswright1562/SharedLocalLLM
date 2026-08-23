@@ -6,6 +6,7 @@ export function SettingsPage({ snapshot, service, refreshSnapshot }: PageProps) 
   const [tab, setTab] = useState<"general" | "runtime" | "sources" | "logs">("general");
   const [deviceName, setDeviceName] = useState(snapshot.deviceName);
   const [apiPort, setApiPort] = useState(snapshot.apiPort);
+  const [authRequired, setAuthRequired] = useState(snapshot.authRequired);
   const [autostart, setAutostart] = useState(snapshot.autostart);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
@@ -15,7 +16,12 @@ export function SettingsPage({ snapshot, service, refreshSnapshot }: PageProps) 
     setBusy(true);
     setMessage("");
     try {
-      await service.updateSettings({ deviceName: deviceName.trim(), apiPort, autostart });
+      await service.updateSettings({
+        deviceName: deviceName.trim(),
+        apiPort,
+        authRequired,
+        autostart,
+      });
       await refreshSnapshot();
       setMessage("Settings saved.");
     } catch (reason) {
@@ -143,6 +149,21 @@ export function SettingsPage({ snapshot, service, refreshSnapshot }: PageProps) 
                   value={apiPort}
                   onChange={(event) => setApiPort(Number(event.target.value))}
                 />
+              </div>
+              <div className="settings-row">
+                <div>
+                  <strong>Require API key</strong>
+                  <p>When off, local tools can call the loopback API without the bearer key.</p>
+                </div>
+                <button
+                  role="switch"
+                  aria-label="Require API key"
+                  aria-checked={authRequired}
+                  className="switch"
+                  onClick={() => setAuthRequired(!authRequired)}
+                >
+                  <span />
+                </button>
               </div>
               <div className="settings-row">
                 <div>

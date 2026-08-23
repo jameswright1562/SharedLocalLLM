@@ -279,6 +279,8 @@ class PeerManager:
             return await self.runtime.stop_cluster(proxy_peer=False)
         if op == "chat":
             return await self.runtime.chat(data["messages"], data["settings"], data.get("images", []), proxy_peer=False)
+        if op == "cancel_generation":
+            return self.runtime.inference.cancel()
         if op == "benchmark_inference":
             return await self.runtime.run_inference_benchmark(data["modelId"], proxy_peer=False)
         raise BackendError("peer_request_unknown", f"Unknown peer operation: {op}")

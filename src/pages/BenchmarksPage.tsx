@@ -13,6 +13,11 @@ export function BenchmarksPage({ snapshot, service, refreshSnapshot, navigate }:
   const selectedModel = snapshot.models.find((model) => model.id === modelId);
   const gpuNodes = snapshot.nodes.filter((node) => node.online && node.gpu.vramAvailableGb > 0);
   const plannedSplit = selectedModel ? fitLayersByVram(selectedModel, gpuNodes) : [];
+  const activeModelId =
+    snapshot.cluster.status === "running"
+      ? snapshot.cluster.modelId
+      : snapshot.nodes.find((node) => node.clusterStatus === "running")?.clusterModelId;
+  const usesRunningInstance = Boolean(activeModelId && modelId === activeModelId);
 
   async function runBenchmark() {
     if (!modelId || running) return;
@@ -82,16 +87,22 @@ export function BenchmarksPage({ snapshot, service, refreshSnapshot, navigate }:
               </option>
             ))}
           </select>
-          {plannedSplit.length > 0 && (
+          {usesRunningInstance ? (
             <p className="benchmark-split" role="status">
-              Automatic GPU split:{" "}
-              {plannedSplit
-                .map((allocation) => {
-                  const name = gpuNodes.find((node) => node.id === allocation.nodeId)?.name;
-                  return `${name ?? "Unknown node"}: ${allocation.layers} layers`;
-                })
-                .join(" · ")}
+              {selectedModel?.name} is running — benchmarks the loaded instance without reloading.
             </p>
+          ) : (
+            plannedSplit.length > 0 && (
+              <p className="benchmark-split" role="status">
+                Automatic GPU split:{" "}
+                {plannedSplit
+                  .map((allocation) => {
+                    const name = gpuNodes.find((node) => node.id === allocation.nodeId)?.name;
+                    return `${name ?? "Unknown node"}: ${allocation.layers} layers`;
+                  })
+                  .join(" · ")}
+              </p>
+            )
           )}
           {running ? (
             <button className="button stop-button" onClick={() => void cancelBenchmark()}>

@@ -121,6 +121,11 @@ For two GPUs, the UI's node allocations are translated into llama.cpp `tensor_sp
 explicit node identity. Registered RPC devices are accounted for before the local CUDA device so an
 asymmetric split is not accidentally reversed.
 
+Launch settings are remembered per model. When a model loads successfully, its context size, GPU
+layer split, and advanced options are saved to disk; opening that model again pre-fills the same
+values so relaunching reproduces the identical configuration. Benchmark runs do not overwrite the
+saved settings.
+
 ## Local OpenAI API
 
 The default endpoint is `http://127.0.0.1:11435` and supports:

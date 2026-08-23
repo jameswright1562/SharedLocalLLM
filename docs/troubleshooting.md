@@ -283,6 +283,9 @@ After selecting another port, regenerate client examples from the API page. Keep
 - Keep CPU/RAM spill enabled only when needed; it can sharply reduce generation speed.
 - Re-run the benchmark after a driver/runtime/model/network change. Old results should be invalidated
   automatically.
+- The model inspector restores each model's last successful launch settings. If the hardware changed
+  since then (driver update, another app holding VRAM), the remembered split may no longer fit;
+  reduce context or layers, or enable force launch. Every successful launch saves its values again.
 
 If benchmarking fails, expand the failed row. It should show the redacted executable error and profile
 rather than omitting the result. Export diagnostics if that information is absent.

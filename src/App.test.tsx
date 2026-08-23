@@ -80,6 +80,7 @@ const readySnapshot: AppSnapshot = {
   benchmarks: [],
   logs: ["Peer channel ready", "Runtime verified"],
   apiPort: 11435,
+  authRequired: true,
   autostart: false,
 };
 
@@ -90,6 +91,7 @@ function serviceWith(snapshot: AppSnapshot, overrides: Partial<AppService> = {})
     getApiConfig: vi.fn().mockResolvedValue({
       url: "http://127.0.0.1:11435",
       apiKey: "sk-local-1234567890",
+      authRequired: true,
       healthy: true,
     }),
     ...overrides,

@@ -1,10 +1,18 @@
 import { useEffect, useState } from "react";
 import { describeAppError } from "../services/errors";
-import type { ApiConfig, PageProps } from "../types";
+import type { ApiConfig, ApiTryResult, PageProps } from "../types";
 
 function maskApiKey(key: string) {
   const prefix = key.startsWith("sk-local-") ? "sk-local-" : key.slice(0, 4);
   return `${prefix}••••••••••`;
+}
+
+function formatBody(body: string) {
+  try {
+    return JSON.stringify(JSON.parse(body), null, 2);
+  } catch {
+    return body;
+  }
 }
 
 export function ApiPage({ snapshot, service, refreshSnapshot }: PageProps) {
@@ -14,6 +22,8 @@ export function ApiPage({ snapshot, service, refreshSnapshot }: PageProps) {
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [trying, setTrying] = useState(false);
+  const [tryResult, setTryResult] = useState<ApiTryResult | null>(null);
   useEffect(() => {
     let active = true;
     void service
@@ -61,12 +71,25 @@ export function ApiPage({ snapshot, service, refreshSnapshot }: PageProps) {
       setBusy(false);
     }
   }
+  async function runExample() {
+    setTrying(true);
+    setTryResult(null);
+    setError("");
+    try {
+      setTryResult(await service.tryApiRequest());
+    } catch (reason) {
+      setError(describeAppError(reason, "The example request could not be completed."));
+    } finally {
+      setTrying(false);
+    }
+  }
   const curlPayload = JSON.stringify({
     model: "local-model",
     messages: [{ role: "user", content: "Hello" }],
   });
+  const authHeader = config?.authRequired ? ` -H "Authorization: Bearer ${config.apiKey}"` : "";
   const curl = config
-    ? `curl.exe -X POST "${config.url}/v1/chat/completions" -H "Authorization: Bearer ${config.apiKey}" -H "Content-Type: application/json" --data-raw '${curlPayload}'`
+    ? `curl.exe -X POST "${config.url}/v1/chat/completions"${authHeader} -H "Content-Type: application/json" --data-raw '${curlPayload}'`
     : "";
   return (
     <div className="page">
@@ -138,9 +161,15 @@ export function ApiPage({ snapshot, service, refreshSnapshot }: PageProps) {
                 {copied === "key" ? "Copied" : "Copy"}
               </button>
             </div>
+            <div className="credential-row">
+              <span className="credential-label">Authentication</span>
+              <code>{config.authRequired ? "Bearer key required" : "Disabled — open access"}</code>
+            </div>
             <div className="key-actions">
               <p>
-                Keep this key private. Regenerating it immediately invalidates the previous key.
+                {config.authRequired
+                  ? "Keep this key private. Regenerating it immediately invalidates the previous key."
+                  : "Key checks are off in Settings, so any local tool can call this API without a key."}
               </p>
               <button
                 className="text-button danger-text"
@@ -157,13 +186,38 @@ export function ApiPage({ snapshot, service, refreshSnapshot }: PageProps) {
                 <span className="code-language">PowerShell / curl</span>
                 <h2>Chat completion</h2>
               </div>
-              <button className="button secondary" onClick={() => void copy(curl, "curl")}>
-                {copied === "curl" ? "Copied" : "Copy example"}
-              </button>
+              <div className="code-actions">
+                <button
+                  className="button primary"
+                  disabled={trying}
+                  onClick={() => void runExample()}
+                >
+                  {trying ? "Running…" : "Try it"}
+                </button>
+                <button className="button secondary" onClick={() => void copy(curl, "curl")}>
+                  {copied === "curl" ? "Copied" : "Copy example"}
+                </button>
+              </div>
             </header>
             <pre>
               <code>{curl}</code>
             </pre>
+            {tryResult && (
+              <div aria-label="Example response" className="try-result">
+                <div className="try-result-meta">
+                  <span
+                    className={`status-pill ${tryResult.status >= 200 && tryResult.status < 400 ? "online" : "offline"}`}
+                  >
+                    <i aria-hidden="true" />
+                    HTTP {tryResult.status}
+                  </span>
+                  <small>{tryResult.durationMs} ms</small>
+                </div>
+                <pre>
+                  <code>{formatBody(tryResult.body)}</code>
+                </pre>
+              </div>
+            )}
           </section>
         </>
       )}
