@@ -12,6 +12,7 @@ _ELLIPSIS = "..."
 _LOOKAHEAD = 24
 
 _START = re.compile(r"^\s*(?:<reasoning>|<\|begin_of_thought\|>|<\|reasoning_content\|>|\.\.\.)\s*")
+_START_MARKERS = ("<reasoning>", "<|begin_of_thought|>", "<|reasoning_content|>")
 _ANSWER_PREFIX = re.compile(r"^\s*Assistant:\s*<\|reserved_actor\|>\s*")
 _DOT_RUN = re.compile(r"\.{3,}")
 
@@ -75,19 +76,35 @@ class ReasoningStreamSplitter:
             self._buffer = ""
             return events
         if self._phase == "pending":
-            marker = self._buffer.find("<reasoning>")
-            if marker >= 0:
+            starts = [
+                (self._buffer.find(value), value)
+                for value in _START_MARKERS
+                if self._buffer.find(value) >= 0
+            ]
+            if starts:
+                marker, start_marker = min(starts, key=lambda value: value[0])
                 prefix = self._buffer[:marker]
                 if prefix:
                     events.append(("token", prefix))
-                self._buffer = self._buffer[marker + len("<reasoning>"):]
+                self._buffer = self._buffer[marker + len(start_marker):]
                 self._phase = "reasoning"
             elif self._reasoning:
                 stripped = self._buffer.lstrip()
                 if stripped.startswith(_ELLIPSIS):
                     self._ellipsis = True
                     self._buffer = stripped[len(_ELLIPSIS):]
-                self._phase = "reasoning"
+                    self._phase = "reasoning"
+                else:
+                    found = self._find_specific_end()
+                    if found is not None:
+                        index, length = found
+                        events.append(("reasoning", _clean(self._buffer[:index])))
+                        tail = self._buffer[index + length:]
+                        if tail:
+                            events.append(("token", tail))
+                        self._buffer = ""
+                        self._phase = "content"
+                    return events
             else:
                 safe = max(0, len(self._buffer) - _LOOKAHEAD)
                 if safe:
@@ -132,5 +149,12 @@ class ReasoningStreamSplitter:
             index = self._buffer.find(_ELLIPSIS)
             if index >= 0:
                 candidates.append((index, len(_ELLIPSIS)))
+        candidates = [candidate for candidate in candidates if candidate[0] >= 0]
+        return min(candidates, key=lambda candidate: candidate[0]) if candidates else None
+
+    def _find_specific_end(self) -> tuple[int, int] | None:
+        candidates = [
+            (self._buffer.find(marker), len(marker)) for marker in _SPECIFIC_ENDS
+        ]
         candidates = [candidate for candidate in candidates if candidate[0] >= 0]
         return min(candidates, key=lambda candidate: candidate[0]) if candidates else None

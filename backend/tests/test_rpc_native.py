@@ -21,8 +21,10 @@ def clear_pending_devices():
     from sharedlocalllm_backend import rpc_native
 
     rpc_native._pending_devices[:] = []
+    rpc_native._rpc_devices_by_endpoint.clear()
     yield
     rpc_native._pending_devices[:] = []
+    rpc_native._rpc_devices_by_endpoint.clear()
 
 
 def test_classify_devices_separates_rpc_servers_from_local_gpus() -> None:
@@ -88,8 +90,8 @@ def test_split_rpc_devices_treats_all_as_gpus_without_cpu() -> None:
 def test_pending_devices_are_injected_into_model_params() -> None:
     from sharedlocalllm_backend.rpc_native import _install_model_devices_patch
 
-    import llama_cpp
-    import llama_cpp._internals as internals
+    llama_cpp = pytest.importorskip("llama_cpp")
+    internals = pytest.importorskip("llama_cpp._internals")
 
     _install_model_devices_patch()
     prepare_model_devices([123, 456])
@@ -104,6 +106,8 @@ def test_pending_devices_are_injected_into_model_params() -> None:
 
 def test_prepare_rpc_load_distributed_builds_remote_first_split() -> None:
     import asyncio
+
+    pytest.importorskip("llama_cpp")
 
     from sharedlocalllm_backend.rpc_native import NativeRpcServer, prepare_rpc_load
 
@@ -120,6 +124,8 @@ def test_prepare_rpc_load_distributed_builds_remote_first_split() -> None:
 
 def test_prepare_rpc_load_reserves_remote_cpu_device() -> None:
     import asyncio
+
+    pytest.importorskip("llama_cpp")
 
     from sharedlocalllm_backend.rpc_native import NativeRpcServer, prepare_rpc_load
 

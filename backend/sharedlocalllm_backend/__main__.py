@@ -12,6 +12,7 @@ async def run_backend() -> None:
     runtime = BackendRuntime()
     api = ApiServerManager(runtime)
     runtime.api_port_changed = api.restart
+    runtime.api_health = api.is_healthy
     await api.start(int(runtime.store.get("apiPort", 11435)))
     control = uvicorn.Server(uvicorn.Config(
         create_control_app(runtime), host="127.0.0.1", port=CONTROL_PORT,

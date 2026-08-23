@@ -82,13 +82,25 @@ def create_openai_app(runtime: Any) -> FastAPI:
     @app.get("/v1/models")
     async def models(authorization: str | None = Header(default=None)) -> dict[str, Any]:
         authorize(authorization)
-        data = [{"id": model["id"], "object": "model", "owned_by": "sharedlocalllm"} for model in runtime.models]
+        active = runtime.cluster.get("modelId")
+        data = (
+            [{"id": active, "object": "model", "owned_by": "sharedlocalllm"}]
+            if active and runtime.cluster.get("status") == "running"
+            else []
+        )
         return {"object": "list", "data": data}
 
     @app.post("/v1/chat/completions")
     async def chat(request: Request, authorization: str | None = Header(default=None)) -> Any:
         authorize(authorization)
         body = await request.json()
+        active_model = runtime.cluster.get("modelId")
+        requested_model = body.get("model")
+        if requested_model not in (None, "active", active_model):
+            raise BackendError(
+                "model_not_active",
+                "The requested model is not the model currently loaded by SharedLocalLLM.",
+            )
         settings = {
             "systemPrompt": "", "temperature": body.get("temperature", 0.7),
             "maxTokens": body.get("max_tokens", 512),
@@ -121,7 +133,7 @@ def create_openai_app(runtime: Any) -> FastAPI:
             message["reasoning_content"] = response["reasoning"]
         return {
             "id": "chatcmpl-sharedlocalllm", "object": "chat.completion",
-            "model": body.get("model", runtime.cluster.get("modelId", "active")),
+            "model": active_model or "active",
             "choices": [{"index": 0, "message": message, "finish_reason": "stop"}],
             "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
         }
@@ -130,6 +142,12 @@ def create_openai_app(runtime: Any) -> FastAPI:
     async def completions(request: Request, authorization: str | None = Header(default=None)) -> Any:
         authorize(authorization)
         body = await request.json()
+        active_model = runtime.cluster.get("modelId")
+        if body.get("model") not in (None, "active", active_model):
+            raise BackendError(
+                "model_not_active",
+                "The requested model is not the model currently loaded by SharedLocalLLM.",
+            )
         response = await runtime.chat(
             [{"role": "user", "content": str(body.get("prompt", ""))}],
             {"systemPrompt": "", "temperature": body.get("temperature", 0.7), "maxTokens": body.get("max_tokens", 512)},
@@ -173,7 +191,21 @@ class ApiServerManager:
         raise BackendError("api_start_timeout", f"OpenAI API did not bind port {port} in time.")
 
     async def restart(self, port: int) -> None:
-        await self.start(port)
+        previous = self.port
+        try:
+            await self.start(port)
+        except Exception:
+            if previous is not None and previous != port:
+                await self.start(previous)
+            raise
+
+    def is_healthy(self) -> bool:
+        return bool(
+            self.server
+            and self.server.started
+            and self.task
+            and not self.task.done()
+        )
 
     async def stop(self) -> None:
         if self.server:

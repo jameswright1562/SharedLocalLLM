@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import inspect
 import secrets
 import socket
@@ -11,8 +12,10 @@ from typing import Any, AsyncIterator, Awaitable, Callable
 from .errors import BackendError
 from .hardware import probe_node
 from .inference import InferenceEngine
-from .models import discover_local, lm_studio_roots, merge_remote
+from .models import discover_local, lm_studio_roots, merge_remote, refresh_fits
 from .peer import PeerManager
+from .placement import estimate_split, normalize_load_config, validate_fit
+from .rpc_native import runtime_health
 from .store import Store
 
 
@@ -30,15 +33,31 @@ class BackendRuntime:
         self.inference = InferenceEngine(self.store)
         self.peer = PeerManager(self)
         self.api_port_changed: Callable[[int], Awaitable[None]] | None = None
+        self.api_health: Callable[[], bool] | None = None
+        self._peer_refresh_task: asyncio.Task[None] | None = None
+        self._runtime = runtime_health()
         self.discover_models()
 
     async def start(self) -> None:
         await self.peer.start()
         await self.refresh_peer()
+        self._peer_refresh_task = asyncio.create_task(self._peer_refresh_loop())
 
     async def stop(self) -> None:
+        if self._peer_refresh_task:
+            self._peer_refresh_task.cancel()
+            try:
+                await self._peer_refresh_task
+            except asyncio.CancelledError:
+                pass
+            self._peer_refresh_task = None
         await self.inference.unload()
         await self.peer.stop()
+
+    async def _peer_refresh_loop(self) -> None:
+        while True:
+            await asyncio.sleep(8)
+            await self.refresh_peer()
 
     async def refresh_peer(self) -> None:
         peer = self.store.get("peer")
@@ -49,9 +68,10 @@ class BackendRuntime:
         if node:
             node["online"] = True
             node["role"] = "worker"
-        elif peer.get("capabilities"):
+        elif peer.get("capabilities", {}).get("online", True):
             peer["capabilities"]["online"] = False
             self.store.update(peer=peer)
+        refresh_fits(self.local_models, self.local_node, self._peer_node())
         self._merge_models()
 
     def discover_models(self) -> list[dict[str, Any]]:
@@ -70,6 +90,13 @@ class BackendRuntime:
         peer = self.store.get("peer")
         return peer.get("capabilities") if peer else None
 
+    def _cluster_nodes(self) -> list[dict[str, Any]]:
+        nodes = [self.local_node]
+        peer = self._peer_node()
+        if peer and peer.get("online", True):
+            nodes.append(peer)
+        return nodes
+
     def snapshot(self) -> dict[str, Any]:
         nodes = [self.local_node]
         peer = self._peer_node()
@@ -77,7 +104,7 @@ class BackendRuntime:
             nodes.append(peer)
         return {
             "setupComplete": bool(self.store.get("setupComplete")),
-            "runtime": {"status": "ready", "version": self._llama_version()},
+            "runtime": dict(self._runtime),
             "deviceName": self.local_node["name"],
             "apiPort": int(self.store.get("apiPort", 11435)),
             "autostart": bool(self.store.get("autostart")),
@@ -90,19 +117,12 @@ class BackendRuntime:
             "logs": self.store.logs(),
         }
 
-    def _llama_version(self) -> str:
-        try:
-            import llama_cpp
-            return f"llama-cpp-python {llama_cpp.__version__}"
-        except Exception as error:
-            return f"llama-cpp-python unavailable: {error}"
-
     async def dispatch(self, command: str, args: dict[str, Any]) -> Any:
         handlers = {
             "get_app_snapshot": lambda: self.snapshot(),
             "complete_setup": lambda: self.complete_setup(args["deviceName"]),
             "update_settings": lambda: self.update_settings(args["settings"]),
-            "install_runtime": lambda: self.snapshot(),
+            "install_runtime": self.ensure_runtime,
             "refresh_hardware": self.refresh_hardware,
             "discover_models": self.discover_models,
             "add_model_directory": lambda: self.add_model_directory(args["path"]),
@@ -128,6 +148,16 @@ class BackendRuntime:
             return await value
         return value
 
+    def ensure_runtime(self) -> dict[str, Any]:
+        self._runtime = runtime_health()
+        if self._runtime["status"] != "ready":
+            raise BackendError(
+                "runtime_unavailable",
+                str(self._runtime.get("error") or "The llama.cpp runtime is unavailable."),
+                "Run pnpm backend:install in development, or reinstall the desktop application.",
+            )
+        return self.snapshot()
+
     def complete_setup(self, device_name: str) -> dict[str, Any]:
         name = device_name.strip()
         if not name or len(name) > 80:
@@ -138,7 +168,10 @@ class BackendRuntime:
 
     async def update_settings(self, settings: dict[str, Any]) -> dict[str, Any]:
         name = str(settings.get("deviceName", "")).strip()
-        port = int(settings.get("apiPort", 11435))
+        try:
+            port = int(settings.get("apiPort", 11435))
+        except (TypeError, ValueError) as error:
+            raise BackendError("settings_invalid", "API port must be a whole number.") from error
         if not name or len(name) > 80 or not 1024 <= port <= 65535 or port == 11436:
             raise BackendError("settings_invalid", "Use a valid device name and API port from 1024-65535.")
         old_port = int(self.store.get("apiPort", 11435))
@@ -146,10 +179,10 @@ class BackendRuntime:
             raise BackendError(
                 "api_port_in_use", f"127.0.0.1:{port} is already in use.", "Choose another local API port."
             )
-        self.local_node["name"] = name
-        self.store.update(deviceName=name, apiPort=port, autostart=bool(settings.get("autostart")))
         if port != old_port and self.api_port_changed:
             await self.api_port_changed(port)
+        self.local_node["name"] = name
+        self.store.update(deviceName=name, apiPort=port, autostart=bool(settings.get("autostart")))
         return self.snapshot()
 
     def refresh_hardware(self) -> dict[str, Any]:
@@ -196,12 +229,22 @@ class BackendRuntime:
     async def connect_peer(self, manual_endpoint: str | None) -> dict[str, Any]:
         node = await self.peer.connect(manual_endpoint)
         node["role"] = "worker"
+        refresh_fits(self.local_models, self.local_node, node)
         self._merge_models()
         return node
 
     async def reset_pairing(self) -> dict[str, Any]:
+        if self.cluster.get("status") in ("loading", "running", "error"):
+            try:
+                await self.stop_cluster()
+            except BackendError:
+                await self.inference.unload()
         self.store.update(peer=None)
         self.peer.remote_models = []
+        self.network = None
+        self.cluster = {"status": "idle"}
+        self._publish_local_cluster()
+        refresh_fits(self.local_models, self.local_node, None)
         self._merge_models()
         return self.snapshot()
 
@@ -211,50 +254,9 @@ class BackendRuntime:
 
     def estimate_model_split(self, model_id: str, config: dict[str, Any]) -> dict[str, Any]:
         model = self._model(model_id)
-        total = max(1, int(model.get("layerCount") or 1))
-        allocations = list(config.get("gpuLayers") or [])
-        if not allocations:
-            nodes = [node for node in self.snapshot()["nodes"] if node.get("online", True)]
-            total_vram = sum(max(0.1, float(node["gpu"].get("vramAvailableGb", 0))) for node in nodes)
-            remaining = total
-            for index, node in enumerate(nodes):
-                layers = remaining if index == len(nodes) - 1 else round(
-                    total * float(node["gpu"].get("vramAvailableGb", 0)) / total_vram
-                )
-                layers = max(0, min(remaining, layers))
-                allocations.append({"nodeId": node["id"], "layers": layers})
-                remaining -= layers
-        per_layer = model["sizeBytes"] / total
-        node_map = {node["id"]: node for node in self.snapshot()["nodes"]}
-        devices = []
-        gpu_layers = 0
-        for allocation in allocations:
-            layers = int(allocation.get("layers", 0))
-            node = node_map.get(
-                allocation["nodeId"], {"gpu": {"vramAvailableGb": 0}, "ramAvailableGb": 0}
-            )
-            if allocation.get("kind") == "cpu":
-                available = int(float(node.get("ramAvailableGb", 0)) * 1024)
-                estimated = int(per_layer * layers / 1024**2)
-                devices.append({
-                    "nodeId": allocation["nodeId"], "layers": layers, "kind": "cpu",
-                    "estimatedVramMib": estimated, "availableVramMib": available,
-                    "fits": estimated <= available,
-                })
-            else:
-                gpu_layers += layers
-                available = int(float(node["gpu"].get("vramAvailableGb", 0)) * 1024)
-                estimated = int(per_layer * layers / 1024**2 + 384)
-                devices.append({
-                    "nodeId": allocation["nodeId"], "layers": layers, "kind": "gpu",
-                    "estimatedVramMib": estimated, "availableVramMib": available,
-                    "fits": estimated <= available,
-                })
-        return {
-            "totalLayers": total, "gpuLayers": min(total, gpu_layers), "cpuLayers": max(0, total - gpu_layers),
-            "estimatedCpuRamMib": int(per_layer * max(0, total - gpu_layers) / 1024**2),
-            "usesAttentionMetadata": bool(model.get("attentionHeadCountKv")), "devices": devices,
-        }
+        nodes = self._cluster_nodes()
+        normalized = normalize_load_config(model, config, nodes)
+        return estimate_split(model, normalized, nodes)
 
     async def start_cluster(
         self, model_id: str, load_config: dict[str, Any], allow_peer: bool = True
@@ -274,28 +276,50 @@ class BackendRuntime:
         path = self.model_paths.get(model_id)
         if not path:
             raise BackendError("model_not_found", "The selected local GGUF is unavailable.")
+        nodes = self._cluster_nodes()
+        normalized_config = normalize_load_config(model, load_config, nodes)
+        if model.get("layerCount"):
+            validate_fit(
+                estimate_split(model, normalized_config, nodes),
+                bool(normalized_config.get("force")),
+            )
         peer_id = peer["id"] if peer else None
         self.cluster = {"status": "loading", "coordinatorNodeId": self.local_node["id"], "modelId": model_id}
         self._publish_local_cluster()
-        await self.inference.load(model, path, load_config, self.peer, self.local_node["id"], peer_id)
-        uses_peer = bool(peer_id and any(
-            x.get("nodeId") == peer_id and x.get("layers", 0) > 0
-            for x in load_config.get("gpuLayers", [])
-        ))
-        self.cluster = {
-            "status": "running", "coordinatorNodeId": self.local_node["id"],
-            "workerNodeId": peer_id if uses_peer else None, "modelId": model_id,
-        }
-        self._publish_local_cluster()
-        return self.cluster
+        try:
+            await self.inference.load(
+                model, path, normalized_config, self.peer, self.local_node["id"], peer_id
+            )
+            uses_peer = bool(peer_id and any(
+                x.get("nodeId") == peer_id and x.get("layers", 0) > 0
+                for x in normalized_config.get("gpuLayers", [])
+            ))
+            self.cluster = {
+                "status": "running", "coordinatorNodeId": self.local_node["id"],
+                "workerNodeId": peer_id if uses_peer else None, "modelId": model_id,
+            }
+            self._publish_local_cluster()
+            return self.cluster
+        except Exception as error:
+            await self.inference.unload()
+            self.cluster = {
+                "status": "error", "coordinatorNodeId": self.local_node["id"],
+                "modelId": model_id, "error": str(error),
+            }
+            self._publish_local_cluster()
+            if isinstance(error, BackendError):
+                raise
+            raise BackendError("model_load_failed", str(error)) from error
 
     async def stop_cluster(self, proxy_peer: bool = True) -> dict[str, Any]:
         coordinator = self.cluster.get("coordinatorNodeId")
         if proxy_peer and coordinator and coordinator != self.local_node["id"] and self.store.get("peer"):
             try:
                 await self.peer.request("stop_cluster")
-            except BackendError:
-                pass
+            except BackendError as error:
+                self.cluster = {**self.cluster, "status": "error", "error": error.message}
+                self._publish_local_cluster()
+                raise
         await self.inference.unload()
         self.cluster = {"status": "ready" if self.store.get("peer") else "idle"}
         self._publish_local_cluster()
@@ -343,29 +367,51 @@ class BackendRuntime:
             return await self.peer.request("benchmark_inference", {"modelId": model_id})
         load_started = time.perf_counter()
         temporary = self.inference.model_id != model_id
-        if temporary:
-            split = self.estimate_model_split(model_id, {"contextSize": 4096, "gpuLayers": []})
-            allocations = [{"nodeId": value["nodeId"], "layers": value["layers"]} for value in split["devices"]]
-            await self.start_cluster(
-                model_id, {"contextSize": 4096, "gpuLayers": allocations}, allow_peer=proxy_peer
-            )
-        load_time = time.perf_counter() - load_started if temporary else 0.0
-        prompt, generation = await self.inference.benchmark()
-        result = {
-            "id": str(uuid.uuid4()), "modelName": model["name"],
-            "topology": "distributed" if self.cluster.get("workerNodeId") else "local",
-            "gpuLayers": [], "promptTokensPerSecond": prompt, "generationTokensPerSecond": generation,
-            "loadTimeSeconds": load_time, "memoryPeakGb": 0.0,
-            "recommended": True, "ranAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        }
-        self.store.append_benchmark(result)
-        if temporary:
-            await self.stop_cluster(proxy_peer=False)
+        allocations: list[dict[str, Any]] = []
+        error_message: str | None = None
+        prompt = generation = 0.0
+        try:
+            if temporary:
+                split = self.estimate_model_split(
+                    model_id, {"contextSize": 4096, "gpuLayers": []}
+                )
+                allocations = [
+                    {"nodeId": value["nodeId"], "layers": value["layers"], "kind": value["kind"]}
+                    for value in split["devices"]
+                ]
+                await self.start_cluster(
+                    model_id,
+                    {"contextSize": 4096, "gpuLayers": allocations},
+                    allow_peer=proxy_peer,
+                )
+            prompt, generation = await self.inference.benchmark()
+        except Exception as error:
+            error_message = str(error)
+        finally:
+            load_time = time.perf_counter() - load_started if temporary else 0.0
+            result = {
+                "id": str(uuid.uuid4()), "modelName": model["name"],
+                "topology": "distributed" if self.cluster.get("workerNodeId") else "local",
+                "gpuLayers": allocations, "promptTokensPerSecond": prompt,
+                "generationTokensPerSecond": generation, "loadTimeSeconds": load_time,
+                "memoryPeakGb": 0.0, "recommended": error_message is None,
+                "ranAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            }
+            if error_message:
+                result["error"] = error_message
+            self.store.append_benchmark(result)
+            if temporary:
+                await self.stop_cluster(proxy_peer=False)
         return [result]
 
     def get_api_config(self) -> dict[str, Any]:
         port = int(self.store.get("apiPort", 11435))
-        return {"url": f"http://127.0.0.1:{port}", "apiKey": self.store.get("apiKey"), "healthy": True}
+        healthy = self.api_health() if self.api_health else False
+        return {
+            "url": f"http://127.0.0.1:{port}",
+            "apiKey": self.store.get("apiKey"),
+            "healthy": healthy,
+        }
 
     def regenerate_api_key(self) -> dict[str, Any]:
         self.store.update(apiKey=secrets.token_urlsafe(32))

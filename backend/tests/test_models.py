@@ -30,3 +30,19 @@ def test_merge_marks_remote_only_models() -> None:
     merged = merge_remote(local, remote)
     assert {model["id"] for model in merged} == {"a", "b"}
     assert next(model for model in merged if model["id"] == "b")["remoteOnly"] is True
+
+
+def test_discovery_rejects_invalid_incomplete_and_projector_files(tmp_path: Path) -> None:
+    (tmp_path / "broken.gguf").write_bytes(b"not a GGUF")
+    (tmp_path / "model-00001-of-00003.gguf").write_bytes(b"GGUF")
+    (tmp_path / "mmproj-model.gguf").write_bytes(b"GGUF")
+    models, _ = discover_local([tmp_path], "node-a", node("node-a"))
+    assert models == []
+
+
+def test_discovery_accepts_a_complete_shard_set(tmp_path: Path) -> None:
+    for index in (1, 2):
+        (tmp_path / f"model-0000{index}-of-00002.gguf").write_bytes(b"GGUF")
+    models, _ = discover_local([tmp_path], "node-a", node("node-a"))
+    assert len(models) == 1
+    assert models[0]["shards"] == 2

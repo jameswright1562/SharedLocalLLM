@@ -210,8 +210,8 @@ function NetworkStep({ network, busy, testNetwork, setStep }: SetupStepContentPr
       <p className="section-kicker">Link test</p>
       <h2>Measure the path between nodes</h2>
       <p className="lede">
-        The test sends temporary encrypted data over the peer channel. One computer can still run
-        models that fit locally if you skip it.
+        The test sends temporary data over the peer channel. One computer can still run models that
+        fit locally if you skip it.
       </p>
       <div className="network-illustration" aria-hidden="true">
         <span>THIS PC</span>

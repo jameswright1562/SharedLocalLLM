@@ -77,7 +77,7 @@ before sending to its directed broadcast address, which lets a dedicated direct-
 used even when Wi-Fi remains the default Internet route.
 
 TCP `49158` carries newline-delimited JSON control requests. An `rpc_tunnel` request changes that
-connection into a raw bidirectional byte tunnel after a short ready response. Protocol version 4 is
+connection into a raw bidirectional byte tunnel after a short ready response. Protocol version 5 is
 specific to the Python backend branch, so mixed Rust/Python peers fail explicitly instead of trying
 to interpret different framing.
 

@@ -125,21 +125,19 @@ export function ModelInspector({
       <AdvancedLoadOptions options={loadOptions} setOptions={setLoadOptions} />
       <button
         className="button primary full"
-        disabled={
-          busy ||
-          selected.remoteOnly ||
-          ((selected.fit === "does-not-fit" || splitInvalid) && !force)
-        }
+        disabled={busy || ((selected.fit === "does-not-fit" || splitInvalid) && !force)}
         onClick={launch}
         aria-label={`Launch ${selected.name}`}
       >
         {busy ? "Starting cluster…" : `Launch ${selected.name}`}
       </button>
-      {selected.remoteOnly ? (
+      {selected.remoteOnly && (
         <p className="metadata-note">
-          This GGUF is stored on the other computer. Launch it there, or copy the file locally.
+          This GGUF is stored on the other computer. Launching here asks that computer to coordinate
+          the model while this app remains the controller.
         </p>
-      ) : selected.fit === "does-not-fit" || splitInvalid ? (
+      )}
+      {(selected.fit === "does-not-fit" || splitInvalid) && (
         <label className="force-launch">
           <input
             type="checkbox"
@@ -148,7 +146,7 @@ export function ModelInspector({
           />
           <span>Force launch — ignore the memory estimate</span>
         </label>
-      ) : null}
+      )}
       {force && (
         <p className="metadata-note">
           Forced launch disables the fit check. The model may load slowly, spill heavily, or fail to
@@ -374,10 +372,29 @@ function GpuAllocation({
                             Number.parseInt(event.target.value || "0", 10),
                           ),
                         );
+                        const gpuOnly = gpuLayers.filter(
+                          (item) => !(item.nodeId === workerNode.id && item.kind === "cpu"),
+                        );
+                        let overflow = Math.max(
+                          0,
+                          gpuOnly.reduce((total, item) => total + item.layers, 0) +
+                            layers -
+                            (selected.layerCount ?? 0),
+                        );
+                        const adjusted = gpuOnly.map((item) => {
+                          if (overflow === 0 || item.nodeId !== workerNode.id) return item;
+                          const removed = Math.min(item.layers, overflow);
+                          overflow -= removed;
+                          return { ...item, layers: item.layers - removed };
+                        });
+                        const fullyAdjusted = adjusted.map((item) => {
+                          if (overflow === 0) return item;
+                          const removed = Math.min(item.layers, overflow);
+                          overflow -= removed;
+                          return { ...item, layers: item.layers - removed };
+                        });
                         setGpuLayers([
-                          ...gpuLayers.filter(
-                            (item) => !(item.nodeId === workerNode.id && item.kind === "cpu"),
-                          ),
+                          ...fullyAdjusted,
                           { nodeId: workerNode.id, layers, kind: "cpu" },
                         ]);
                       }}

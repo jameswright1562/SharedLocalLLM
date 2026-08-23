@@ -20,6 +20,7 @@ _native_libraries: list[Any] | None = None
 _lib_directory: Path | None = None
 _backend_initialized = False
 _patch_installed = False
+_rpc_devices_by_endpoint: dict[str, list[dict[str, Any]]] = {}
 # Device list to apply to the next llama_model_params. llama.cpp reads
 # params.devices only while loading the model, so a single pending slot is
 # enough; every Llama construction in this process goes through _load_sync.
@@ -34,28 +35,26 @@ class NativeRpcServer:
         self._thread: threading.Thread | None = None
         self._error: Exception | None = None
         self._dll_directory: Any = None
-        self.include_cpu = False
+        self.include_cpu = True
 
     def start(self, include_cpu: bool = False) -> str:
         if (
             self.endpoint
             and self._thread
             and self._thread.is_alive()
-            and self.include_cpu == include_cpu
         ):
             return self.endpoint
-        # The worker advertises its device set when the RPC server starts. If the
-        # caller wants a different device set than the one already served, start a
-        # fresh server; the previous daemon thread is abandoned and torn down with
-        # the process. Toggles are rare, so this bounded ephemeral-port reuse is
-        # acceptable for the preview.
-        self.include_cpu = include_cpu
+        # Expose the stable superset once. The coordinator omits the final CPU
+        # device unless remote CPU offload is explicitly selected. llama.cpp's
+        # embedded RPC server has no shutdown API, so starting a fresh daemon on
+        # every toggle would leak threads and ports for the process lifetime.
+        self.include_cpu = True
         self.endpoint = None
         self._error = None
         port = _free_port()
         self.endpoint = f"127.0.0.1:{port}"
         self._thread = threading.Thread(
-            target=self._run, args=(include_cpu,), name="llama-rpc-worker", daemon=True
+            target=self._run, args=(True,), name="llama-rpc-worker", daemon=True
         )
         self._thread.start()
         deadline = time.monotonic() + 15
@@ -142,33 +141,48 @@ def prepare_rpc_load(
     list and every RPC device is treated as a GPU (the historical behaviour).
     """
     ensure_backend_initialized()
-    fresh_count = 0
+    selected_rpc: list[dict[str, Any]] = []
     if endpoint:
-        before = _rpc_device_count()
-        register_rpc_client(endpoint)
-        fresh_count = _rpc_device_count() - before
+        selected_rpc = _rpc_devices_by_endpoint.get(endpoint, [])
+        if not selected_rpc:
+            before = _rpc_device_count()
+            register_rpc_client(endpoint)
+            fresh_count = _rpc_device_count() - before
+            info = device_info()
+            rpc, _ = classify_devices(info)
+            selected_rpc = rpc[-fresh_count:] if fresh_count else []
+            if not selected_rpc:
+                raise BackendError(
+                    "rpc_device_missing",
+                    "The worker connected, but llama.cpp did not register an RPC device.",
+                )
+            _rpc_devices_by_endpoint[endpoint] = selected_rpc
     info = device_info()
     rpc, gpus = classify_devices(info)
-    # RPC backends from earlier loads accumulate for the process lifetime (there is
-    # no exported unregister/free symbol). The freshly registered server's devices
-    # are always the last ``fresh_count`` entries in registration order.
+    del rpc
     remote_gpus, remote_cpus = split_rpc_devices(
-        rpc[-fresh_count:] if fresh_count else [],
-        include_cpu=remote_cpu_layers > 0,
+        selected_rpc,
+        include_cpu=True,
     )
+    if remote_gpu_layers > 0 and not remote_gpus:
+        raise BackendError(
+            "remote_gpu_missing",
+            "GPU layers were assigned to a worker that did not expose a GPU device.",
+        )
     devices: list[int] = []
     if endpoint:
         # llama.cpp orders RPC devices before local GPUs; keep that order. The
         # remote CPU is the final RPC device and is added only when layers are
         # explicitly assigned to it.
         devices.extend(value["pointer"] for value in remote_gpus)
-        devices.extend(value["pointer"] for value in remote_cpus)
+        if remote_cpu_layers > 0:
+            devices.extend(value["pointer"] for value in remote_cpus)
     devices.extend(value["pointer"] for value in gpus)
     prepare_model_devices(devices)
     if not endpoint:
         return None
     return tensor_split_for(
-        len(remote_gpus), len(remote_cpus), len(gpus),
+        len(remote_gpus), len(remote_cpus) if remote_cpu_layers > 0 else 0, len(gpus),
         remote_gpu_layers, remote_cpu_layers, local_layers,
     )
 
@@ -306,6 +320,22 @@ def ensure_backend_initialized() -> None:
         load_all(str(_libraries_dir()).encode())
     _install_model_devices_patch()
     _backend_initialized = True
+
+
+def runtime_health() -> dict[str, Any]:
+    try:
+        import llama_cpp
+
+        ensure_backend_initialized()
+        _symbol("ggml_backend_rpc_start_server")
+        _symbol("ggml_backend_rpc_add_server")
+        return {"status": "ready", "version": f"llama-cpp-python {llama_cpp.__version__}"}
+    except Exception as error:
+        return {
+            "status": "error",
+            "version": None,
+            "error": f"llama.cpp backend health check failed: {error}",
+        }
 
 
 def _install_model_devices_patch() -> None:

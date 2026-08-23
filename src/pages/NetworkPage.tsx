@@ -27,14 +27,14 @@ export function NetworkPage({ snapshot, service }: PageProps) {
         <div>
           <p className="section-kicker">Transport</p>
           <h1>Link diagnostics</h1>
-          <p>Measure the encrypted route used for distributed inference.</p>
+          <p>Measure the peer route used for distributed inference.</p>
         </div>
         <button
           className="button primary"
           disabled={testing || snapshot.nodes.length < 2}
           onClick={() => void runTest()}
         >
-          {testing ? "Testing the encrypted channel…" : "Run network test"}
+          {testing ? "Testing the peer channel…" : "Run network test"}
         </button>
       </header>
       {error && (
@@ -117,7 +117,7 @@ export function NetworkPage({ snapshot, service }: PageProps) {
           </section>
           <div className="throughput-detail">
             <span>
-              Round-trip encrypted channel <b>{Math.round(result.downMbps)} Mbit/s</b>
+              Measured peer download <b>{Math.round(result.downMbps)} Mbit/s</b>
             </span>
             <Meter value={result.downMbps} max={Math.max(result.downMbps, 1000)} />
             <small>One measured direction; not separate up/down links.</small>

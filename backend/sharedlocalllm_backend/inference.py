@@ -12,6 +12,8 @@ from .peer import RpcForwarder
 from .reasoning import ReasoningStreamSplitter, is_reasoning_model, split_reasoning
 from .rpc_native import NativeRpcServer, prepare_rpc_load
 
+LLAMA_SPLIT_MODE_LAYER = 1
+
 
 def build_llama_kwargs(
     load_config: dict[str, Any], path: str, context: int, gpu_layers: int,
@@ -23,14 +25,16 @@ def build_llama_kwargs(
     automatic CPU threads, a 512-token batch, mmap enabled, and standard (non
     flash) attention. ``cpuThreads=0`` keeps the automatic half-core default.
     """
-    from llama_cpp import LLAMA_SPLIT_MODE_LAYER
-
     cores = os.cpu_count() or 8
     requested_threads = int(load_config.get("cpuThreads", 0))
     return {
         "model_path": path,
         "n_ctx": context,
-        "n_gpu_layers": gpu_layers if gpu_layers > 0 else -1,
+        "n_gpu_layers": (
+            gpu_layers
+            if gpu_layers > 0
+            else (-1 if load_config.get("automaticGpuOffload", True) else 0)
+        ),
         "split_mode": LLAMA_SPLIT_MODE_LAYER,
         "tensor_split": tensor_split,
         "n_threads": max(1, requested_threads) if requested_threads > 0 else max(1, cores // 2),
@@ -94,7 +98,9 @@ class InferenceEngine:
             )
             remote_total = remote_gpu_layers + remote_cpu_layers
             if peer_id and (remote_total > 0 or model.get("fit") == "combined-gpu"):
-                self._forwarder = RpcForwarder(peer, include_cpu=remote_cpu_layers > 0)
+                self._forwarder = RpcForwarder(
+                    peer, model_id=model["id"], include_cpu=remote_cpu_layers > 0
+                )
                 rpc_endpoint = await self._forwarder.start()
             total_layers = remote_gpu_layers + remote_cpu_layers + local_layers
             if rpc_endpoint and total_layers <= 0:

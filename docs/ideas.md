@@ -4,7 +4,7 @@ This file records worthwhile follow-up work intentionally outside the current v1
 
 ## Improved peer authentication and authorization
 
-The v1 peer channel is intended only for two computers controlled by the same person on a trusted Windows Private network. It uses an expiring six-digit pairing code with an encrypted Noise channel, rejects incorrect codes, and keeps raw `llama.cpp` RPC plus the model API on loopback. This is adequate for the current local preview, but it is not the desired long-term trust model.
+The Python-preview peer channel is intended only for two computers controlled by the same person on a trusted LAN. It is currently plain, unauthenticated TCP and keeps raw `llama.cpp` RPC plus the model API on loopback. This is adequate for functional preview testing but is not the desired long-term trust model.
 
 Future authentication work should include:
 
@@ -69,6 +69,5 @@ Implemented in the Python backend (`python-backend-migration` branch) as an expe
 
 Still outstanding: physical two-computer validation, and a benchmark that confirms remote-CPU offload
 is not presented as a distributed speedup. RPC device enumeration accumulates across loads because
-there is no exported unregister/free symbol; the coordinator isolates fresh devices by registration
+there is no exported unregister/free symbol; the coordinator caches devices by worker endpoint.
 delta, which is sufficient for the controlled single-cluster case.
-

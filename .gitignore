@@ -16,6 +16,8 @@ backend/dist/
 backend/*.spec
 backend/**/__pycache__/
 backend/.pytest_cache/
+backend/.pytest-tmp/
+backend/*.egg-info/
 
 # Tests
 playwright-report/

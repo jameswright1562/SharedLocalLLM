@@ -86,3 +86,10 @@ def test_stream_flagged_model_without_markers_falls_back_to_answer() -> None:
     reasoning_parts, answer_parts = drain(["No ", "reasoning ", "here."], reasoning=True)
     assert reasoning_parts == []
     assert "".join(answer_parts) == "No reasoning here."
+
+
+def test_stream_long_unmarked_answer_is_not_hidden_as_reasoning() -> None:
+    text = "This is a perfectly ordinary long answer with no hidden reasoning markers at all."
+    reasoning_parts, answer_parts = drain([text[:30], text[30:]], reasoning=True)
+    assert reasoning_parts == []
+    assert "".join(answer_parts) == text

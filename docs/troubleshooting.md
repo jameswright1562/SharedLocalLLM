@@ -91,7 +91,7 @@ manually. Check **Settings > Logs** for `peer_listener_ready`, `peer_connected`,
 
 ## Firewall or connection failure
 
-SharedLocalLLM checks for its program-scoped Windows Firewall rules on startup. If they are missing
+SharedLocalLLM checks for its port-scoped Windows Firewall rules on startup. If they are missing
 and the app is not already elevated, it relaunches itself with a UAC prompt and creates the rules for
 TCP `49158` and UDP `49157` across all network profiles (Profile Any). No network-profile change is
 needed. Do not create a broad port rule manually.

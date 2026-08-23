@@ -25,6 +25,13 @@ def test_zero_gpu_layers_offloads_automatically() -> None:
     assert kwargs["n_gpu_layers"] == -1
 
 
+def test_validated_cpu_only_load_does_not_auto_offload() -> None:
+    kwargs = build_llama_kwargs(
+        {"automaticGpuOffload": False}, "model.gguf", 4096, 0, None
+    )
+    assert kwargs["n_gpu_layers"] == 0
+
+
 def test_options_flow_through_to_llama() -> None:
     kwargs = build_llama_kwargs(
         {

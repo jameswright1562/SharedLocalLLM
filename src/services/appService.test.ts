@@ -1,7 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const invokeMock = vi.fn();
-vi.mock("@tauri-apps/api/core", () => ({ invoke: invokeMock }));
+class ChannelMock<T> {
+  onmessage: (value: T) => void = () => undefined;
+}
+vi.mock("@tauri-apps/api/core", () => ({ invoke: invokeMock, Channel: ChannelMock }));
 
 import { appService, demoService, nativeService } from "./appService";
 
@@ -12,6 +15,7 @@ describe("app services", () => {
       .mockReset()
       .mockImplementation((command: string, payload?: Record<string, unknown>) => {
         if (command === "pick_model_directory") return Promise.resolve("C:\\Models");
+        if (command === "backend_stream") return Promise.reject(new Error("stream unavailable"));
         if (command === "backend_request") {
           const request = payload as { command?: string } | undefined;
           if (request?.command === "send_chat_message")
@@ -90,7 +94,8 @@ describe("app services", () => {
       autostart: true,
     });
     await nativeService.installRuntime(progress);
-    expect(progress).toHaveBeenCalledWith(100, "Python backend ready");
+    expect(progress).toHaveBeenNthCalledWith(1, 25, "Verifying the Python and llama.cpp backend");
+    expect(progress).toHaveBeenLastCalledWith(100, "Python backend verified");
     await nativeService.refreshHardware();
     await nativeService.discoverModels();
     await nativeService.addModelDirectory();
@@ -165,5 +170,30 @@ describe("app services", () => {
       message: "127.0.0.1:11435 is already in use.",
       action: "Choose another local API port.",
     });
+  });
+
+  it("does not retry a prompt after a partial stream", async () => {
+    invokeMock.mockImplementation((command: string, payload?: Record<string, unknown>) => {
+      if (command === "backend_stream") {
+        const channel = payload?.channel as ChannelMock<{ type: "token"; content: string }>;
+        channel.onmessage({ type: "token", content: "partial" });
+        return Promise.reject(new Error("connection dropped"));
+      }
+      return Promise.resolve({ content: "duplicate" });
+    });
+    await expect(
+      nativeService.sendChatMessage(
+        [{ id: "m1", role: "user", content: "hello" }],
+        { systemPrompt: "", temperature: 0.4, maxTokens: 32 },
+        [],
+      ),
+    ).rejects.toThrow("connection dropped");
+    expect(
+      invokeMock.mock.calls.filter(
+        ([command, payload]) =>
+          command === "backend_request" &&
+          (payload as { command?: string } | undefined)?.command === "send_chat_message",
+      ),
+    ).toHaveLength(0);
   });
 });

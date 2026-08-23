@@ -4,7 +4,11 @@ import { ModelInspector } from "../components/ModelInspector";
 import { Modal } from "@mantine/core";
 import { describeAppError } from "../services/errors";
 import { DEFAULT_LOAD_OPTIONS } from "../services/loadOptions";
-import { distributeLayersByVram, estimateModelSplitLocally } from "../services/splitEstimate";
+import {
+  distributeLayersByVram,
+  estimateModelSplitLocally,
+  fitLayersByVram,
+} from "../services/splitEstimate";
 import type { GpuLayerAllocation, ModelLoadOptions, PageProps } from "../types";
 
 export function ModelsPage({ snapshot, service, refreshSnapshot }: PageProps) {
@@ -43,6 +47,7 @@ export function ModelsPage({ snapshot, service, refreshSnapshot }: PageProps) {
     () => snapshot.nodes.filter((node) => node.online && node.gpu.vramTotalGb > 0),
     [snapshot.nodes],
   );
+  const activeNodes = useMemo(() => snapshot.nodes.filter((node) => node.online), [snapshot.nodes]);
   const workerNode = snapshot.nodes.find((node) => node.role === "worker");
   const manualSplit = selected ? Boolean(manualByModel[selected.id]) : false;
   const includeRemoteCpu = selected ? Boolean(remoteCpuByModel[selected.id]) : false;
@@ -50,25 +55,23 @@ export function ModelsPage({ snapshot, service, refreshSnapshot }: PageProps) {
   const loadOptions = selected
     ? (optionsByModel[selected.id] ?? DEFAULT_LOAD_OPTIONS)
     : DEFAULT_LOAD_OPTIONS;
-  const gpuLayers = useMemo(
-    () =>
-      selected
-        ? (layersByModel[selected.id] ?? distributeLayersByVram(selected.layerCount ?? 0, gpuNodes))
-        : [],
-    [gpuNodes, layersByModel, selected],
-  );
+  const gpuLayers = useMemo(() => {
+    if (!selected) return [];
+    if (!manualSplit) return fitLayersByVram(selected, gpuNodes);
+    return layersByModel[selected.id] ?? distributeLayersByVram(selected.layerCount ?? 0, gpuNodes);
+  }, [gpuNodes, layersByModel, manualSplit, selected]);
   const splitEstimate = useMemo(() => {
     if (!selected?.layerCount || !manualSplit) return undefined;
     try {
-      return estimateModelSplitLocally(selected, gpuNodes, { contextSize, gpuLayers });
+      return estimateModelSplitLocally(selected, activeNodes, { contextSize, gpuLayers });
     } catch {
       return undefined;
     }
-  }, [contextSize, gpuLayers, gpuNodes, manualSplit, selected]);
+  }, [activeNodes, contextSize, gpuLayers, manualSplit, selected]);
   const splitInvalid =
     manualSplit &&
     (!splitEstimate ||
-      splitEstimate.gpuLayers === 0 ||
+      splitEstimate.devices.every((device) => device.layers === 0) ||
       splitEstimate.devices.some((device) => !device.fits));
 
   async function refreshModels() {

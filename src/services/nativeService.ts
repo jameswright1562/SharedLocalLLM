@@ -1,5 +1,6 @@
 import type {
   AppService,
+  AppSnapshot,
   ChatMessage,
   ChatResponse,
   ChatSettings,
@@ -67,8 +68,10 @@ export const nativeService: AppService = {
   completeSetup: (deviceName) => backend("complete_setup", { deviceName }),
   updateSettings: (settings) => backend("update_settings", { settings }),
   installRuntime: async (onProgress) => {
-    onProgress?.(100, "Python backend ready");
-    return backend("install_runtime");
+    onProgress?.(25, "Verifying the Python and llama.cpp backend");
+    const snapshot = await backend<AppSnapshot>("install_runtime");
+    onProgress?.(100, "Python backend verified");
+    return snapshot;
   },
   refreshHardware: () => backend("refresh_hardware"),
   discoverModels: () => backend("discover_models"),
@@ -88,9 +91,14 @@ export const nativeService: AppService = {
   cancelInferenceBenchmark: () => backend("cancel_inference_benchmark"),
   sendChatMessage: async (messages, settings, images, onStream) => {
     onStream?.({ kind: "status", status: "processing" });
+    let receivedContent = false;
     try {
-      return await streamChatCompletion(messages, settings, images, onStream);
-    } catch {
+      return await streamChatCompletion(messages, settings, images, (event) => {
+        if (event.kind === "token" || event.kind === "reasoning") receivedContent = true;
+        onStream?.(event);
+      });
+    } catch (reason) {
+      if (receivedContent) throw reason;
       onStream?.({ kind: "status", status: "generating" });
       const response = await backend<ChatResponse>("send_chat_message", {
         messages,

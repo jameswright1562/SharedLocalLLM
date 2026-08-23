@@ -1,5 +1,6 @@
 use std::{
     fs::{self, File},
+    io::{Read, Write},
     net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream},
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
@@ -30,15 +31,26 @@ pub struct BackendProcess {
 
 impl BackendProcess {
     pub fn start(&self, app: &AppHandle) -> Result<(), ErrorPayload> {
-        if backend_is_listening() {
-            return Ok(());
-        }
         let mut child = self
             .child
             .lock()
             .map_err(|_| bridge_error("Backend process state is unavailable."))?;
-        if child.is_some() {
+        if let Some(process) = child.as_mut() {
+            match process.try_wait() {
+                Ok(Some(_)) => *child = None,
+                Ok(None) => return Ok(()),
+                Err(error) => return Err(bridge_error(error.to_string())),
+            }
+        }
+        if backend_is_healthy() {
             return Ok(());
+        }
+        if control_port_open() {
+            return Err(ErrorPayload::new(
+                "python_backend_port_in_use",
+                "Port 11436 is occupied by a process that is not a compatible SharedLocalLLM backend.",
+                Some("Close the stale process or restart Windows, then relaunch SharedLocalLLM.".into()),
+            ));
         }
         let process = spawn_backend(app)?;
         *child = Some(process);
@@ -48,7 +60,7 @@ impl BackendProcess {
     }
 
     pub fn is_cluster_running(&self) -> bool {
-        self.cluster_running.load(Ordering::Relaxed)
+        self.cluster_running.load(Ordering::Relaxed) || backend_reports_cluster_running()
     }
 
     fn restart_backend(&self, app: &AppHandle) -> Result<(), ErrorPayload> {
@@ -124,11 +136,22 @@ impl BackendProcess {
         *slot = Some(handle);
     }
 
-    fn record_command(&self, command: &str) {
-        match command {
-            "start_cluster" => self.cluster_running.store(true, Ordering::Relaxed),
-            "stop_cluster" => self.cluster_running.store(false, Ordering::Relaxed),
-            _ => {}
+    fn record_response(&self, command: &str, value: &Value) {
+        let cluster = if command == "get_app_snapshot" {
+            value.get("cluster")
+        } else if matches!(command, "start_cluster" | "stop_cluster") {
+            Some(value)
+        } else {
+            None
+        };
+        if let Some(status) = cluster
+            .and_then(|cluster| cluster.get("status"))
+            .and_then(Value::as_str)
+        {
+            self.cluster_running.store(
+                matches!(status, "loading" | "running" | "stopping"),
+                Ordering::Relaxed,
+            );
         }
     }
 }
@@ -149,8 +172,10 @@ impl Drop for BackendProcess {
 pub async fn backend_request(
     command: String,
     args: Value,
+    app: AppHandle,
     backend: State<'_, BackendProcess>,
 ) -> Result<Value, ErrorPayload> {
+    backend.start(&app)?;
     let client = reqwest::Client::new();
     let url = format!("{CONTROL_ORIGIN}/_internal/{command}");
     let mut last_error = None;
@@ -173,11 +198,12 @@ pub async fn backend_request(
                         crate::autostart::apply(enabled)?;
                     }
                 }
-                backend.record_command(&command);
+                backend.record_response(&command, &value);
                 return Ok(value);
             }
             Err(error) if error.is_connect() => {
                 last_error = Some(error.to_string());
+                backend.start(&app)?;
                 tokio::time::sleep(Duration::from_millis(250)).await;
             }
             Err(error) => {
@@ -234,9 +260,10 @@ pub async fn backend_stream(
     command: String,
     args: Value,
     channel: Channel<ChatStreamEvent>,
+    app: AppHandle,
     backend: State<'_, BackendProcess>,
 ) -> Result<ChatResponse, ErrorPayload> {
-    let _ = backend;
+    backend.start(&app)?;
     let client = reqwest::Client::new();
     let url = format!("{CONTROL_ORIGIN}/_internal/stream/{command}");
     let response = client
@@ -464,8 +491,57 @@ fn file_signature(path: &Path) -> Option<(PathBuf, u64, u64)> {
     ))
 }
 
-fn backend_is_listening() -> bool {
-    TcpStream::connect_timeout(&CONTROL_ADDRESS, Duration::from_millis(100)).is_ok()
+fn control_port_open() -> bool {
+    TcpStream::connect_timeout(&CONTROL_ADDRESS, Duration::from_millis(150)).is_ok()
+}
+
+fn backend_is_healthy() -> bool {
+    let Ok(mut stream) = TcpStream::connect_timeout(&CONTROL_ADDRESS, Duration::from_millis(200))
+    else {
+        return false;
+    };
+    let _ = stream.set_read_timeout(Some(Duration::from_millis(300)));
+    let _ = stream.set_write_timeout(Some(Duration::from_millis(300)));
+    if stream
+        .write_all(b"GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
+        .is_err()
+    {
+        return false;
+    }
+    let mut response = String::new();
+    stream.read_to_string(&mut response).is_ok()
+        && response.starts_with("HTTP/1.1 200")
+        && response.contains("\"backend\":\"python\"")
+}
+
+fn backend_reports_cluster_running() -> bool {
+    let Ok(mut stream) = TcpStream::connect_timeout(&CONTROL_ADDRESS, Duration::from_millis(150))
+    else {
+        return false;
+    };
+    let _ = stream.set_read_timeout(Some(Duration::from_millis(300)));
+    let _ = stream.set_write_timeout(Some(Duration::from_millis(300)));
+    let request = b"POST /_internal/get_app_snapshot HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}";
+    if stream.write_all(request).is_err() {
+        return false;
+    }
+    let mut response = String::new();
+    if stream.read_to_string(&mut response).is_err() {
+        return false;
+    }
+    let Some((_, body)) = response.split_once("\r\n\r\n") else {
+        return false;
+    };
+    serde_json::from_str::<Value>(body)
+        .ok()
+        .and_then(|value| value.get("cluster").cloned())
+        .and_then(|cluster| {
+            cluster
+                .get("status")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        })
+        .is_some_and(|status| matches!(status.as_str(), "loading" | "running" | "stopping"))
 }
 
 fn logs_root() -> PathBuf {
@@ -579,5 +655,20 @@ mod tests {
         let before = backend_signature(dir.path());
         write_touched(&manifest, "dependencies = ['fastapi']", 2000);
         assert_ne!(before, backend_signature(dir.path()));
+    }
+
+    #[test]
+    fn snapshot_response_updates_cluster_close_guard() {
+        let backend = BackendProcess::default();
+        backend.record_response(
+            "get_app_snapshot",
+            &serde_json::json!({"cluster": {"status": "running"}}),
+        );
+        assert!(backend.cluster_running.load(Ordering::Relaxed));
+        backend.record_response(
+            "get_app_snapshot",
+            &serde_json::json!({"cluster": {"status": "idle"}}),
+        );
+        assert!(!backend.cluster_running.load(Ordering::Relaxed));
     }
 }
