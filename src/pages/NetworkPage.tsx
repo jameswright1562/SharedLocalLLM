@@ -49,7 +49,7 @@ export function NetworkPage({ snapshot, service }: PageProps) {
     <Box>
       <Flex justify="space-between" align="flex-start" gap="md" wrap="wrap" mb="lg">
         <Box>
-          <Text size="xs" fw={700} tt="uppercase" ls={1.5} c="cyan">
+          <Text size="xs" fw={700} tt="uppercase" lts={1.5} c="cyan">
             Transport
           </Text>
           <Title order={1}>Link diagnostics</Title>
@@ -97,7 +97,7 @@ export function NetworkPage({ snapshot, service }: PageProps) {
                 <IconActivity size={22} />
               </ThemeIcon>
               <div>
-                <Text size="xs" fw={700} tt="uppercase" ls={1.5} c="cyan">
+                <Text size="xs" fw={700} tt="uppercase" lts={1.5} c="cyan">
                   Link classification
                 </Text>
                 <Text className="classification" tt="capitalize" fw={700} size="xl" lh={1.2}>
@@ -185,7 +185,7 @@ function MetricCard({
 }) {
   return (
     <Paper withBorder p="md">
-      <Text size="xs" tt="uppercase" ls={1} c="dimmed" fw={600}>
+      <Text size="xs" tt="uppercase" lts={1} c="dimmed" fw={600}>
         {label}
       </Text>
       <Group gap={4} align="baseline">

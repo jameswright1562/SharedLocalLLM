@@ -86,16 +86,16 @@ export function ModelInspector({
 
   return (
     <Stack gap="sm" aria-label="Selected model details">
-      <Text size="xs" fw={700} tt="uppercase" ls={1.5} c="cyan">
+      <Text size="xs" fw={700} tt="uppercase" lts={1.5} c="cyan">
         Selected model
       </Text>
       <Title order={2}>{selected.name}</Title>
       <DataList
         size="sm"
-        styles={{ itemKey: { width: 90, color: "var(--mantine-color-dimmed)" } }}
+        styles={{ itemLabel: { width: 90, color: "var(--mantine-color-dimmed)" } }}
       >
         <DataList.Item>
-          <DataList.ItemKey>Fit</DataList.ItemKey>
+          <DataList.ItemLabel>Fit</DataList.ItemLabel>
           <DataList.ItemValue>
             <Badge color={fitBadgeColors[selected.fit]} variant="light" className={`fit-${selected.fit}`}>
               {fitLabels[selected.fit]}
@@ -103,21 +103,21 @@ export function ModelInspector({
           </DataList.ItemValue>
         </DataList.Item>
         <DataList.Item>
-          <DataList.ItemKey>Context</DataList.ItemKey>
+          <DataList.ItemLabel>Context</DataList.ItemLabel>
           <DataList.ItemValue>{formatContext(selected.contextLength)} tokens</DataList.ItemValue>
         </DataList.Item>
         <DataList.Item>
-          <DataList.ItemKey>Format</DataList.ItemKey>
+          <DataList.ItemLabel>Format</DataList.ItemLabel>
           <DataList.ItemValue>{selected.quantization}</DataList.ItemValue>
         </DataList.Item>
         <DataList.Item>
-          <DataList.ItemKey>Files</DataList.ItemKey>
+          <DataList.ItemLabel>Files</DataList.ItemLabel>
           <DataList.ItemValue>
             {selected.shards} GGUF{selected.capability === "vision" ? " + projector" : ""}
           </DataList.ItemValue>
         </DataList.Item>
         <DataList.Item>
-          <DataList.ItemKey>Location</DataList.ItemKey>
+          <DataList.ItemLabel>Location</DataList.ItemLabel>
           <DataList.ItemValue>
             {selected.locations[0]
               ? (nodeLookup.get(selected.locations[0].nodeId) ?? "Unknown node")

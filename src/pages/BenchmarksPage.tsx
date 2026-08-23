@@ -86,7 +86,7 @@ export function BenchmarksPage({ snapshot, service, refreshSnapshot, navigate }:
     <Box>
       <Flex justify="space-between" align="flex-start" gap="md" wrap="wrap" mb="lg">
         <Box>
-          <Text size="xs" fw={700} tt="uppercase" ls={1.5} c="cyan">
+          <Text size="xs" fw={700} tt="uppercase" lts={1.5} c="cyan">
             Placement evidence
           </Text>
           <Title order={1}>Performance benchmarks</Title>

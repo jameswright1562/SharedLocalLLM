@@ -8,7 +8,6 @@ import {
   Flex,
   Group,
   Paper,
-  SimpleGrid,
   Stack,
   Text,
   Title,
@@ -70,7 +69,7 @@ export function NodesPage({ snapshot, service, refreshSnapshot }: PageProps) {
     <Box>
       <Flex justify="space-between" align="flex-start" gap="md" wrap="wrap" mb="lg">
         <Box>
-          <Text size="xs" fw={700} tt="uppercase" ls={1.5} c="cyan">
+          <Text size="xs" fw={700} tt="uppercase" lts={1.5} c="cyan">
             Inventory
           </Text>
           <Title order={1}>Node capabilities</Title>
@@ -84,7 +83,7 @@ export function NodesPage({ snapshot, service, refreshSnapshot }: PageProps) {
       <Stack gap="md">
         {snapshot.nodes.map((node, index) => (
           <Card key={node.id} withBorder p="lg" component="article">
-            <Text size="10px" ff="monospace" c="dimmed" tt="uppercase" ls={2} mb={4}>
+            <Text size="10px" ff="monospace" c="dimmed" tt="uppercase" lts={2} mb={4}>
               Node {String(index + 1).padStart(2, "0")}
             </Text>
             <Group justify="space-between" wrap="nowrap" mb="sm">
@@ -96,12 +95,7 @@ export function NodesPage({ snapshot, service, refreshSnapshot }: PageProps) {
               </Box>
               <StatusPill online={node.online}>{node.online ? "Reachable" : "Offline"}</StatusPill>
             </Group>
-            <DataList
-              columnCount={{ base: 1, sm: 2 }}
-              size="sm"
-              mb="md"
-              styles={{ itemLabel: { color: "var(--mantine-color-dimmed)", width: 150 } }}
-            >
+            <DataList size="sm" mb="md" labelWidth={150}>
               <DataList.Item>
                 <DataList.ItemLabel>Graphics processor</DataList.ItemLabel>
                 <DataList.ItemValue>{node.gpu.name}</DataList.ItemValue>

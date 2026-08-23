@@ -247,7 +247,7 @@ export default function App({ service = appService }: { service?: AppService }) 
               </Text>
             </Box>
           </Group>
-          <Text size="9px" c="dimmed" tt="uppercase" ls={2}>
+          <Text size="9px" c="dimmed" tt="uppercase" lts={2}>
             SHAREDLOCALLLM · LOCAL ONLY
           </Text>
         </AppShell.Section>

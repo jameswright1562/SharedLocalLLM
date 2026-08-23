@@ -200,7 +200,7 @@ export function ModelsPage({ snapshot, service, refreshSnapshot }: PageProps) {
     <Box>
       <Flex justify="space-between" align="flex-start" gap="md" wrap="wrap" mb="lg">
         <Box>
-          <Text size="xs" fw={700} tt="uppercase" ls={1.5} c="cyan">
+          <Text size="xs" fw={700} tt="uppercase" lts={1.5} c="cyan">
             Catalogue
           </Text>
           <Title order={1}>Model library</Title>

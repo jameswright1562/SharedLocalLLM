@@ -160,7 +160,7 @@ export function SetupWizard({ snapshot, service, onComplete }: SetupWizardProps)
             <span />
             <span />
           </div>
-          <Text size="xs" fw={700} tt="uppercase" ls={2} c="cyan">
+          <Text size="xs" fw={700} tt="uppercase" lts={2} c="cyan">
             SharedLocalLLM
           </Text>
         </Group>
@@ -176,7 +176,7 @@ export function SetupWizard({ snapshot, service, onComplete }: SetupWizardProps)
           active={step}
           color="cyan"
           size="sm"
-          allowClickSteps={false}
+          allowNextStepsSelect={false}
           iconSize={30}
         >
           {steps.map((label) => (
@@ -193,7 +193,7 @@ export function SetupWizard({ snapshot, service, onComplete }: SetupWizardProps)
         style={{ flex: 1 }}
       >
         <Box w={640} maw="100%">
-          <Text size="xs" tt="uppercase" ls={2} c="dimmed" mb="xs">
+          <Text size="xs" tt="uppercase" lts={2} c="dimmed" mb="xs">
             Step {step + 1} of {steps.length}
           </Text>
           <SetupStepContent

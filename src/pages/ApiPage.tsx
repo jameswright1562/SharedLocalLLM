@@ -113,7 +113,7 @@ export function ApiPage({ snapshot, service, refreshSnapshot }: PageProps) {
   return (
     <Box>
       <Box mb="lg">
-        <Text size="xs" fw={700} tt="uppercase" ls={1.5} c="cyan">
+        <Text size="xs" fw={700} tt="uppercase" lts={1.5} c="cyan">
           Loopback interface
         </Text>
         <Title order={1}>Local API</Title>
@@ -157,7 +157,7 @@ export function ApiPage({ snapshot, service, refreshSnapshot }: PageProps) {
                   {config.healthy ? <IconServer size={22} /> : <IconPlugOff size={22} />}
                 </ThemeIcon>
                 <div>
-                  <Text size="xs" fw={700} tt="uppercase" ls={1.5} c="cyan">
+                  <Text size="xs" fw={700} tt="uppercase" lts={1.5} c="cyan">
                     Connection health
                   </Text>
                   <Title order={3}>{config.healthy ? "Listening on loopback" : "API unavailable"}</Title>
@@ -225,7 +225,7 @@ export function ApiPage({ snapshot, service, refreshSnapshot }: PageProps) {
           <Paper withBorder mb="md" style={{ overflow: "hidden" }}>
             <Group justify="space-between" p="md" bg="dark.8" wrap="nowrap" gap="md">
               <div>
-                <Text size="10px" ff="monospace" tt="uppercase" ls={2} c="cyan" fw={600}>
+                <Text size="10px" ff="monospace" tt="uppercase" lts={2} c="cyan" fw={600}>
                   PowerShell / curl
                 </Text>
                 <Title order={4}>Chat completion</Title>
@@ -306,7 +306,7 @@ export function ApiPage({ snapshot, service, refreshSnapshot }: PageProps) {
 function CredentialRow({ label, children }: { label: string; children: ReactNode }) {
   return (
     <Flex align="center" gap="sm" wrap="wrap">
-      <Text size="xs" c="dimmed" tt="uppercase" ls={1} fw={600} w={120}>
+      <Text size="xs" c="dimmed" tt="uppercase" lts={1} fw={600} w={120}>
         {label}
       </Text>
       {children}
@@ -317,7 +317,7 @@ function CredentialRow({ label, children }: { label: string; children: ReactNode
 function EndpointRow({ method, path, note }: { method: string; path: string; note: string }) {
   return (
     <Flex align="center" gap="sm" wrap="wrap">
-      <Badge variant="outline" color="cyan" ff="monospace" w={52} justify="center">
+      <Badge variant="outline" color="cyan" ff="monospace" w={52} ta="center">
         {method}
       </Badge>
       <Code>{path}</Code>

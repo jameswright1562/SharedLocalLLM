@@ -156,9 +156,9 @@ describe("dashboard pages", () => {
     await user.click(screen.getByRole("button", { name: /^add folder$/i }));
     await waitFor(() => expect(pageProps.refreshSnapshot).toHaveBeenCalled());
 
-    await user.click(screen.getByRole("button", { name: /^split$/i }));
+    await user.click(screen.getByRole("radio", { name: /^split$/i }));
     expect(within(screen.getByTestId("model-list")).getByText(/atlas vision/i)).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: /^text$/i }));
+    await user.click(screen.getByRole("radio", { name: /^text$/i }));
     await user.clear(screen.getByRole("searchbox"));
     await user.type(screen.getByRole("searchbox"), "Colossus");
     const colossusRow = within(screen.getByTestId("model-list"))
@@ -266,7 +266,7 @@ describe("dashboard pages", () => {
       .getByText(/orchid 9b/i)
       .closest("tr");
     await user.click(orchidRow as HTMLElement);
-    await user.click(await screen.findByRole("button", { name: /manual gpu split/i }));
+    await user.click(await screen.findByRole("radio", { name: /manual gpu split/i }));
 
     expect(screen.getByRole("heading", { name: /gpu layer allocation/i })).toBeInTheDocument();
     const localLayers = await screen.findByLabelText(/gpu layers on studio host/i);
@@ -307,7 +307,7 @@ describe("dashboard pages", () => {
       .getByText(/orchid 9b/i)
       .closest("tr");
     await user.click(orchidRow as HTMLElement);
-    await user.click(await screen.findByRole("button", { name: /manual gpu split/i }));
+    await user.click(await screen.findByRole("radio", { name: /manual gpu split/i }));
 
     await user.click(screen.getByRole("checkbox", { name: /offload layers to remote node/i }));
     const cpuLayers = await screen.findByLabelText(/cpu layers on remote node/i);

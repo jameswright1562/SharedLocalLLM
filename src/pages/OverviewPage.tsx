@@ -35,7 +35,7 @@ export function OverviewPage({ snapshot, service, refreshSnapshot, navigate }: P
         mb="lg"
       >
         <Box>
-          <Text size="xs" fw={700} tt="uppercase" ls={1.5} c="cyan">
+          <Text size="xs" fw={700} tt="uppercase" lts={1.5} c="cyan">
             Control plane
           </Text>
           <Title order={1}>Cluster overview</Title>
@@ -68,7 +68,7 @@ export function OverviewPage({ snapshot, service, refreshSnapshot, navigate }: P
 
       <ComputePath cluster={snapshot.cluster} nodes={snapshot.nodes} />
 
-      <SimpleGrid cols={{ base: 1, xs: 2, lg: 4 }} spacing="sm" mt="lg" as="section" aria-label="Cluster summary">
+      <SimpleGrid cols={{ base: 1, xs: 2, lg: 4 }} spacing="sm" mt="lg" component="section" aria-label="Cluster summary">
         <SummaryStat
           label="Usable GPU memory"
           value={formatGb(combinedVram)}
@@ -99,7 +99,7 @@ export function OverviewPage({ snapshot, service, refreshSnapshot, navigate }: P
 
       <Flex justify="space-between" align="flex-end" gap="md" wrap="wrap" mt="xl" mb="sm">
         <Box>
-          <Text size="xs" fw={700} tt="uppercase" ls={1.5} c="cyan">
+          <Text size="xs" fw={700} tt="uppercase" lts={1.5} c="cyan">
             Resource map
           </Text>
           <Title order={2}>Compute nodes</Title>
@@ -115,7 +115,7 @@ export function OverviewPage({ snapshot, service, refreshSnapshot, navigate }: P
             <Card.Section withBorder inheritPadding py="sm" mb="md">
               <Group justify="space-between" wrap="nowrap">
                 <Box>
-                  <Text size="xs" tt="uppercase" ls={1.5} c="cyan" fw={600}>
+                  <Text size="xs" tt="uppercase" lts={1.5} c="cyan" fw={600}>
                     {node.role}
                   </Text>
                   <Title order={3}>{node.name}</Title>
@@ -183,7 +183,7 @@ function SummaryStat({
 }) {
   return (
     <Paper withBorder p="md">
-      <Text size="xs" tt="uppercase" ls={1} c="dimmed" fw={600}>
+      <Text size="xs" tt="uppercase" lts={1} c="dimmed" fw={600}>
         {label}
       </Text>
       <Text

@@ -56,7 +56,7 @@ export function SetupStepContent(props: SetupStepContentProps) {
 function StepHeading({ kicker, title, lede }: { kicker: string; title: string; lede: string }) {
   return (
     <>
-      <Text size="xs" fw={700} tt="uppercase" ls={1.5} c="cyan" mb={4}>
+      <Text size="xs" fw={700} tt="uppercase" lts={1.5} c="cyan" mb={4}>
         {kicker}
       </Text>
       <Title order={2}>{title}</Title>
@@ -135,7 +135,7 @@ function IdentityStep({ snapshot, deviceName, setDeviceName, setStep }: SetupSte
       />
       <Paper withBorder p="md" bg="dark.8" mb="md">
         <Stack gap={4}>
-          <Text size="xs" tt="uppercase" ls={1.5} c="dimmed" fw={600}>
+          <Text size="xs" tt="uppercase" lts={1.5} c="dimmed" fw={600}>
             Detected locally
           </Text>
           <Text fw={600}>{snapshot.nodes[0]?.gpu.name ?? "GPU scan pending"}</Text>
@@ -278,7 +278,7 @@ function NetworkStep({ network, busy, testNetwork, setStep }: SetupStepContentPr
         lede="The test sends temporary data over the peer channel. One computer can still run models that fit locally if you skip it."
       />
       <Group justify="center" gap="md" aria-hidden="true" my="xl" wrap="nowrap">
-        <Text size="xs" tt="uppercase" ls={2} c="dimmed" fw={600}>
+        <Text size="xs" tt="uppercase" lts={2} c="dimmed" fw={600}>
           This PC
         </Text>
         <Box className="link-illustration-line" />
@@ -286,7 +286,7 @@ function NetworkStep({ network, busy, testNetwork, setStep }: SetupStepContentPr
           ↔
         </Text>
         <Box className="link-illustration-line" />
-        <Text size="xs" tt="uppercase" ls={2} c="dimmed" fw={600}>
+        <Text size="xs" tt="uppercase" lts={2} c="dimmed" fw={600}>
           Peer
         </Text>
       </Group>
@@ -332,7 +332,7 @@ function ReadyStep({
           { label: "Network", value: network?.classification ?? "Not tested", capitalize: true },
         ].map((stat) => (
           <Paper key={stat.label} withBorder p="md" bg="dark.8">
-            <Text size="xs" tt="uppercase" ls={1} c="dimmed" fw={600}>
+            <Text size="xs" tt="uppercase" lts={1} c="dimmed" fw={600}>
               {stat.label}
             </Text>
             <Text fw={600} tt={stat.capitalize ? "capitalize" : undefined}>

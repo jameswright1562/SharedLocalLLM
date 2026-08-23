@@ -1,4 +1,4 @@
-import { Alert, Badge, Box, Button, Group, Paper, Stack, Text, TextInput, Title } from "@mantine/core";
+import { Alert, Badge, Button, Group, Paper, Text, TextInput, Title } from "@mantine/core";
 
 import type { NodeCapabilities } from "../types";
 

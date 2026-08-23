@@ -34,7 +34,7 @@ test.describe("browser demo", () => {
       .getByTestId("model-list")
       .getByText(/meridian 12b instruct/i)
       .click();
-    await page.getByRole("button", { name: /manual gpu split/i }).click();
+    await page.getByRole("radio", { name: /manual gpu split/i }).click();
 
     await expect(page.getByRole("heading", { name: /gpu layer allocation/i })).toBeVisible();
     await page.getByLabel(/gpu layers on primary node/i).fill("24");
