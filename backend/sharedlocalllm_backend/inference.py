@@ -11,6 +11,7 @@ from .errors import BackendError
 from .peer import RpcForwarder
 from .reasoning import ReasoningStreamSplitter, is_reasoning_model, split_reasoning
 from .rpc_native import NativeRpcServer, prepare_rpc_load
+from .tool_calls import normalize_tool_message, normalize_tool_stream
 
 LLAMA_SPLIT_MODE_LAYER = 1
 
@@ -178,7 +179,8 @@ class InferenceEngine:
         return await asyncio.open_connection(host, int(port))
 
     async def chat(
-        self, messages: list[dict[str, Any]], settings: dict[str, Any], images: list[str]
+        self, messages: list[dict[str, Any]], settings: dict[str, Any], images: list[str],
+        tools: list[dict[str, Any]] | None = None, tool_choice: Any = None,
     ) -> dict[str, Any]:
         if images:
             raise BackendError(
@@ -189,7 +191,58 @@ class InferenceEngine:
             if not self.llm:
                 raise BackendError("model_not_loaded", "Start a model before chatting.")
             self._cancel.clear()
-            return await asyncio.to_thread(self._chat_sync, messages, settings)
+            return await asyncio.to_thread(
+                self._chat_sync, messages, settings, tools, tool_choice
+            )
+
+    async def chat_openai_stream(
+        self, messages: list[dict[str, Any]], settings: dict[str, Any],
+        tools: list[dict[str, Any]] | None = None, tool_choice: Any = None,
+    ) -> AsyncIterator[dict[str, Any]]:
+        """Relay llama-cpp-python's OpenAI chunks without losing tool calls."""
+        async with self._async_lock:
+            if not self.llm:
+                raise BackendError("model_not_loaded", "Start a model before chatting.")
+            self._cancel.clear()
+            loop = asyncio.get_running_loop()
+            queue: asyncio.Queue[dict[str, Any] | BaseException | None] = asyncio.Queue()
+
+            def run() -> None:
+                try:
+                    with self._sync_lock:
+                        chunks = self.llm.create_chat_completion(
+                            messages=self._wire_messages(messages, settings),
+                            temperature=float(settings.get("temperature", 0.7)),
+                            max_tokens=int(settings.get("maxTokens", 512)),
+                            tools=tools,
+                            tool_choice=tool_choice,
+                            stream=True,
+                        )
+                        buffered: list[dict[str, Any]] = []
+                        for chunk in chunks:
+                            if self._cancel.is_set():
+                                break
+                            value = dict(chunk)
+                            if tools:
+                                buffered.append(value)
+                            else:
+                                loop.call_soon_threadsafe(queue.put_nowait, value)
+                        if tools:
+                            for value in normalize_tool_stream(buffered, tools):
+                                loop.call_soon_threadsafe(queue.put_nowait, value)
+                except BaseException as error:
+                    loop.call_soon_threadsafe(queue.put_nowait, error)
+                finally:
+                    loop.call_soon_threadsafe(queue.put_nowait, None)
+
+            threading.Thread(target=run, name="llama-openai-stream", daemon=True).start()
+            while True:
+                item = await queue.get()
+                if item is None:
+                    break
+                if isinstance(item, BaseException):
+                    raise BackendError("generation_failed", str(item)) from item
+                yield item
 
     async def chat_stream(
         self, messages: list[dict[str, Any]], settings: dict[str, Any], images: list[str] | None = None
@@ -264,14 +317,21 @@ class InferenceEngine:
 
     def _wire_messages(
         self, messages: list[dict[str, Any]], settings: dict[str, Any]
-    ) -> list[dict[str, str]]:
-        wire = [{"role": item["role"], "content": item.get("content", "")} for item in messages]
+    ) -> list[dict[str, Any]]:
+        allowed = ("role", "content", "tool_calls", "tool_call_id", "function_call", "name")
+        wire = [
+            {key: item[key] for key in allowed if key in item}
+            for item in messages
+        ]
         system = settings.get("systemPrompt", "").strip()
         if system and not any(item["role"] == "system" for item in wire):
             wire.insert(0, {"role": "system", "content": system})
         return wire
 
-    def _chat_sync(self, messages: list[dict[str, Any]], settings: dict[str, Any]) -> dict[str, Any]:
+    def _chat_sync(
+        self, messages: list[dict[str, Any]], settings: dict[str, Any],
+        tools: list[dict[str, Any]] | None = None, tool_choice: Any = None,
+    ) -> dict[str, Any]:
         from llama_cpp import LogitsProcessorList
 
         wire = self._wire_messages(messages, settings)
@@ -289,6 +349,8 @@ class InferenceEngine:
                     temperature=float(settings.get("temperature", 0.7)),
                     max_tokens=int(settings.get("maxTokens", 512)),
                     logits_processor=LogitsProcessorList([abort_on_cancel]),
+                    tools=tools,
+                    tool_choice=tool_choice,
                 )
             except InterruptedError:
                 self.llm.reset()
@@ -296,12 +358,24 @@ class InferenceEngine:
         elapsed = max(time.monotonic() - started, 0.001)
         usage = result.get("usage") or {}
         completion = max(1, int(usage.get("completion_tokens") or 1))
-        content = str(result["choices"][0]["message"].get("content") or "")
+        choice = result["choices"][0]
+        message = dict(choice["message"])
+        message, finish_reason = normalize_tool_message(
+            message, choice.get("finish_reason"), tools
+        )
+        native_content = message.get("content")
+        content = str(native_content or "")
         reasoning, answer = split_reasoning(content, self.reasoning)
+        message["content"] = None if native_content is None else answer
+        if reasoning:
+            message["reasoning_content"] = reasoning
         return {
             "content": answer,
             "reasoning": reasoning,
             "tokensPerSecond": round(completion / elapsed, 2),
+            "message": message,
+            "finishReason": finish_reason,
+            "usage": usage,
         }
 
     def cancel(self) -> None:

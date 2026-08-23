@@ -373,11 +373,17 @@ class BackendRuntime:
             self.local_node.pop("clusterModelId", None)
 
     async def chat(
-        self, messages: list[dict[str, Any]], settings: dict[str, Any], images: list[str], proxy_peer: bool = True
+        self, messages: list[dict[str, Any]], settings: dict[str, Any], images: list[str],
+        proxy_peer: bool = True, tools: list[dict[str, Any]] | None = None,
+        tool_choice: Any = None,
     ) -> dict[str, Any]:
         if proxy_peer and self._remote_coordinator():
-            return await self.peer.request("chat", {"messages": messages, "settings": settings, "images": images})
-        return await self.inference.chat(messages, settings, images)
+            payload: dict[str, Any] = {
+                "messages": messages, "settings": settings, "images": images,
+                "tools": tools, "toolChoice": tool_choice,
+            }
+            return await self.peer.request("chat", payload)
+        return await self.inference.chat(messages, settings, images, tools, tool_choice)
 
     async def chat_stream_events(
         self, messages: list[dict[str, Any]], settings: dict[str, Any], images: list[str]

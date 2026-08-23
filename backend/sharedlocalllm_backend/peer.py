@@ -13,7 +13,7 @@ from .errors import BackendError
 
 DISCOVERY_PORT = 49157
 PEER_PORT = 49158
-PROTOCOL_VERSION = 5
+PROTOCOL_VERSION = 6
 # Heartbeat-style ops must stay snappy; generation ops legitimately run long
 # because llama.cpp may re-evaluate the entire prompt when its KV prefix
 # cannot be partially reused ("partial kv removal not supported").
@@ -309,7 +309,10 @@ class PeerManager:
         if op == "stop_cluster":
             return await self.runtime.stop_cluster(proxy_peer=False)
         if op == "chat":
-            return await self.runtime.chat(data["messages"], data["settings"], data.get("images", []), proxy_peer=False)
+            return await self.runtime.chat(
+                data["messages"], data["settings"], data.get("images", []),
+                proxy_peer=False, tools=data.get("tools"), tool_choice=data.get("toolChoice"),
+            )
         if op == "cancel_generation":
             return self.runtime.inference.cancel()
         if op == "benchmark_inference":

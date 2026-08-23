@@ -368,6 +368,10 @@ def ensure_backend_initialized() -> None:
     from llama_cpp import Llama
     from llama_cpp import llama_cpp as low
 
+    from .native_logging import install_native_log_filter
+
+    install_native_log_filter()
+
     if not getattr(Llama, "_Llama__backend_initialized", False):
         low.llama_backend_init()
         # Llama's high-level wrapper must not initialize the global backend twice.

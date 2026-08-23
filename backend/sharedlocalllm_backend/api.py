@@ -14,6 +14,14 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from .errors import BackendError
 from .models import model_slug
+from .openai_compat import (
+    buffered_stream_choices,
+    chunk_payload,
+    completion_finish_reason,
+    completion_message,
+    completion_usage,
+    request_tool_options,
+)
 
 CONTROL_PORT = 11436
 API_LOG_LOGGER = "sharedlocalllm.api"
@@ -216,37 +224,35 @@ def create_openai_app(runtime: Any) -> FastAPI:
             "systemPrompt": "", "temperature": body.get("temperature", 0.7),
             "maxTokens": body.get("max_tokens", 512),
         }
+        tools, tool_choice = request_tool_options(body)
         if body.get("stream") and runtime.cluster.get("coordinatorNodeId") == runtime.local_node["id"]:
             async def events():
-                async for event in runtime.inference.chat_stream(body.get("messages", []), settings, []):
-                    if event.get("type") != "token":
-                        continue
-                    chunk = {
-                        "id": "chatcmpl-sharedlocalllm", "object": "chat.completion.chunk",
-                        "choices": [{"index": 0, "delta": {"content": event["content"]}, "finish_reason": None}],
-                    }
+                async for native in runtime.inference.chat_openai_stream(
+                    body.get("messages", []), settings, tools, tool_choice
+                ):
+                    chunk = chunk_payload(native.get("choices", []), active_model or "active")
                     yield f"data: {json.dumps(chunk)}\n\n"
                 yield "data: [DONE]\n\n"
             return StreamingResponse(events(), media_type="text/event-stream")
-        response = await runtime.chat(body.get("messages", []), settings, [], proxy_peer=True)
-        content = response["content"]
+        response = await runtime.chat(
+            body.get("messages", []), settings, [], proxy_peer=True,
+            tools=tools, tool_choice=tool_choice,
+        )
         if body.get("stream"):
             async def remote_events():
-                chunk = {
-                    "id": "chatcmpl-sharedlocalllm", "object": "chat.completion.chunk",
-                    "choices": [{"index": 0, "delta": {"content": content}, "finish_reason": None}],
-                }
-                yield f"data: {json.dumps(chunk)}\n\n"
+                for choices in buffered_stream_choices(response):
+                    chunk = chunk_payload(choices, active_model or "active")
+                    yield f"data: {json.dumps(chunk)}\n\n"
                 yield "data: [DONE]\n\n"
             return StreamingResponse(remote_events(), media_type="text/event-stream")
-        message: dict[str, Any] = {"role": "assistant", "content": content}
-        if response.get("reasoning"):
-            message["reasoning_content"] = response["reasoning"]
         return {
             "id": "chatcmpl-sharedlocalllm", "object": "chat.completion",
             "model": active_model or "active",
-            "choices": [{"index": 0, "message": message, "finish_reason": "stop"}],
-            "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+            "choices": [{
+                "index": 0, "message": completion_message(response),
+                "finish_reason": completion_finish_reason(response),
+            }],
+            "usage": completion_usage(response),
         }
 
     @app.post("/v1/completions")

@@ -47,3 +47,29 @@ def test_network_benchmark_measures_upload_and_download_separately(monkeypatch) 
     result = asyncio.run(peer.network_benchmark())
     assert result["downMbps"] > result["upMbps"]
     assert result["packetLossPercent"] == 0
+
+
+def test_chat_dispatch_preserves_tool_options() -> None:
+    class Runtime:
+        local_node = {"id": "local"}
+
+        def __init__(self) -> None:
+            self.received: dict = {}
+
+        async def chat(self, messages, settings, images, **kwargs):
+            self.received = {
+                "messages": messages, "settings": settings, "images": images, **kwargs,
+            }
+            return {"content": ""}
+
+    runtime = Runtime()
+    peer = PeerManager(runtime)
+    tools = [{"type": "function", "function": {"name": "Bash"}}]
+    asyncio.run(peer._dispatch("chat", {
+        "messages": [{"role": "user", "content": "hi"}],
+        "settings": {}, "images": [], "tools": tools, "toolChoice": "required",
+    }))
+
+    assert runtime.received["tools"] == tools
+    assert runtime.received["tool_choice"] == "required"
+    assert runtime.received["proxy_peer"] is False

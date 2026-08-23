@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import os
 
-from sharedlocalllm_backend.inference import build_llama_kwargs, layer_totals
+from sharedlocalllm_backend.inference import InferenceEngine, build_llama_kwargs, layer_totals
 
 
 def test_defaults_match_previous_behaviour() -> None:
@@ -92,3 +93,160 @@ def test_layer_totals_ignore_unknown_nodes_and_missing_peer() -> None:
         {"nodeId": "stranger", "layers": 99},
     ]
     assert layer_totals(allocations, None, "local", True) == (0, 0, 0)
+
+
+def test_wire_messages_preserves_tool_calls_and_tool_results() -> None:
+    engine = InferenceEngine(None)
+    tool_calls = [{
+        "id": "call_1", "type": "function",
+        "function": {"name": "Bash", "arguments": '{"command":"pwd"}'},
+    }]
+    messages = [
+        {"role": "assistant", "content": None, "tool_calls": tool_calls},
+        {"role": "tool", "content": "C:\\code", "tool_call_id": "call_1"},
+    ]
+
+    assert engine._wire_messages(messages, {}) == messages
+
+
+def test_chat_sync_passes_tools_and_preserves_native_tool_response() -> None:
+    tool_calls = [{
+        "id": "call_1", "type": "function",
+        "function": {"name": "Bash", "arguments": '{"command":"pwd"}'},
+    }]
+    tools = [{
+        "type": "function",
+        "function": {"name": "Bash", "parameters": {"type": "object"}},
+    }]
+
+    class FakeLlama:
+        def __init__(self) -> None:
+            self.kwargs: dict = {}
+
+        def create_chat_completion(self, **kwargs):
+            self.kwargs = kwargs
+            return {
+                "choices": [{
+                    "message": {"role": "assistant", "content": None, "tool_calls": tool_calls},
+                    "finish_reason": "tool_calls",
+                }],
+                "usage": {"prompt_tokens": 12, "completion_tokens": 8, "total_tokens": 20},
+            }
+
+        def tokenize(self, text: bytes, add_bos: bool = False):
+            return [1]
+
+    engine = InferenceEngine(None)
+    engine.llm = FakeLlama()
+    result = engine._chat_sync(
+        [{"role": "user", "content": "Run pwd"}],
+        {"temperature": 0.1, "maxTokens": 64},
+        tools,
+        "auto",
+    )
+
+    assert engine.llm.kwargs["tools"] == tools
+    assert engine.llm.kwargs["tool_choice"] == "auto"
+    assert result["message"]["tool_calls"] == tool_calls
+    assert result["message"]["content"] is None
+    assert result["finishReason"] == "tool_calls"
+    assert result["usage"]["total_tokens"] == 20
+
+
+def test_openai_stream_preserves_native_tool_call_chunks() -> None:
+    tools = [{
+        "type": "function",
+        "function": {"name": "Bash", "parameters": {"type": "object"}},
+    }]
+    chunks = [
+        {"choices": [{"index": 0, "delta": {"role": "assistant"}, "finish_reason": None}]},
+        {"choices": [{
+            "index": 0,
+            "delta": {"tool_calls": [{
+                "index": 0, "id": "call_1", "type": "function",
+                "function": {"name": "Bash", "arguments": '{"command":"pwd"}'},
+            }]},
+            "finish_reason": None,
+        }]},
+        {"choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}]},
+    ]
+
+    class FakeLlama:
+        def __init__(self) -> None:
+            self.kwargs: dict = {}
+
+        def create_chat_completion(self, **kwargs):
+            self.kwargs = kwargs
+            return iter(chunks)
+
+    engine = InferenceEngine(None)
+    engine.llm = FakeLlama()
+
+    async def collect() -> list[dict]:
+        return [
+            chunk async for chunk in engine.chat_openai_stream(
+                [{"role": "user", "content": "Run pwd"}], {}, tools, "auto"
+            )
+        ]
+
+    assert asyncio.run(collect()) == chunks
+    assert engine.llm.kwargs["tools"] == tools
+    assert engine.llm.kwargs["tool_choice"] == "auto"
+
+
+def test_chat_sync_converts_qwen_text_tool_markup() -> None:
+    tools = [{"type": "function", "function": {"name": "Bash", "parameters": {}}}]
+
+    class FakeLlama:
+        def create_chat_completion(self, **_kwargs):
+            return {
+                "choices": [{
+                    "message": {
+                        "role": "assistant",
+                        "content": (
+                            "<tool_call>\n<function=Bash>\n<parameter=command>\n"
+                            "Get-Location\n</parameter>\n</function>\n</tool_call>"
+                        ),
+                    },
+                    "finish_reason": "stop",
+                }],
+                "usage": {"completion_tokens": 10},
+            }
+
+    engine = InferenceEngine(None)
+    engine.llm = FakeLlama()
+    result = engine._chat_sync([], {}, tools, "auto")
+    assert result["message"]["content"] is None
+    assert result["message"]["tool_calls"][0]["function"]["name"] == "Bash"
+    assert result["finishReason"] == "tool_calls"
+
+
+def test_openai_stream_converts_qwen_text_tool_markup() -> None:
+    tools = [{"type": "function", "function": {"name": "Bash", "parameters": {}}}]
+
+    class FakeLlama:
+        def create_chat_completion(self, **_kwargs):
+            return iter([
+                {"choices": [{
+                    "index": 0,
+                    "delta": {"content": "<tool_call>{\"name\":\"Bash\","},
+                    "finish_reason": None,
+                }]},
+                {"choices": [{
+                    "index": 0,
+                    "delta": {"content": "\"arguments\":{\"command\":\"pwd\"}}</tool_call>"},
+                    "finish_reason": None,
+                }]},
+                {"choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]},
+            ])
+
+    engine = InferenceEngine(None)
+    engine.llm = FakeLlama()
+
+    async def collect() -> list[dict]:
+        return [chunk async for chunk in engine.chat_openai_stream([], {}, tools, "auto")]
+
+    chunks = asyncio.run(collect())
+    assert all("<tool_call>" not in str(chunk) for chunk in chunks)
+    assert chunks[1]["choices"][0]["delta"]["tool_calls"][0]["function"]["name"] == "Bash"
+    assert chunks[-1]["choices"][0]["finish_reason"] == "tool_calls"

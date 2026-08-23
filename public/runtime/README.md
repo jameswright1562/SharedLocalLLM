@@ -28,3 +28,18 @@ verified runtime until the newly installed runtime passes its executable health 
 
 The required RPC executable is `ggml-rpc-server.exe`. The application must never download or
 trust an archive merely because its filename matches the pattern.
+
+## `llamaServer` block
+
+The optional `llamaServer` section names the MTP-capable inference server inside the pinned
+`llamaCpp` asset:
+
+- `assetKey` — which pinned release asset contains the entry (`llamaCpp`).
+- `entry` — the executable to install and later launch (`llama-server.exe`).
+- `healthEndpoint` — the loopback HTTP path used to verify a running instance (`/health`).
+
+Install it with `pnpm backend:install:llama-server`, which downloads both pinned assets,
+verifies HTTPS origin, byte size, SHA-256, and archive entries, extracts only whitelisted
+executables and DLLs to `backend/runtime/llama-bin`, and gates activation on a successful
+`llama-server.exe --version` run. The backend never launches this binary automatically yet;
+that is phase 2 of the dual-engine plan in `docs/ideas.md`.

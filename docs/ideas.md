@@ -71,3 +71,47 @@ Still outstanding: physical two-computer validation, and a benchmark that confir
 is not presented as a distributed speedup. RPC device enumeration accumulates across loads because
 there is no exported unregister/free symbol; the coordinator caches devices by worker endpoint.
 delta, which is sufficient for the controlled single-cluster case.
+
+## Dual-engine inference: pinned `llama-server` for MTP models
+
+Current Qwen releases (Qwen3.6/3.8 class) embed NextN/MTP draft heads in their GGUFs. llama.cpp's
+server unlocks them with `--spec-type draft-mtp`, giving roughly 2-3x generation throughput on
+reasoning-heavy workloads. Our sidecar links llama.cpp as a library through llama-cpp-python, whose
+chat-completion path has no speculation loop, so those models currently run correctly but at base
+speed. HauhauCS-style FastMTP sidecars require patched llama.cpp builds and stay explicitly out of
+scope: every bundled binary must come from the pinned official runtime manifest with origin, size,
+and SHA-256 verification.
+
+Design goals:
+
+- Keep llama-cpp-python as the default engine; introduce a second, pinned official `llama-server.exe`
+  used only when the selected model advertises MTP tensors (GGUF metadata) or the user opts in
+  per model.
+- Preserve all v1 security properties: the server binds loopback only, requires the existing
+  per-install bearer key (`--api-key` sourced from the store), never touches the LAN directly, and
+  its port is excluded from the user-facing API port range checks.
+- Route `runtime.chat`, streaming, cancellation, and the OpenAI-compatible proxy through the child
+  server's loopback endpoint instead of in-process calls while that engine is active. llama-server's
+  `--reasoning-format deepseek` returns `reasoning_content` natively, which can bypass the name-based
+  reasoning splitter in server mode.
+- Retain two-computer distribution: llama-server accepts `--rpc`, so the worker's existing RPC daemon
+  can serve layer splits in server mode exactly as it does today.
+- One engine at a time per machine to avoid double VRAM residency; stop/switch flows must tear the
+  previous engine down before the next starts.
+- Process lifecycle lives in the Python backend beside `ApiServerManager` (spawn, health via
+  `/health`, graceful stop, orphan kill on crash), mirroring the existing dev-watcher patterns.
+
+Suggested phases:
+
+1. Manifest and packaging: add the pinned `llama-server` binary to the runtime manifest with
+   checksums, install it beside the sidecar, and verify `/health` reachability. No behavior change.
+2. Engine selection and lifecycle: detect MTP capability from GGUF metadata at discovery, add the
+   per-model engine choice to load options, and implement spawn/stop/restart management.
+3. Chat routing parity: non-streaming chat, then SSE streaming mapped onto the existing
+   `ChatStreamEvent` channel, plus cancellation by aborting the in-flight upstream request.
+4. Benchmarks and placement: run inference benchmarks against whichever engine serves the cluster,
+   record the engine in the result, and refresh `docs/architecture.md` and `docs/testing.md`.
+
+Risks to watch: llama-server release cadence vs the pinned manifest (re-pin deliberately, never
+auto-float); extra VRAM from draft heads on small GPUs; Windows firewall prompts must not appear
+(loopback bind only); K_P/IQ quant labels remain cosmetic concerns only.

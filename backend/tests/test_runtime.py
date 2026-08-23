@@ -108,8 +108,10 @@ class RecordingInference:
         self.cancelled = False
         self.chatted = False
 
-    async def chat(self, messages, settings, images):
+    async def chat(self, messages, settings, images, tools=None, tool_choice=None):
         self.chatted = True
+        self.tools = tools
+        self.tool_choice = tool_choice
         return {"content": "local"}
 
     async def unload(self) -> None:
@@ -273,6 +275,33 @@ def test_chat_proxies_when_only_the_peer_runs_the_model() -> None:
     assert result["content"] == "remote"
     assert peer.calls[-1][0] == "chat"
     assert inference.chatted is False
+
+
+def test_chat_forwards_tools_to_the_remote_coordinator() -> None:
+    inference = RecordingInference()
+    response = {
+        "content": "", "message": {"role": "assistant", "content": None, "tool_calls": []},
+        "finishReason": "tool_calls",
+    }
+    peer = ProxyingPeer(response=response)
+    runtime = peer_runtime(inference, peer)
+    tools = [{"type": "function", "function": {"name": "Bash"}}]
+
+    result = asyncio.run(
+        runtime.chat(
+            [{"role": "user", "content": "hi"}], {}, [],
+            tools=tools, tool_choice="auto",
+        )
+    )
+
+    assert result == response
+    assert peer.calls[-1] == (
+        "chat",
+        {
+            "messages": [{"role": "user", "content": "hi"}],
+            "settings": {}, "images": [], "tools": tools, "toolChoice": "auto",
+        },
+    )
 
 
 def test_chat_streams_through_the_peer_when_the_peer_runs_the_model() -> None:

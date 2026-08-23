@@ -47,6 +47,23 @@ class Runtime:
         return {"content": "hello", "reasoning": "", "tokensPerSecond": 1.0}
 
 
+def tool_spec() -> list[dict]:
+    return [{
+        "type": "function",
+        "function": {
+            "name": "Bash", "description": "Run a command",
+            "parameters": {"type": "object", "properties": {"command": {"type": "string"}}},
+        },
+    }]
+
+
+def tool_call() -> dict:
+    return {
+        "id": "call_1", "type": "function",
+        "function": {"name": "Bash", "arguments": '{"command":"Get-Location"}'},
+    }
+
+
 def test_models_lists_only_the_active_model() -> None:
     async def request():
         transport = httpx.ASGITransport(app=create_openai_app(Runtime()))
@@ -129,6 +146,120 @@ def test_chat_serves_requests_without_a_key_when_authentication_is_disabled() ->
     assert models.status_code == 200
     assert chat.status_code == 200
     assert chat.json()["choices"][0]["message"]["content"] == "hello"
+
+
+def test_chat_forwards_tools_and_returns_openai_tool_calls() -> None:
+    class ToolRuntime(Runtime):
+        def __init__(self) -> None:
+            super().__init__()
+            self.received: dict = {}
+
+        async def chat(self, messages, settings, images, **kwargs):
+            self.received = {"messages": messages, **kwargs}
+            return {
+                "content": "",
+                "message": {"role": "assistant", "content": None, "tool_calls": [tool_call()]},
+                "finishReason": "tool_calls",
+                "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+            }
+
+    async def request(runtime: ToolRuntime):
+        transport = httpx.ASGITransport(app=create_openai_app(runtime))
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            return await client.post(
+                "/v1/chat/completions",
+                headers={"Authorization": "Bearer secret"},
+                json={
+                    "messages": [{"role": "user", "content": "Run Get-Location"}],
+                    "tools": tool_spec(), "tool_choice": "auto",
+                },
+            )
+
+    runtime = ToolRuntime()
+    response = asyncio.run(request(runtime))
+    assert response.status_code == 200
+    choice = response.json()["choices"][0]
+    assert choice["message"]["content"] is None
+    assert choice["message"]["tool_calls"] == [tool_call()]
+    assert choice["finish_reason"] == "tool_calls"
+    assert response.json()["usage"]["total_tokens"] == 15
+    assert runtime.received["tools"] == tool_spec()
+    assert runtime.received["tool_choice"] == "auto"
+
+
+def test_local_stream_relays_native_tool_call_deltas_and_finish_reason() -> None:
+    chunks = [
+        {"choices": [{"index": 0, "delta": {"role": "assistant"}, "finish_reason": None}]},
+        {"choices": [{
+            "index": 0,
+            "delta": {"tool_calls": [{"index": 0, **tool_call()}]},
+            "finish_reason": None,
+        }]},
+        {"choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}]},
+    ]
+
+    class StreamingInference:
+        async def chat_openai_stream(self, messages, settings, tools, tool_choice):
+            assert tools == tool_spec()
+            assert tool_choice == "auto"
+            for chunk in chunks:
+                yield chunk
+
+    class StreamingRuntime(Runtime):
+        def __init__(self) -> None:
+            super().__init__()
+            self.inference = StreamingInference()
+
+    async def request():
+        transport = httpx.ASGITransport(app=create_openai_app(StreamingRuntime()))
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            return await client.post(
+                "/v1/chat/completions",
+                headers={"Authorization": "Bearer secret"},
+                json={
+                    "stream": True, "messages": [{"role": "user", "content": "Run it"}],
+                    "tools": tool_spec(), "tool_choice": "auto",
+                },
+            )
+
+    response = asyncio.run(request())
+    events = [line.removeprefix("data: ") for line in response.text.splitlines() if line]
+    assert events[-1] == "[DONE]"
+    payloads = [json.loads(line) for line in events[:-1]]
+    assert payloads[1]["choices"][0]["delta"]["tool_calls"][0]["function"]["name"] == "Bash"
+    assert payloads[-1]["choices"][0]["finish_reason"] == "tool_calls"
+
+
+def test_remote_stream_synthesizes_tool_call_and_terminal_chunks() -> None:
+    class RemoteRuntime(Runtime):
+        def __init__(self) -> None:
+            super().__init__()
+            self.cluster["coordinatorNodeId"] = "peer"
+
+        async def chat(self, *_args, **_kwargs):
+            return {
+                "content": "",
+                "message": {"role": "assistant", "content": None, "tool_calls": [tool_call()]},
+                "finishReason": "tool_calls",
+            }
+
+    async def request():
+        transport = httpx.ASGITransport(app=create_openai_app(RemoteRuntime()))
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            return await client.post(
+                "/v1/chat/completions",
+                headers={"Authorization": "Bearer secret"},
+                json={"stream": True, "messages": [], "tools": tool_spec()},
+            )
+
+    response = asyncio.run(request())
+    events = [line.removeprefix("data: ") for line in response.text.splitlines() if line]
+    payloads = [json.loads(line) for line in events[:-1]]
+    streamed_call = payloads[0]["choices"][0]["delta"]["tool_calls"][0]
+    assert streamed_call["index"] == 0
+    assert streamed_call["function"]["name"] == "Bash"
+    assert payloads[-1]["choices"][0]["finish_reason"] == "tool_calls"
+    assert events[-1] == "[DONE]"
 
 
 def _free_loopback_port() -> int:
