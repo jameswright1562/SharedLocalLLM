@@ -34,7 +34,7 @@ test.describe("browser demo", () => {
       .getByTestId("model-list")
       .getByText(/meridian 12b instruct/i)
       .click();
-    await page.getByRole("radio", { name: /manual gpu split/i }).click();
+    await page.getByText("Manual GPU split", { exact: true }).click();
 
     await expect(page.getByRole("heading", { name: /gpu layer allocation/i })).toBeVisible();
     await page.getByLabel(/gpu layers on primary node/i).fill("24");
@@ -52,7 +52,7 @@ test.describe("browser demo", () => {
       .getByText(/meridian 12b instruct/i)
       .click();
     await page.getByRole("button", { name: /launch meridian 12b instruct/i }).click();
-    await expect(page.locator(".toast-message")).toContainText(/is loading/i);
+    await expect(page.getByTestId("toast-message")).toContainText(/is loading/i);
     await page.keyboard.press("Escape");
 
     await page.getByRole("button", { name: "Chat", exact: true }).click();

@@ -1,7 +1,8 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
+import { render } from "../test/render";
 import { cloneSnapshot, serviceWith } from "../test/fixtures";
 import { SetupWizard } from "./SetupWizard";
 

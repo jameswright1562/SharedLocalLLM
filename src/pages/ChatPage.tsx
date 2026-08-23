@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from "react";
+import { Badge, Box, Button, Flex, Group, Paper, Pill, Stack, Text, Title } from "@mantine/core";
+
 import { ChatComposer } from "../components/ChatComposer";
 import { ChatSettingsDrawer } from "../components/ChatSettingsDrawer";
 import { clearStoredChat, loadStoredChat, saveStoredChat } from "../services/chatStorage";
@@ -163,136 +165,140 @@ export function ChatPage({ snapshot, service, navigate, refreshSnapshot }: PageP
   }
 
   return (
-    <div className="page chat-page">
-      <header className="page-header chat-header">
-        <div>
-          <p className="section-kicker">Inference session</p>
-          <h1>Cluster chat</h1>
-        </div>
-        <div>
-          <span className={`status-pill ${!noActiveModel ? "online" : "offline"}`}>
-            <i aria-hidden="true" />
+    <Box mih="100%" display="flex" style={{ flexDirection: "column" }}>
+      <Flex justify="space-between" align="flex-start" gap="md" wrap="wrap" mb="md">
+        <Box>
+          <Text size="xs" fw={700} tt="uppercase" lts={1.5} c="cyan">
+            Inference session
+          </Text>
+          <Title order={1}>Cluster chat</Title>
+        </Box>
+        <Group gap="xs">
+          <Badge color={!noActiveModel ? "mint" : "gray"} variant="light">
             {!noActiveModel ? "Model ready" : "No model"}
-          </span>
+          </Badge>
           {(localRunning || peerRunning) && (
-            <button
-              className="button stop-button compact-button"
+            <Button
+              color="coral"
+              variant="light"
+              size="compact-sm"
               onClick={() => void service.stopCluster().then(() => refreshSnapshot())}
             >
               Stop cluster
-            </button>
+            </Button>
           )}
           {messages.length > 0 && (
-            <button className="button secondary compact-button" onClick={clearChat}>
+            <Button variant="default" size="compact-sm" onClick={clearChat}>
               Clear chat
-            </button>
+            </Button>
           )}
-          <button
-            className="button secondary compact-button"
-            onClick={() => setDrawerOpen(!drawerOpen)}
-          >
+          <Button variant="default" size="compact-sm" onClick={() => setDrawerOpen(!drawerOpen)}>
             Generation settings
-          </button>
-        </div>
-      </header>
+          </Button>
+        </Group>
+      </Flex>
+
       {disabledReason && (
-        <div className="error-panel chat-error" role="alert">
-          <span className="status-dot warning" aria-hidden="true" />
-          <div>
-            <strong>Chat unavailable</strong>
-            <p>{disabledReason}</p>
-            <button
-              className="text-button"
-              onClick={() => navigate(runtimeMissing ? "settings" : "models")}
-            >
-              {runtimeMissing ? "Open runtime settings" : "Choose a model"} →
-            </button>
-          </div>
-        </div>
+        <Paper
+          role="alert"
+          withBorder
+          p="md"
+          mb="md"
+          bg="dark.8"
+          style={{ borderColor: "var(--mantine-color-amber-5)" }}
+        >
+          <Group gap="sm" align="flex-start" wrap="nowrap">
+            <span
+              aria-hidden="true"
+              style={{
+                display: "inline-block",
+                width: 8,
+                height: 8,
+                borderRadius: "50%",
+                marginTop: 6,
+                flex: "0 0 auto",
+                background: "var(--mantine-color-amber-4)",
+              }}
+            />
+            <Stack gap={4}>
+              <Text fw={600}>Chat unavailable</Text>
+              <Text size="sm" c="dimmed">
+                {disabledReason}
+              </Text>
+              <Button
+                variant="subtle"
+                size="compact-sm"
+                onClick={() => navigate(runtimeMissing ? "settings" : "models")}
+              >
+                {runtimeMissing ? "Open runtime settings" : "Choose a model"} →
+              </Button>
+            </Stack>
+          </Group>
+        </Paper>
       )}
       {peerRunning && !localRunning && (
-        <p className="inline-success">
+        <Text size="sm" c="mint" mb="md">
           Chat is proxied through the computer that launched the model.
-        </p>
+        </Text>
       )}
-      <div className="chat-workspace">
-        <section className="message-stage" aria-label="Conversation">
+
+      <section aria-label="Conversation" style={{ flex: 1 }}>
+        <Stack gap="md" maw={860}>
           {messages.length === 0 && !disabledReason && (
-            <div className="chat-empty">
-              <span className="chat-orbit" aria-hidden="true">
+            <Stack align="center" gap="xs" ta="center" py="xl">
+              <Box pos="relative" className="chat-orbit" aria-hidden="true">
                 <i />
                 <b>LLM</b>
-              </span>
-              <h2>Send work through the cluster</h2>
-              <p>
+              </Box>
+              <Title order={3} mt="xs">
+                Send work through the cluster
+              </Title>
+              <Text c="dimmed" maw={420}>
                 Messages stay local. The coordinator routes model layers over the authenticated peer
                 channel.
-              </p>
-            </div>
+              </Text>
+            </Stack>
           )}
           {messages.map((message) => (
-            <article
-              className={`message message-${message.role} ${message.error ? "message-error" : ""}`}
-              key={message.id}
-            >
-              <header>
-                <span>{message.role === "user" ? "YOU" : "CLUSTER"}</span>
-                {message.error && (
-                  <button className="text-button" onClick={() => void retry()}>
-                    Retry
-                  </button>
-                )}
-              </header>
-              {message.imageNames?.map((name) => (
-                <span className="attachment-chip" key={name}>
-                  ▧ {name}
-                </span>
-              ))}
-              {message.reasoning && (
-                <details className="message-reasoning">
-                  <summary>Reasoning</summary>
-                  <p>{message.reasoning}</p>
-                </details>
-              )}
-              <p>{message.content}</p>
-              {message.tokensPerSecond !== undefined && (
-                <p className="message-stats">{message.tokensPerSecond} tok/s</p>
-              )}
-            </article>
+            <MessageBubble key={message.id} message={message} onRetry={() => void retry()} />
           ))}
           {generating && (
-            <article className="message message-assistant streaming" aria-live="polite">
-              <header>
-                <span>CLUSTER</span>
-                <small>{phase === "generating" ? "Generating" : "Processing prompt"}</small>
-              </header>
+            <Paper p="md" bg="dark.7" style={{ alignSelf: "stretch" }} aria-live="polite">
+              <Group justify="space-between" mb={4}>
+                <Text size="10px" tt="uppercase" lts={2} c="cyan" fw={600}>
+                  Cluster
+                </Text>
+                <Text size="10px" c="dimmed" tt="uppercase">
+                  {phase === "generating" ? "Generating" : "Processing prompt"}
+                </Text>
+              </Group>
               {streamingReasoning && (
-                <details className="message-reasoning" open>
-                  <summary>Reasoning</summary>
-                  <p className="streaming-text">{streamingReasoning}</p>
+                <details open>
+                  <summary>
+                    <Text size="xs" c="dimmed" span>
+                      Reasoning
+                    </Text>
+                  </summary>
+                  <Text size="sm" c="dimmed">
+                    {streamingReasoning}
+                  </Text>
                 </details>
               )}
               {streaming ? (
-                <p className="streaming-text">{streaming}</p>
+                <Text>{streaming}</Text>
               ) : streamingReasoning ? null : (
-                <p>
-                  <i aria-hidden="true" />
-                  <i aria-hidden="true" />
-                  <i aria-hidden="true" />
-                </p>
+                <span className="streaming-dots" aria-hidden="true">
+                  <i />
+                  <i />
+                  <i />
+                </span>
               )}
-            </article>
+            </Paper>
           )}
           <div ref={bottomRef} />
-        </section>
-        {drawerOpen && (
-          <ChatSettingsDrawer
-            settings={settings}
-            setSettings={setSettings}
-            close={() => setDrawerOpen(false)}
-          />
-        )}
-      </div>
+        </Stack>
+      </section>
+
       <ChatComposer
         draft={draft}
         setDraft={setDraft}
@@ -304,6 +310,64 @@ export function ChatPage({ snapshot, service, navigate, refreshSnapshot }: PageP
         submit={() => void submit()}
         stop={() => void stop()}
       />
-    </div>
+
+      {drawerOpen && (
+        <ChatSettingsDrawer
+          settings={settings}
+          setSettings={setSettings}
+          close={() => setDrawerOpen(false)}
+        />
+      )}
+    </Box>
+  );
+}
+
+function MessageBubble({ message, onRetry }: { message: ChatMessage; onRetry: () => void }) {
+  const isUser = message.role === "user";
+  return (
+    <Paper
+      p="md"
+      bg={isUser ? "dark.6" : "dark.7"}
+      withBorder
+      style={{
+        alignSelf: isUser ? "flex-end" : "stretch",
+        maxWidth: isUser ? "85%" : undefined,
+        borderColor: message.error ? "var(--mantine-color-coral-5)" : undefined,
+      }}
+    >
+      <Group justify="space-between" mb={4}>
+        <Text size="10px" tt="uppercase" lts={2} fw={600} c={message.error ? "coral" : "cyan"}>
+          {isUser ? "You" : "Cluster"}
+        </Text>
+        {message.error && (
+          <Button variant="subtle" size="compact-xs" onClick={onRetry}>
+            Retry
+          </Button>
+        )}
+      </Group>
+      {message.imageNames?.map((name) => (
+        <Pill key={name} size="sm" mr={4}>
+          ▧ {name}
+        </Pill>
+      ))}
+      {message.reasoning && (
+        <details>
+          <summary>
+            <Text size="xs" c="dimmed" span>
+              Reasoning
+            </Text>
+          </summary>
+          <Text size="sm" c="dimmed" mb="xs">
+            {message.reasoning}
+          </Text>
+        </details>
+      )}
+      <Text size="sm">{message.content}</Text>
+      {message.tokensPerSecond !== undefined && (
+        <Text size="10px" c="dimmed" mt={4}>
+          {message.tokensPerSecond} tok/s
+        </Text>
+      )}
+    </Paper>
   );
 }

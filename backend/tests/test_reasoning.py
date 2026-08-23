@@ -56,6 +56,20 @@ def test_split_reasoning_reasoning_tags() -> None:
     assert split_reasoning(text, reasoning=False) == (reason, "Done.")
 
 
+def test_split_reasoning_qwen_think_tags() -> None:
+    reason = "Multiply 6 by 7."
+    text = f"<think>\n{reason}\n</think>The answer is 42."
+    assert split_reasoning(text, reasoning=True) == (reason, "The answer is 42.")
+
+
+def test_stream_qwen_think_tags_split_across_chunks() -> None:
+    reasoning_parts, answer_parts = drain(
+        ["<th", "ink>Let me check.\n", "6x7=42.", "</th", "ink>Done."], reasoning=True
+    )
+    assert "".join(reasoning_parts) == "Let me check.\n6x7=42."
+    assert "".join(answer_parts) == "Done."
+
+
 def test_split_reasoning_cleans_reserved_actor_residue() -> None:
     reason = "A short reason."
     text = f"<|reasoning_content|>{reason}<|end_of_reasoning|>Assistant: <|reserved_actor|>Answer."

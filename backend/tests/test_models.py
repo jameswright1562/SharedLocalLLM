@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from sharedlocalllm_backend.models import discover_local, merge_remote
+from sharedlocalllm_backend.models import _fit, discover_local, merge_remote
 
 
 def node(node_id: str, vram: float = 12.0) -> dict:
@@ -13,6 +13,22 @@ def node(node_id: str, vram: float = 12.0) -> dict:
         "gpu": {"vramAvailableGb": vram},
         "ramAvailableGb": 32.0,
     }
+
+
+def test_fit_sizes_kv_from_default_launch_context_not_native_maximum() -> None:
+    hardware = node("node-a", vram=24.0)
+    metadata = {"layerCount": 64, "contextLength": 262144}
+    size = 18 * 1024**3
+
+    assert _fit(size, hardware, None, metadata) == "single-node"
+
+
+def test_fit_still_reports_does_not_fit_when_weights_alone_exceed_vram() -> None:
+    hardware = node("node-a", vram=24.0)
+    metadata = {"layerCount": 64, "contextLength": 262144}
+
+    assert _fit(31 * 1024**3, hardware, None, metadata) in ("combined-gpu", "gpu-ram")
+    assert _fit(80 * 1024**3, hardware, None, metadata) == "does-not-fit"
 
 
 def test_discovers_a_gguf_and_extracts_quantization(tmp_path: Path) -> None:

@@ -4,10 +4,18 @@ import type { ReactElement } from "react";
 
 import { theme } from "../theme";
 
-export function render(element: ReactElement) {
-  return rtlRender(
+function wrap(element: ReactElement) {
+  return (
     <MantineProvider theme={theme} forceColorScheme="dark">
       {element}
-    </MantineProvider>,
+    </MantineProvider>
   );
+}
+
+export function render(element: ReactElement) {
+  const utils = rtlRender(wrap(element));
+  return {
+    ...utils,
+    rerender: (next: ReactElement) => utils.rerender(wrap(next)),
+  };
 }

@@ -10,15 +10,7 @@ export function Meter({
   tone?: "cyan" | "amber";
 }) {
   const percent = max > 0 ? Math.min(100, Math.max(0, (value / max) * 100)) : 0;
-  return (
-    <Progress
-      value={percent}
-      color={tone}
-      size="sm"
-      radius="xs"
-      aria-hidden
-    />
-  );
+  return <Progress value={percent} color={tone} size="sm" radius="xs" aria-hidden />;
 }
 
 export function StatusPill({ online, children }: { online: boolean; children: string }) {
@@ -34,9 +26,7 @@ export function StatusPill({ online, children }: { online: boolean; children: st
             width: 6,
             height: 6,
             borderRadius: "50%",
-            background: online
-              ? "var(--mantine-color-mint-4)"
-              : "var(--mantine-color-dark-3)",
+            background: online ? "var(--mantine-color-mint-4)" : "var(--mantine-color-dark-3)",
           }}
         />
       }

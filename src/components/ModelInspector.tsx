@@ -97,7 +97,11 @@ export function ModelInspector({
         <DataList.Item>
           <DataList.ItemLabel>Fit</DataList.ItemLabel>
           <DataList.ItemValue>
-            <Badge color={fitBadgeColors[selected.fit]} variant="light" className={`fit-${selected.fit}`}>
+            <Badge
+              color={fitBadgeColors[selected.fit]}
+              variant="light"
+              className={`fit-${selected.fit}`}
+            >
               {fitLabels[selected.fit]}
             </Badge>
           </DataList.ItemValue>
@@ -161,8 +165,8 @@ export function ModelInspector({
       </Button>
       {selected.remoteOnly && (
         <Note>
-          This GGUF is stored on the other computer. Launching here asks that computer to
-          coordinate the model while this app remains the controller.
+          This GGUF is stored on the other computer. Launching here asks that computer to coordinate
+          the model while this app remains the controller.
         </Note>
       )}
       {(selected.fit === "does-not-fit" || splitInvalid) && (
@@ -174,8 +178,8 @@ export function ModelInspector({
       )}
       {force && (
         <Note>
-          Forced launch disables the fit check. The model may load slowly, spill heavily, or fail
-          to start if memory is genuinely insufficient.
+          Forced launch disables the fit check. The model may load slowly, spill heavily, or fail to
+          start if memory is genuinely insufficient.
         </Note>
       )}
     </Stack>

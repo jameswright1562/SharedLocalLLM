@@ -94,7 +94,11 @@ function ToggleOption({
 }) {
   return (
     <Stack gap={4}>
-      <Checkbox label={<Text size="sm">{label}</Text>} checked={checked} onChange={(event) => onChange(event.currentTarget.checked)} />
+      <Checkbox
+        label={<Text size="sm">{label}</Text>}
+        checked={checked}
+        onChange={(event) => onChange(event.currentTarget.checked)}
+      />
       <Text size="xs" c="dimmed">
         {description}
       </Text>

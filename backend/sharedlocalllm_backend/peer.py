@@ -14,6 +14,12 @@ from .errors import BackendError
 DISCOVERY_PORT = 49157
 PEER_PORT = 49158
 PROTOCOL_VERSION = 5
+# Heartbeat-style ops must stay snappy; generation ops legitimately run long
+# because llama.cpp may re-evaluate the entire prompt when its KV prefix
+# cannot be partially reused ("partial kv removal not supported").
+PEER_REQUEST_TIMEOUT_SECONDS = 120
+PEER_GENERATION_TIMEOUT_SECONDS = 900
+SLOW_PEER_OPS = {"chat", "benchmark_inference", "start_cluster"}
 
 
 class RpcForwarder:
@@ -127,18 +133,29 @@ class PeerManager:
         })
         return node
 
-    async def request(self, op: str, data: dict[str, Any] | None = None) -> Any:
+    async def request(
+        self, op: str, data: dict[str, Any] | None = None, timeout: int | None = None
+    ) -> Any:
         host, port = self.endpoint()
-        return await self.request_to(host, port, op, data)
+        if timeout is None:
+            timeout = (
+                PEER_GENERATION_TIMEOUT_SECONDS
+                if op in SLOW_PEER_OPS
+                else PEER_REQUEST_TIMEOUT_SECONDS
+            )
+        return await self.request_to(host, port, op, data, timeout)
 
-    async def request_to(self, host: str, port: int, op: str, data: dict[str, Any] | None = None) -> Any:
+    async def request_to(
+        self, host: str, port: int, op: str, data: dict[str, Any] | None = None,
+        timeout: int = PEER_REQUEST_TIMEOUT_SECONDS,
+    ) -> Any:
         writer: asyncio.StreamWriter | None = None
         try:
             reader, writer = await asyncio.wait_for(
                 asyncio.open_connection(host, port, limit=2 * 1024 * 1024), 5
             )
             await _write_json(writer, {"version": PROTOCOL_VERSION, "op": op, "data": data or {}})
-            response = await asyncio.wait_for(_read_json(reader), 120)
+            response = await asyncio.wait_for(_read_json(reader), timeout)
         except (OSError, asyncio.TimeoutError, ValueError) as error:
             raise BackendError("peer_unavailable", f"The other computer did not answer: {error}") from error
         finally:
@@ -204,6 +221,19 @@ class PeerManager:
             "classification": classification, "adapter": self.runtime.local_node["adapter"]["name"],
         }
 
+    async def _reply(self, writer: asyncio.StreamWriter, payload: dict[str, Any]) -> bool:
+        """Send a response, tolerating a peer that vanished before the answer.
+
+        Long generations can outlive the caller; when the socket is already
+        reset the write raises and would otherwise escape as noisy tracebacks.
+        """
+        try:
+            await _write_json(writer, payload)
+            return True
+        except OSError as error:
+            self.runtime.store.log("WARN", "peer_reply_undelivered", str(error))
+            return False
+
     async def _handle_connection(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         try:
             request = await _read_json(reader)
@@ -227,7 +257,8 @@ class PeerManager:
                 }
                 self.runtime._publish_local_cluster()
                 try:
-                    await _write_json(writer, {"ok": True})
+                    if not await self._reply(writer, {"ok": True}):
+                        return
                     await _bridge(reader, writer, rpc_reader, rpc_writer)
                 finally:
                     self._rpc_tunnels = max(0, self._rpc_tunnels - 1)
@@ -240,11 +271,11 @@ class PeerManager:
             if op == "connect":
                 self._accept_peer(data, writer)
             value = await self._dispatch(op, data)
-            await _write_json(writer, {"ok": True, "value": value})
+            await self._reply(writer, {"ok": True, "value": value})
         except BackendError as error:
-            await _write_json(writer, {"ok": False, **error.to_dict()})
+            await self._reply(writer, {"ok": False, **error.to_dict()})
         except Exception as error:
-            await _write_json(writer, {"ok": False, "code": "peer_internal", "message": str(error)})
+            await self._reply(writer, {"ok": False, "code": "peer_internal", "message": str(error)})
         finally:
             writer.close()
 

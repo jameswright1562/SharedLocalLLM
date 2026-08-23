@@ -20,12 +20,7 @@ interface ChatSettingsDrawerProps {
 
 export function ChatSettingsDrawer({ settings, setSettings, close }: ChatSettingsDrawerProps) {
   return (
-    <Drawer
-      opened
-      onClose={close}
-      position="right"
-      withCloseButton={false}
-    >
+    <Drawer opened onClose={close} position="right" withCloseButton={false}>
       <Stack gap="md">
         <Group justify="space-between" wrap="nowrap">
           <Title order={3}>Generation settings</Title>
@@ -36,9 +31,7 @@ export function ChatSettingsDrawer({ settings, setSettings, close }: ChatSetting
           label="System prompt"
           value={settings.systemPrompt}
           onChange={(event) => setSettings({ ...settings, systemPrompt: event.target.value })}
-          autosize
-          minRows={6}
-          maxRows={14}
+          rows={6}
         />
         <Stack gap={4}>
           <Group justify="space-between">

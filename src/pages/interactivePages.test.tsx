@@ -1,7 +1,8 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { defaultChatSettings, loadStoredChat, saveStoredChat } from "../services/chatStorage";
+import { render } from "../test/render";
 import { cloneSnapshot, serviceWith } from "../test/fixtures";
 import type { AppSnapshot, PageProps } from "../types";
 import { ApiPage } from "./ApiPage";

@@ -1,5 +1,15 @@
 import type { ModelRecord } from "../types";
-import { Badge, Box, Button, NumberFormatter, Paper, Stack, Table, Text, Title } from "@mantine/core";
+import {
+  Badge,
+  Box,
+  Button,
+  NumberFormatter,
+  Paper,
+  Stack,
+  Table,
+  Text,
+  Title,
+} from "@mantine/core";
 import { useMemo, useState } from "react";
 import { IconChevronDown, IconChevronUp } from "@tabler/icons-react";
 
@@ -144,9 +154,7 @@ export function ModelCatalogue({
                 <Table.Td>
                   <NumberFormatter value={model.contextLength} thousandSeparator />
                 </Table.Td>
-                <Table.Td>
-                  {model.locations.map((location) => location.path).join(", ")}
-                </Table.Td>
+                <Table.Td>{model.locations.map((location) => location.path).join(", ")}</Table.Td>
               </Table.Tr>
             ))}
           </Table.Tbody>

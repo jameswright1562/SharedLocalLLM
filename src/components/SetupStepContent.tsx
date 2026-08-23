@@ -327,7 +327,10 @@ function ReadyStep({
       />
       <SimpleGrid cols={{ base: 1, xs: 3 }} spacing="sm" mb="md">
         {[
-          { label: "Nodes", value: pairedNode || snapshot.nodes.length > 1 ? "2 online" : "1 local" },
+          {
+            label: "Nodes",
+            value: pairedNode || snapshot.nodes.length > 1 ? "2 online" : "1 local",
+          },
           { label: "Runtime", value: snapshot.runtime.version ?? "Installed" },
           { label: "Network", value: network?.classification ?? "Not tested", capitalize: true },
         ].map((stat) => (

@@ -129,10 +129,10 @@ export function ApiPage({ snapshot, service, refreshSnapshot }: PageProps) {
       )}
 
       {loading ? (
-        <Group gap="xs" role="status" aria-live="polite">
+        <Flex gap="xs" align="center" role="status" aria-live="polite">
           <Loader size="xs" type="dots" />
-          <Text>Reading API configuration…</Text>
-        </Group>
+          Reading API configuration…
+        </Flex>
       ) : !config ? (
         <Paper withBorder p="xl">
           <Stack align="center" gap="xs" ta="center">
@@ -160,7 +160,9 @@ export function ApiPage({ snapshot, service, refreshSnapshot }: PageProps) {
                   <Text size="xs" fw={700} tt="uppercase" lts={1.5} c="cyan">
                     Connection health
                   </Text>
-                  <Title order={3}>{config.healthy ? "Listening on loopback" : "API unavailable"}</Title>
+                  <Title order={3}>
+                    {config.healthy ? "Listening on loopback" : "API unavailable"}
+                  </Title>
                   <Text size="sm" c="dimmed">
                     {config.healthy
                       ? "Requests from this computer can reach the active coordinator."
@@ -178,7 +180,11 @@ export function ApiPage({ snapshot, service, refreshSnapshot }: PageProps) {
             <Stack gap="sm">
               <CredentialRow label="Base URL">
                 <Code style={{ flex: 1 }}>{config.url}</Code>
-                <Button variant="default" size="compact-sm" onClick={() => void copy(config.url, "url")}>
+                <Button
+                  variant="default"
+                  size="compact-sm"
+                  onClick={() => void copy(config.url, "url")}
+                >
                   {copied === "url" ? "Copied" : "Copy"}
                 </Button>
               </CredentialRow>
@@ -194,7 +200,11 @@ export function ApiPage({ snapshot, service, refreshSnapshot }: PageProps) {
                 >
                   {revealed ? <IconEyeOff size={15} /> : <IconEye size={15} />}
                 </ActionIcon>
-                <Button variant="default" size="compact-sm" onClick={() => void copy(config.apiKey, "key")}>
+                <Button
+                  variant="default"
+                  size="compact-sm"
+                  onClick={() => void copy(config.apiKey, "key")}
+                >
                   {copied === "key" ? "Copied" : "Copy"}
                 </Button>
               </CredentialRow>
@@ -295,7 +305,11 @@ export function ApiPage({ snapshot, service, refreshSnapshot }: PageProps) {
         <Stack gap="xs">
           <EndpointRow method="GET" path="/health" note="Service and model readiness" />
           <EndpointRow method="GET" path="/v1/models" note="Available local models" />
-          <EndpointRow method="POST" path="/v1/chat/completions" note="Chat, images, and streaming" />
+          <EndpointRow
+            method="POST"
+            path="/v1/chat/completions"
+            note="Chat, images, and streaming"
+          />
           <EndpointRow method="POST" path="/v1/completions" note="Text completions and streaming" />
         </Stack>
       </Paper>

@@ -12,6 +12,12 @@ from .gguf import read_metadata
 SHARD = re.compile(r"^(.*?)-(\d{5})-of-(\d{5})\.gguf$", re.IGNORECASE)
 QUANT = re.compile(r"(?:^|[-_.])(Q\d(?:_[A-Z0-9]+)+|Q\d_[A-Z0-9]+)(?:[-_.]|$)", re.IGNORECASE)
 
+# Catalogue fit must reflect the default launch, where the UI caps context at
+# this size. Reserving KV cache for a model's native maximum (262K tokens on
+# current Qwen releases) would brand every long-context GGUF does-not-fit even
+# though a normal 8K-context load fits comfortably.
+FIT_CONTEXT_TOKENS = 8192
+
 
 def model_slug(name: str, quantization: str) -> str:
     """Stable lowercase alias for a catalogue entry, e.g. orchid-9b-q4_k_m."""
@@ -63,9 +69,10 @@ def _fit(
     metadata: dict[str, Any],
 ) -> str:
     # Include a conservative runtime/KV reserve instead of treating model bytes
-    # alone as the complete GPU requirement.
+    # alone as the complete GPU requirement. The reserve is sized for the
+    # default launch context, not the native maximum (see FIT_CONTEXT_TOKENS).
     layers = max(1, int(metadata.get("layerCount") or 1))
-    context = max(512, int(metadata.get("contextLength") or 4096))
+    context = min(max(512, int(metadata.get("contextLength") or 4096)), FIT_CONTEXT_TOKENS)
     kv_fallback = layers * max(1, math.ceil(context / 4096)) * 16 * 1024**2
     required = size + kv_fallback + 512 * 1024**2
     local_vram = float(node.get("gpu", {}).get("vramAvailableGb", 0)) * 1024**3

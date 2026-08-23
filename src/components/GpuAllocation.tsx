@@ -9,12 +9,7 @@ import {
   TextInput,
   Title,
 } from "@mantine/core";
-import type {
-  GpuLayerAllocation,
-  ModelRecord,
-  NodeCapabilities,
-  SplitEstimate,
-} from "../types";
+import type { GpuLayerAllocation, ModelRecord, NodeCapabilities, SplitEstimate } from "../types";
 import { formatMib } from "./formatMib";
 
 interface GpuAllocationProps {
@@ -117,8 +112,7 @@ export function GpuAllocation({
               {splitEstimate.cpuLayers
                 ? `${splitEstimate.cpuLayers} layers remain on CPU · about ${formatMib(splitEstimate.estimatedCpuRamMib)} model RAM`
                 : "All model layers are assigned to GPUs"}
-              {!splitEstimate.usesAttentionMetadata &&
-                " · KV cache uses a conservative fallback"}
+              {!splitEstimate.usesAttentionMetadata && " · KV cache uses a conservative fallback"}
             </Text>
           )}
           <Text size="xs" c="dimmed" lh={1.35}>
@@ -155,10 +149,7 @@ function DeviceAllocation({
   const id = `layer-allocation-${node.id}-${kind}`;
 
   function updateLayers(rawValue: string) {
-    const layers = Math.max(
-      0,
-      Math.min(maxLayers, Number.parseInt(rawValue || "0", 10)),
-    );
+    const layers = Math.max(0, Math.min(maxLayers, Number.parseInt(rawValue || "0", 10)));
     if (kind === "gpu") {
       setGpuLayers(
         gpuLayers.map((item) =>
@@ -228,8 +219,7 @@ function VramEstimate({
   return (
     <Stack gap={0} w={170} maw="42%">
       <Text size="xs" c="dimmed">
-        Estimated {memory}:{" "}
-        <b>{estimate ? formatMib(estimate.estimatedVramMib) : "—"}</b>
+        Estimated {memory}: <b>{estimate ? formatMib(estimate.estimatedVramMib) : "—"}</b>
       </Text>
       <Text size="10px" c="dimmed">
         {formatMib(available)} available

@@ -181,7 +181,13 @@ export default function App({ service = appService }: { service?: AppService }) 
             <Text size="sm" c="dimmed" style={{ whiteSpace: "nowrap" }}>
               {onlineNodes}/2 nodes online
             </Text>
-            <Text size="sm" tt="capitalize" c="dimmed" visibleFrom="md" style={{ whiteSpace: "nowrap" }}>
+            <Text
+              size="sm"
+              tt="capitalize"
+              c="dimmed"
+              visibleFrom="md"
+              style={{ whiteSpace: "nowrap" }}
+            >
               {snapshot.network?.classification ?? "link untested"}
             </Text>
           </Group>
@@ -209,6 +215,7 @@ export default function App({ service = appService }: { service?: AppService }) 
               component="button"
               type="button"
               active={page === item.id}
+              aria-current={page === item.id ? "page" : undefined}
               label={<Text size="sm">{item.label}</Text>}
               leftSection={<item.icon size={17} stroke={1.6} />}
               rightSection={

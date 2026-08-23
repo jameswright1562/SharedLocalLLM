@@ -22,8 +22,7 @@ import type { NetworkBenchmark, PageProps } from "../types";
 
 const verdictCopy: Record<NetworkBenchmark["classification"], string> = {
   good: "This path is well suited to layer-split inference.",
-  usable:
-    "Distributed inference should work, but compare it with single-node placement.",
+  usable: "Distributed inference should work, but compare it with single-node placement.",
   poor: "Prefer single-node inference when the model fits. The link may constrain token speed.",
 };
 
@@ -55,10 +54,7 @@ export function NetworkPage({ snapshot, service }: PageProps) {
           <Title order={1}>Link diagnostics</Title>
           <Text c="dimmed">Measure the peer route used for distributed inference.</Text>
         </Box>
-        <Button
-          disabled={testing || snapshot.nodes.length < 2}
-          onClick={() => void runTest()}
-        >
+        <Button disabled={testing || snapshot.nodes.length < 2} onClick={() => void runTest()}>
           {testing ? "Testing the peer channel…" : "Run network test"}
         </Button>
       </Flex>
@@ -108,22 +104,41 @@ export function NetworkPage({ snapshot, service }: PageProps) {
             <Text c="dimmed">{verdictCopy[result.classification]}</Text>
           </Paper>
 
-          <SimpleGrid cols={{ base: 2, sm: 3 }} spacing="sm" mb="md" component="section" aria-label="Measured link metrics">
-            <MetricCard label="Sustained throughput" value={`${Math.round(slowest)}`} unit="Mbit/s" note="slower direction" primary />
-            <MetricCard label="Median latency" value={result.latencyMedianMs.toFixed(1)} unit="ms" />
+          <SimpleGrid
+            cols={{ base: 2, sm: 3 }}
+            spacing="sm"
+            mb="md"
+            component="section"
+            aria-label="Measured link metrics"
+          >
+            <MetricCard
+              label="Sustained throughput"
+              value={`${Math.round(slowest)}`}
+              unit="Mbit/s"
+              note="slower direction"
+              primary
+            />
+            <MetricCard
+              label="Median latency"
+              value={result.latencyMedianMs.toFixed(1)}
+              unit="ms"
+            />
             <MetricCard label="p95 latency" value={result.latencyP95Ms.toFixed(1)} unit="ms" />
             {result.jitterMs >= 0 && (
               <MetricCard label="Jitter" value={result.jitterMs.toFixed(1)} unit="ms" />
             )}
             {result.packetLossPercent >= 0 && (
-              <MetricCard label="Packet loss" value={result.packetLossPercent.toFixed(1)} unit="%" />
+              <MetricCard
+                label="Packet loss"
+                value={result.packetLossPercent.toFixed(1)}
+                unit="%"
+              />
             )}
           </SimpleGrid>
 
           <Paper withBorder p="md" mb="md">
             <Text size="sm" mb={4}>
-              Measured peer download{" "}
-              <b>{Math.round(result.downMbps)} Mbit/s</b>
+              Measured peer download <b>{Math.round(result.downMbps)} Mbit/s</b>
             </Text>
             <Progress
               value={(result.downMbps / Math.max(result.downMbps, 1000)) * 100}
@@ -146,7 +161,13 @@ export function NetworkPage({ snapshot, service }: PageProps) {
         </div>
       )}
 
-      <SimpleGrid cols={{ base: 1, sm: 3 }} spacing="md" mt="xl" component="section" aria-label="Link guidance">
+      <SimpleGrid
+        cols={{ base: 1, sm: 3 }}
+        spacing="md"
+        mt="xl"
+        component="section"
+        aria-label="Link guidance"
+      >
         <GuidanceCard title="Prefer wired Ethernet">
           Connect both nodes to the same switch. A direct 2.5 GbE link can improve larger model
           splits.

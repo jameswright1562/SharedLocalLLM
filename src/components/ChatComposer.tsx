@@ -88,9 +88,7 @@ export function ChatComposer({
         onChange={(event) => setDraft(event.target.value)}
         onKeyDown={onKeyDown}
         disabled={!!disabledReason}
-        autosize
-        minRows={2}
-        maxRows={8}
+        rows={2}
         variant="unstyled"
         mb="sm"
       />

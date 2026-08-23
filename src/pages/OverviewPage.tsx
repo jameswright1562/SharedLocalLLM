@@ -27,13 +27,7 @@ export function OverviewPage({ snapshot, service, refreshSnapshot, navigate }: P
 
   return (
     <Box>
-      <Flex
-        justify="space-between"
-        align="flex-start"
-        gap="md"
-        wrap="wrap"
-        mb="lg"
-      >
+      <Flex justify="space-between" align="flex-start" gap="md" wrap="wrap" mb="lg">
         <Box>
           <Text size="xs" fw={700} tt="uppercase" lts={1.5} c="cyan">
             Control plane
@@ -43,7 +37,11 @@ export function OverviewPage({ snapshot, service, refreshSnapshot, navigate }: P
         </Box>
         <Group gap="sm">
           {running && (
-            <Button color="coral" variant="light" onClick={() => void service.stopCluster().then(() => refreshSnapshot())}>
+            <Button
+              color="coral"
+              variant="light"
+              onClick={() => void service.stopCluster().then(() => refreshSnapshot())}
+            >
               Stop cluster
             </Button>
           )}
@@ -68,7 +66,13 @@ export function OverviewPage({ snapshot, service, refreshSnapshot, navigate }: P
 
       <ComputePath cluster={snapshot.cluster} nodes={snapshot.nodes} />
 
-      <SimpleGrid cols={{ base: 1, xs: 2, lg: 4 }} spacing="sm" mt="lg" component="section" aria-label="Cluster summary">
+      <SimpleGrid
+        cols={{ base: 1, xs: 2, lg: 4 }}
+        spacing="sm"
+        mt="lg"
+        component="section"
+        aria-label="Cluster summary"
+      >
         <SummaryStat
           label="Usable GPU memory"
           value={formatGb(combinedVram)}
@@ -132,9 +136,17 @@ export function OverviewPage({ snapshot, service, refreshSnapshot, navigate }: P
                   <Text fw={600}>{node.gpu.name}</Text>
                 </Group>
               </Group>
-              <ResourceRow label="Free VRAM" free={formatGb(node.gpu.vramAvailableGb)} total={`${formatGb(node.gpu.vramTotalGb)} total`} />
+              <ResourceRow
+                label="Free VRAM"
+                free={formatGb(node.gpu.vramAvailableGb)}
+                total={`${formatGb(node.gpu.vramTotalGb)} total`}
+              />
               <Meter value={node.gpu.vramAvailableGb} max={node.gpu.vramTotalGb} />
-              <ResourceRow label="Free RAM" free={formatGb(node.ramAvailableGb)} total={`${formatGb(node.ramTotalGb)} total`} />
+              <ResourceRow
+                label="Free RAM"
+                free={formatGb(node.ramAvailableGb)}
+                total={`${formatGb(node.ramTotalGb)} total`}
+              />
               <Meter value={node.ramAvailableGb} max={node.ramTotalGb} tone="amber" />
               <Group justify="space-between" mt="xs">
                 <Text size="xs" c="dimmed">

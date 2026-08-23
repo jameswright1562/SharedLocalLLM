@@ -4,15 +4,24 @@ import re
 
 _NAME = re.compile(r"(r1|qwq|deepseek|qwen3|reasoner|reasoning|thinking)", re.IGNORECASE)
 
-# End markers emitted by common reasoning models. The ``...`` marker is only
-# trusted for models whose reasoning section starts with it, so plain text
-# ellipses are never treated as a reasoning boundary.
-_SPECIFIC_ENDS = ("</reasoning>", "<|end_of_reasoning|>", "<|end_of_thought|>", " Watermark")
+# End markers emitted by common reasoning models. Qwen3/3.6/3.8 releases emit
+# <think>...</think> through llama.cpp. The ``...`` marker is only trusted for
+# models whose reasoning section starts with it, so plain text ellipses are
+# never treated as a reasoning boundary.
+_SPECIFIC_ENDS = (
+    "</reasoning>",
+    "<|end_of_reasoning|>",
+    "<|end_of_thought|>",
+    "</think>",
+    " Watermark",
+)
 _ELLIPSIS = "..."
 _LOOKAHEAD = 24
 
-_START = re.compile(r"^\s*(?:<reasoning>|<\|begin_of_thought\|>|<\|reasoning_content\|>|\.\.\.)\s*")
-_START_MARKERS = ("<reasoning>", "<|begin_of_thought|>", "<|reasoning_content|>")
+_START = re.compile(
+    r"^\s*(?:<reasoning>|<\|begin_of_thought\|>|<\|reasoning_content\|>|<think>|\.\.\.)\s*"
+)
+_START_MARKERS = ("<reasoning>", "<|begin_of_thought|>", "<|reasoning_content|>", "<think>")
 _ANSWER_PREFIX = re.compile(r"^\s*Assistant:\s*<\|reserved_actor\|>\s*")
 _DOT_RUN = re.compile(r"\.{3,}")
 

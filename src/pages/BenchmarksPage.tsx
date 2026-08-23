@@ -107,8 +107,7 @@ export function BenchmarksPage({ snapshot, service, refreshSnapshot, navigate }:
           {usesRunningInstance ? (
             <Alert role="status" variant="light" color="cyan" p="xs">
               <Text size="xs">
-                {selectedModel?.name} is running — benchmarks the loaded instance without
-                reloading.
+                {selectedModel?.name} is running — benchmarks the loaded instance without reloading.
               </Text>
             </Alert>
           ) : (
