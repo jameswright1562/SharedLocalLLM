@@ -37,6 +37,8 @@ Thumbs.db
 .runtime/
 diagnostics/
 runtime-downloads/
+# Installed pinned llama-server binaries (pnpm backend:install:llama-server)
+backend/runtime/
 
 graphify-out/
 

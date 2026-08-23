@@ -83,6 +83,11 @@ try {
 
         $Archive = [System.IO.Compression.ZipFile]::OpenRead($ZipPath)
         try {
+            # The digest check above already proves these are the exact pinned
+            # bytes. Extraction is still whitelisted: we only unpack what the
+            # app needs (requiredExecutables + DLLs) and ignore upstream's
+            # other tooling rather than trusting it into the install dir.
+            $Ignored = 0
             foreach ($Entry in $Archive.Entries) {
                 if ([string]::IsNullOrEmpty($Entry.Name)) { continue }
                 if ($Entry.FullName -like "*..*") {
@@ -91,13 +96,18 @@ try {
                 $IsExe = $Entry.Name.EndsWith(".exe")
                 $IsDll = $Entry.Name.EndsWith(".dll")
                 if (-not ($IsExe -or $IsDll)) {
-                    throw "Unexpected archive entry '$($Entry.FullName)'; only executables and DLLs are accepted."
+                    $Ignored++
+                    continue
                 }
                 if ($IsExe -and ($RequiredExecutables -notcontains $Entry.Name)) {
-                    throw "Unexpected executable entry '$($Entry.Name)'; not in requiredExecutables."
+                    $Ignored++
+                    continue
                 }
                 $Target = Join-Path $Destination $Entry.Name
                 [System.IO.Compression.ZipFileExtensions]::ExtractToFile($Entry, $Target, $true)
+            }
+            if ($Ignored -gt 0) {
+                Write-Host "Ignored $Ignored non-whitelisted archive entries (verified upstream extras)."
             }
         }
         finally {
