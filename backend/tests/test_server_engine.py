@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import json
 from pathlib import Path
 
 from sharedlocalllm_backend.server_engine import (
     ServerEngine,
     build_command,
+    relay_server_output,
     server_environment,
+    startup_failure_message,
     wire_messages,
 )
 
@@ -26,8 +29,11 @@ TOOLS = [{
 
 
 class Store:
+    def __init__(self) -> None:
+        self.entries: list[tuple] = []
+
     def log(self, *_args) -> None:
-        return None
+        self.entries.append(_args)
 
 
 class Writer:
@@ -57,8 +63,10 @@ def test_build_command_enables_embedded_mtp_and_rpc() -> None:
     assert command[command.index("-ngl") + 1] == "all"
     assert command[command.index("--split-mode") + 1] == "layer"
     assert command[command.index("--flash-attn") + 1] == "on"
-    assert "--no-mmap" in command
-    assert "--mlock" in command
+    assert command[command.index("--load-mode") + 1] == "mlock"
+    assert "--mmap" not in command
+    assert "--no-mmap" not in command
+    assert "--mlock" not in command
     assert command[command.index("--threads") + 1] == "6"
     assert command[command.index("--batch-size") + 1] == "256"
     assert "--no-agent" in command
@@ -66,18 +74,55 @@ def test_build_command_enables_embedded_mtp_and_rpc() -> None:
     assert "--offline" in command
 
 
-def test_server_environment_cannot_enable_internal_agent_tools(monkeypatch) -> None:
+def test_server_environment_ignores_all_external_llama_configuration(monkeypatch) -> None:
     monkeypatch.setenv("LLAMA_ARG_TOOLS", "all")
     monkeypatch.setenv("LLAMA_ARG_AGENT", "1")
     monkeypatch.setenv("LLAMA_ARG_MCP_SERVERS_JSON", '{"dangerous":true}')
+    monkeypatch.setenv("LLAMA_ARG_EMBEDDINGS", "1")
+    monkeypatch.setenv("LLAMA_ARG_PORT", "11434")
+    monkeypatch.setenv("LLAMA_ARG_RERANKING", "1")
+    monkeypatch.setenv("LLAMA_API_KEY", "wrong-secret")
     monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "0")
 
     environment = server_environment()
 
-    assert "LLAMA_ARG_TOOLS" not in environment
-    assert "LLAMA_ARG_AGENT" not in environment
-    assert "LLAMA_ARG_MCP_SERVERS_JSON" not in environment
+    assert not any(name.startswith("LLAMA_ARG_") for name in environment)
+    assert "LLAMA_API_KEY" not in environment
     assert environment["CUDA_VISIBLE_DEVICES"] == "0"
+
+
+def test_server_output_is_redacted_and_tee_d_to_the_console(
+    tmp_path: Path, capsys,
+) -> None:
+    model_path = r"C:\Users\James\.cache\models\qwen.gguf"
+    source = io.BytesIO(
+        (
+            f"loading model '{model_path}' with key top-secret\n"
+            "missing result_norm/result_embd tensor\n"
+        ).encode()
+    )
+    log_path = tmp_path / "llama-server.log"
+
+    relay_server_output(source, log_path, model_path, "top-secret")
+
+    console = capsys.readouterr().err
+    saved = log_path.read_text(encoding="utf-8")
+    for output in (console, saved):
+        assert "qwen.gguf" not in output
+        assert "top-secret" not in output
+        assert "<model-path>" in output
+        assert "<redacted>" in output
+        assert "missing result_norm/result_embd tensor" in output
+
+
+def test_known_mtp_embedding_assertion_has_an_actionable_summary() -> None:
+    message = startup_failure_message(
+        "embeddings enabled\nGGML_ASSERT missing result_norm/result_embd tensor failed"
+    )
+
+    assert "embedding or reranking mode" in message
+    assert "MTP" in message
+    assert "Restart SharedLocalLLM" in message
 
 
 def test_wire_messages_preserves_an_agent_tool_result_round_trip() -> None:

@@ -146,6 +146,49 @@ curl.exe http://127.0.0.1:11435/v1/chat/completions `
   -d '{"model":"active","stream":false,"messages":[{"role":"user","content":"Hello"}]}'
 ```
 
+### OpenCode
+
+SharedLocalLLM supports OpenAI-style function tools, streamed tool-call argument fragments,
+`tool_choice`, assistant tool-call history, and `tool` result messages. This lets agent clients such
+as OpenCode execute their own permission-gated tools; SharedLocalLLM and llama-server do not execute
+those tools themselves.
+
+Add a provider like this to OpenCode's `opencode.json`, replacing the API key with the value shown
+in SharedLocalLLM:
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "sharedlocalllm/active",
+  "provider": {
+    "sharedlocalllm": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "SharedLocalLLM",
+      "options": {
+        "baseURL": "http://127.0.0.1:11435/v1",
+        "apiKey": "paste-the-key-shown-by-SharedLocalLLM",
+        "timeout": false
+      },
+      "models": {
+        "active": {
+          "name": "Active SharedLocalLLM model",
+          "tool_call": true,
+          "limit": {
+            "context": 8192,
+            "output": 4096
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+Restart OpenCode after changing its configuration. The endpoint is loopback-only, so OpenCode must
+run on the same computer; SharedLocalLLM transparently forwards to the paired coordinator when the
+model runs on the other computer. Tool reliability still depends on choosing a model trained for
+tool use.
+
 ## Current limits
 
 - The physical two-PC CUDA/RPC path still needs to be exercised on real hardware after checkout.

@@ -13,22 +13,17 @@ import json
 import os
 import socket
 import subprocess
+import sys
+import threading
 import time
 from pathlib import Path
-from typing import Any, AsyncIterator
+from typing import Any, AsyncIterator, BinaryIO
 
 from .errors import BackendError
 from .llama_server import install_root_candidates, locate_llama_server, probe_health
 from .tool_calls import normalize_tool_message, normalize_tool_stream
 
 START_TIMEOUT_SECONDS = 300
-UNSAFE_AGENT_ENVIRONMENT = (
-    "LLAMA_ARG_AGENT",
-    "LLAMA_ARG_MCP_SERVERS_CONFIG",
-    "LLAMA_ARG_MCP_SERVERS_JSON",
-    "LLAMA_ARG_TOOLS",
-    "LLAMA_ARG_TOOLS_RUNTIME",
-)
 
 
 def free_port() -> int:
@@ -46,20 +41,67 @@ def server_log_path() -> Path:
     return Path(base or Path.home()) / "SharedLocalLLM" / "logs" / "llama-server.log"
 
 
-def log_tail(path: Path, limit: int = 2000) -> str:
+def log_tail(path: Path, limit: int = 2000, start: int = 0) -> str:
     try:
-        return path.read_text(encoding="utf-8", errors="replace")[-limit:].strip()
+        with path.open("rb") as handle:
+            handle.seek(start)
+            return handle.read().decode("utf-8", errors="replace")[-limit:].strip()
     except OSError:
         return ""
 
 
 def server_environment() -> dict[str, str]:
-    """Inherit hardware settings, but never llama-server's executable tools."""
-    blocked = set(UNSAFE_AGENT_ENVIRONMENT)
+    """Inherit hardware settings, but not configuration for other llama.cpp apps."""
     return {
         name: value for name, value in os.environ.items()
-        if name.upper() not in blocked
+        if not name.upper().startswith("LLAMA_ARG_")
+        and name.upper() != "LLAMA_API_KEY"
     }
+
+
+def _redact_server_output(text: str, model_path: str, api_key: str | None) -> str:
+    redacted = text.replace(model_path, "<model-path>")
+    if api_key:
+        redacted = redacted.replace(api_key, "<redacted>")
+    roots = {
+        str(Path.home()),
+        os.environ.get("USERPROFILE", ""),
+        os.environ.get("LOCALAPPDATA", ""),
+        os.environ.get("APPDATA", ""),
+    }
+    for root in sorted((value for value in roots if value), key=len, reverse=True):
+        redacted = redacted.replace(root, "<private-path>")
+    return redacted
+
+
+def relay_server_output(
+    stream: BinaryIO, log_path: Path, model_path: str, api_key: str | None,
+) -> None:
+    """Copy redacted child output to its log and the parent process console."""
+    try:
+        with log_path.open("ab") as handle:
+            while line := stream.readline():
+                text = _redact_server_output(
+                    line.decode("utf-8", errors="replace"), model_path, api_key
+                )
+                handle.write(text.encode("utf-8"))
+                handle.flush()
+                if sys.stderr is not None:
+                    sys.stderr.write(text)
+                    sys.stderr.flush()
+    except OSError:
+        return
+
+
+def startup_failure_message(detail: str) -> str:
+    compact = " ".join(detail.split())
+    if "missing result_norm/result_embd tensor" in detail:
+        return (
+            "llama-server hit the known MTP embedding or reranking mode conflict "
+            "(missing result_norm/result_embd tensor). Restart SharedLocalLLM so its "
+            "isolated llama-server environment takes effect, then retry."
+        )
+    return f"llama-server exited during startup. {compact[-1200:]}".strip()
 
 
 def wire_messages(
@@ -122,14 +164,20 @@ def build_command(
         "-ngl", "all",
         "--split-mode", "layer",
         "--flash-attn", "on" if config.get("flashAttention") else "off",
-        "--mmap" if config.get("useMmap", True) else "--no-mmap",
         "--batch-size", str(max(1, int(config.get("batchSize", 512)))),
     ]
+    use_mmap = bool(config.get("useMmap", True))
+    use_mlock = bool(config.get("useMlock"))
+    load_mode = (
+        "mmap+mlock" if use_mmap and use_mlock
+        else "mmap" if use_mmap
+        else "mlock" if use_mlock
+        else "none"
+    )
+    command += ["--load-mode", load_mode]
     cpu_threads = int(config.get("cpuThreads", 0))
     if cpu_threads > 0:
         command += ["--threads", str(cpu_threads)]
-    if config.get("useMlock"):
-        command.append("--mlock")
     if mtp and speculation_supported:
         command += ["--spec-type", "draft-mtp"]
     if rpc_endpoint:
@@ -151,6 +199,8 @@ class ServerEngine:
         self.rpc_endpoint: str | None = None
         self._writer: asyncio.StreamWriter | None = None
         self._spec_support: dict[str, bool] = {}
+        self._log_thread: threading.Thread | None = None
+        self._log_offset = 0
 
     @property
     def active(self) -> bool:
@@ -168,7 +218,8 @@ class ServerEngine:
         if key not in self._spec_support:
             try:
                 result = subprocess.run(
-                    [key, "--help"], capture_output=True, text=True, timeout=20
+                    [key, "--help"], capture_output=True, text=True, timeout=20,
+                    env=server_environment(),
                 )
                 combined = f"{result.stdout}{result.stderr}"
                 self._spec_support[key] = "--spec-type" in combined
@@ -204,13 +255,24 @@ class ServerEngine:
 
         log_path = server_log_path()
         log_path.parent.mkdir(parents=True, exist_ok=True)
-        with log_path.open("ab") as handle:
-            flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-            self.process = subprocess.Popen(  # noqa: S603
-                command, stdout=handle, stderr=subprocess.STDOUT,
-                stdin=subprocess.DEVNULL, creationflags=flags,
-                env=server_environment(),
+        try:
+            self._log_offset = log_path.stat().st_size
+        except OSError:
+            self._log_offset = 0
+        flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        self.process = subprocess.Popen(  # noqa: S603
+            command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            stdin=subprocess.DEVNULL, creationflags=flags,
+            env=server_environment(),
+        )
+        if self.process.stdout is not None:
+            self._log_thread = threading.Thread(
+                target=relay_server_output,
+                args=(self.process.stdout, log_path, model_path, api_key),
+                name="llama-server-log",
+                daemon=True,
             )
+            self._log_thread.start()
         self.port = port
         self.api_key = api_key
         self.model_id = model_id
@@ -219,13 +281,18 @@ class ServerEngine:
         deadline = time.monotonic() + START_TIMEOUT_SECONDS
         while time.monotonic() < deadline:
             if self.process.poll() is not None:
-                detail = log_tail(log_path)
+                await self._finish_log_relay()
+                detail = log_tail(log_path, start=self._log_offset)
+                message = startup_failure_message(detail)
+                self.store.log("ERROR", "llama_server_failed", message)
                 self.process = None
                 self.port = None
+                self.model_id = None
                 self.rpc_endpoint = None
                 raise BackendError(
                     "llama_server_failed",
-                    f"llama-server exited during startup. {detail}",
+                    message,
+                    "Open the logs folder for the redacted llama-server output.",
                 )
             if probe_health(port, api_key):
                 self.store.log(
@@ -235,8 +302,11 @@ class ServerEngine:
                 return
             await asyncio.sleep(0.5)
         await self.stop()
+        message = "llama-server did not become healthy in time."
+        self.store.log("ERROR", "llama_server_timeout", message)
         raise BackendError(
-            "llama_server_timeout", "llama-server did not become healthy in time."
+            "llama_server_timeout", message,
+            "Open the logs folder for the redacted llama-server output.",
         )
 
     async def stop(self) -> None:
@@ -246,6 +316,7 @@ class ServerEngine:
         self.model_id = None
         self.rpc_endpoint = None
         if process is None or process.poll() is not None:
+            await self._finish_log_relay()
             return
         process.terminate()
         try:
@@ -253,6 +324,12 @@ class ServerEngine:
         except subprocess.TimeoutExpired:
             process.kill()
             await asyncio.to_thread(process.wait, 5)
+        await self._finish_log_relay()
+
+    async def _finish_log_relay(self) -> None:
+        thread, self._log_thread = self._log_thread, None
+        if thread is not None and thread is not threading.current_thread():
+            await asyncio.to_thread(thread.join, 2)
 
     def cancel(self) -> None:
         writer, self._writer = self._writer, None
