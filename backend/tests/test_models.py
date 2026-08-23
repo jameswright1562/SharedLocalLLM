@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import struct
 from pathlib import Path
 
+from sharedlocalllm_backend.gguf import has_nextn_tensors
 from sharedlocalllm_backend.models import _fit, discover_local, merge_remote
 
 
@@ -62,3 +64,20 @@ def test_discovery_accepts_a_complete_shard_set(tmp_path: Path) -> None:
     models, _ = discover_local([tmp_path], "node-a", node("node-a"))
     assert len(models) == 1
     assert models[0]["shards"] == 2
+
+
+def test_detects_embedded_nextn_tensors_without_reading_tensor_data(tmp_path: Path) -> None:
+    name = b"blk.0.nextn_predictor.weight"
+    gguf = (
+        b"GGUF"
+        + struct.pack("<IQQ", 3, 1, 0)
+        + struct.pack("<Q", len(name)) + name
+        + struct.pack("<I", 1)
+        + struct.pack("<QIQ", 16, 0, 0)
+    )
+    path = tmp_path / "qwen-mtp.gguf"
+    path.write_bytes(gguf)
+
+    assert has_nextn_tensors(path) is True
+    models, _ = discover_local([tmp_path], "node-a", node("node-a"))
+    assert models[0]["mtp"] is True

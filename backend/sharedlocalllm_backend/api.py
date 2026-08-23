@@ -222,12 +222,18 @@ def create_openai_app(runtime: Any) -> FastAPI:
         active_model = active_model_id()
         settings = {
             "systemPrompt": "", "temperature": body.get("temperature", 0.7),
-            "maxTokens": body.get("max_tokens", 512),
+            "maxTokens": body.get("max_completion_tokens", body.get("max_tokens", 512)),
         }
         tools, tool_choice = request_tool_options(body)
         if body.get("stream") and runtime.cluster.get("coordinatorNodeId") == runtime.local_node["id"]:
             async def events():
-                async for native in runtime.inference.chat_openai_stream(
+                server_engine = getattr(runtime, "server_engine", None)
+                engine = (
+                    server_engine
+                    if server_engine is not None and server_engine.active
+                    else runtime.inference
+                )
+                async for native in engine.chat_openai_stream(
                     body.get("messages", []), settings, tools, tool_choice
                 ):
                     chunk = chunk_payload(native.get("choices", []), active_model or "active")

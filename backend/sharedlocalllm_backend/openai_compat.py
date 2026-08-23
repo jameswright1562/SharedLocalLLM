@@ -25,13 +25,10 @@ def request_tool_options(
     if tool_choice is None:
         return tools, None
     if isinstance(tool_choice, str):
-        if tool_choice == "required":
-            raise BackendError(
-                "api_tool_choice_unsupported",
-                "tool_choice 'required' is not reliable with this llama.cpp runtime; use 'auto' or name a function.",
-            )
-        if tool_choice not in ("auto", "none"):
+        if tool_choice not in ("auto", "none", "required"):
             raise BackendError("api_tool_choice_invalid", "tool_choice is not supported.")
+        if tool_choice == "required" and not tools:
+            raise BackendError("api_tool_choice_invalid", "tool_choice 'required' needs at least one tool.")
         return tools, tool_choice
     if not isinstance(tool_choice, dict):
         raise BackendError("api_tool_choice_invalid", "tool_choice must name a function.")

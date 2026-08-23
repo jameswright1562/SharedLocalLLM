@@ -150,7 +150,7 @@ def discover_local(
             "locations": [{"nodeId": node_id, "path": str(first), "source": _source(first)}],
             "fit": _fit(total_size, node, peer, metadata),
             "remoteOnly": False,
-            "mtp": has_nextn_tensors(first),
+            "mtp": any(has_nextn_tensors(shard) for shard in shards),
         }
         for key in ("layerCount", "embeddingLength", "attentionHeadCount", "attentionHeadCountKv"):
             if key in metadata:

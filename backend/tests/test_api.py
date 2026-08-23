@@ -262,9 +262,20 @@ def test_remote_stream_synthesizes_tool_call_and_terminal_chunks() -> None:
     assert events[-1] == "[DONE]"
 
 
-def test_chat_rejects_unreliable_required_tool_choice() -> None:
+def test_chat_accepts_standard_required_tool_choice_for_agent_clients() -> None:
+    class RequiredRuntime(Runtime):
+        def __init__(self) -> None:
+            super().__init__()
+            self.tool_choice = None
+
+        async def chat(self, _messages, _settings, _images, **kwargs):
+            self.tool_choice = kwargs.get("tool_choice")
+            return {"content": "", "message": {"role": "assistant", "content": None}}
+
+    runtime = RequiredRuntime()
+
     async def request():
-        transport = httpx.ASGITransport(app=create_openai_app(Runtime()))
+        transport = httpx.ASGITransport(app=create_openai_app(runtime))
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             return await client.post(
                 "/v1/chat/completions",
@@ -273,8 +284,56 @@ def test_chat_rejects_unreliable_required_tool_choice() -> None:
             )
 
     response = asyncio.run(request())
-    assert response.status_code == 400
-    assert response.json()["error"]["type"] == "api_tool_choice_unsupported"
+    assert response.status_code == 200
+    assert runtime.tool_choice == "required"
+
+
+def test_local_stream_uses_the_active_server_engine_for_tool_calls() -> None:
+    class FailingInference:
+        async def chat_openai_stream(self, *_args):
+            raise AssertionError("the builtin engine must not serve a llama-server cluster")
+            yield
+
+    class StreamingServer:
+        active = True
+
+        async def chat_openai_stream(self, _messages, _settings, tools, tool_choice):
+            assert tools == tool_spec()
+            assert tool_choice == "required"
+            yield {
+                "choices": [{
+                    "index": 0,
+                    "delta": {"tool_calls": [{"index": 0, **tool_call()}]},
+                    "finish_reason": None,
+                }],
+            }
+            yield {"choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}]}
+
+    class ServerRuntime(Runtime):
+        def __init__(self) -> None:
+            super().__init__()
+            self.inference = FailingInference()
+            self.server_engine = StreamingServer()
+
+    async def request():
+        transport = httpx.ASGITransport(app=create_openai_app(ServerRuntime()))
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            return await client.post(
+                "/v1/chat/completions",
+                headers={"Authorization": "Bearer secret"},
+                json={
+                    "stream": True, "messages": [{"role": "user", "content": "Run it"}],
+                    "tools": tool_spec(), "tool_choice": "required",
+                    "max_completion_tokens": 64,
+                },
+            )
+
+    response = asyncio.run(request())
+    events = [line.removeprefix("data: ") for line in response.text.splitlines() if line]
+    payloads = [json.loads(line) for line in events[:-1]]
+    assert payloads[0]["choices"][0]["delta"]["tool_calls"][0]["function"]["name"] == "Bash"
+    assert payloads[-1]["choices"][0]["finish_reason"] == "tool_calls"
+    assert events[-1] == "[DONE]"
 
 
 def _free_loopback_port() -> int:

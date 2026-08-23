@@ -19,8 +19,16 @@ from typing import Any, AsyncIterator
 
 from .errors import BackendError
 from .llama_server import install_root_candidates, locate_llama_server, probe_health
+from .tool_calls import normalize_tool_message, normalize_tool_stream
 
 START_TIMEOUT_SECONDS = 300
+UNSAFE_AGENT_ENVIRONMENT = (
+    "LLAMA_ARG_AGENT",
+    "LLAMA_ARG_MCP_SERVERS_CONFIG",
+    "LLAMA_ARG_MCP_SERVERS_JSON",
+    "LLAMA_ARG_TOOLS",
+    "LLAMA_ARG_TOOLS_RUNTIME",
+)
 
 
 def free_port() -> int:
@@ -45,10 +53,26 @@ def log_tail(path: Path, limit: int = 2000) -> str:
         return ""
 
 
+def server_environment() -> dict[str, str]:
+    """Inherit hardware settings, but never llama-server's executable tools."""
+    blocked = set(UNSAFE_AGENT_ENVIRONMENT)
+    return {
+        name: value for name, value in os.environ.items()
+        if name.upper() not in blocked
+    }
+
+
 def wire_messages(
     messages: list[dict[str, Any]], settings: dict[str, Any]
-) -> list[dict[str, str]]:
-    wire = [{"role": item.get("role"), "content": item.get("content", "")} for item in messages]
+) -> list[dict[str, Any]]:
+    allowed = (
+        "role", "content", "reasoning_content", "tool_calls",
+        "tool_call_id", "function_call", "name",
+    )
+    wire = [
+        {key: item[key] for key in allowed if key in item}
+        for item in messages
+    ]
     system = str(settings.get("systemPrompt", "")).strip()
     if system and not any(item["role"] == "system" for item in wire):
         wire.insert(0, {"role": "system", "content": system})
@@ -76,6 +100,7 @@ def build_command(
     mtp: bool,
     speculation_supported: bool,
     rpc_endpoint: str | None,
+    load_config: dict[str, Any] | None = None,
 ) -> list[str]:
     """Assemble the pinned llama-server invocation for this launch."""
     command = [
@@ -86,10 +111,25 @@ def build_command(
         "--ctx-size", str(context),
         "--parallel", "1",
         "--jinja",
+        "--no-agent",
+        "--no-ui",
+        "--offline",
     ]
+    config = load_config or {}
     # Full offload: placement across local GPU + RPC devices happens inside
     # llama.cpp (layer split); RPC endpoints arrive via --rpc.
-    command += ["-ngl", "99"]
+    command += [
+        "-ngl", "all",
+        "--split-mode", "layer",
+        "--flash-attn", "on" if config.get("flashAttention") else "off",
+        "--mmap" if config.get("useMmap", True) else "--no-mmap",
+        "--batch-size", str(max(1, int(config.get("batchSize", 512)))),
+    ]
+    cpu_threads = int(config.get("cpuThreads", 0))
+    if cpu_threads > 0:
+        command += ["--threads", str(cpu_threads)]
+    if config.get("useMlock"):
+        command.append("--mlock")
     if mtp and speculation_supported:
         command += ["--spec-type", "draft-mtp"]
     if rpc_endpoint:
@@ -146,6 +186,7 @@ class ServerEngine:
         api_key: str | None,
         mtp: bool,
         rpc_endpoint: str | None = None,
+        load_config: dict[str, Any] | None = None,
     ) -> None:
         await self.stop()
         port = free_port()
@@ -158,6 +199,7 @@ class ServerEngine:
             mtp=mtp,
             speculation_supported=self.supports_speculation(exe),
             rpc_endpoint=rpc_endpoint,
+            load_config=load_config,
         )
 
         log_path = server_log_path()
@@ -167,6 +209,7 @@ class ServerEngine:
             self.process = subprocess.Popen(  # noqa: S603
                 command, stdout=handle, stderr=subprocess.STDOUT,
                 stdin=subprocess.DEVNULL, creationflags=flags,
+                env=server_environment(),
             )
         self.port = port
         self.api_key = api_key
@@ -197,7 +240,7 @@ class ServerEngine:
         )
 
     async def stop(self) -> None:
-        self._writer = None
+        self.cancel()
         process, self.process = self.process, None
         self.port = None
         self.model_id = None
@@ -222,12 +265,20 @@ class ServerEngine:
     def _auth_header(self) -> dict[str, str]:
         return {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
 
-    def _payload(self, messages: list[dict[str, Any]], settings: dict[str, Any]) -> dict[str, Any]:
-        return {
+    def _payload(
+        self, messages: list[dict[str, Any]], settings: dict[str, Any],
+        tools: list[dict[str, Any]] | None = None, tool_choice: Any = None,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
             "messages": wire_messages(messages, settings),
             "temperature": float(settings.get("temperature", 0.7)),
             "max_tokens": int(settings.get("maxTokens", 512)),
         }
+        if tools:
+            payload["tools"] = tools
+        if tool_choice is not None:
+            payload["tool_choice"] = tool_choice
+        return payload
 
     async def _open_request(
         self, payload: dict[str, Any], timeout: float
@@ -276,42 +327,68 @@ class ServerEngine:
             writer.close()
 
     async def chat(
-        self, messages: list[dict[str, Any]], settings: dict[str, Any]
+        self, messages: list[dict[str, Any]], settings: dict[str, Any],
+        tools: list[dict[str, Any]] | None = None, tool_choice: Any = None,
     ) -> dict[str, Any]:
         started = time.perf_counter()
-        status, body = await self._read_response(self._payload(messages, settings))
+        status, body = await self._read_response(
+            self._payload(messages, settings, tools, tool_choice)
+        )
         if status != 200:
             raise BackendError("generation_failed", _error_message(body, status))
         try:
             data = json.loads(body)
-            message = data["choices"][0]["message"]
+            choice = data["choices"][0]
+            message = dict(choice["message"])
             usage = data.get("usage") or {}
         except (ValueError, KeyError, IndexError) as error:
             raise BackendError("generation_failed", f"Unparsable llama-server reply: {error}") from error
         elapsed = max(time.perf_counter() - started, 0.001)
         completion = max(1, int(usage.get("completion_tokens") or 1))
+        message, finish_reason = normalize_tool_message(
+            message,
+            choice.get("finish_reason"),
+            tools if tool_choice != "none" else None,
+        )
+        reasoning = str(message.get("reasoning_content") or "")
         return {
             "content": str(message.get("content") or ""),
-            "reasoning": str(message.get("reasoning_content") or ""),
+            "reasoning": reasoning,
             "tokensPerSecond": round(completion / elapsed, 2),
+            "message": message,
+            "finishReason": finish_reason,
+            "usage": usage,
         }
 
-    async def chat_stream(
-        self, messages: list[dict[str, Any]], settings: dict[str, Any]
+    async def chat_openai_stream(
+        self, messages: list[dict[str, Any]], settings: dict[str, Any],
+        tools: list[dict[str, Any]] | None = None, tool_choice: Any = None,
     ) -> AsyncIterator[dict[str, Any]]:
-        payload = self._payload(messages, settings)
+        """Relay llama-server's native OpenAI chunks without losing tool calls."""
+        payload = self._payload(messages, settings, tools, tool_choice)
         payload["stream"] = True
         payload["stream_options"] = {"include_usage": True}
-        reader, writer = await self._open_request(payload, timeout=600)
-        started = time.perf_counter()
-        first_token_at: float | None = None
-        completion_tokens = 0
-        buffer = b""
-        finished = False
+        events = self._sse_events(payload)
+        needs_tool_fallback = bool(
+            tools and tool_choice != "none" and not isinstance(tool_choice, dict)
+        )
+        if needs_tool_fallback and tools:
+            buffered = [event async for event in events]
+            for event in normalize_tool_stream(buffered, tools):
+                yield event
+            return
+        async for event in events:
+            yield event
+
+    async def _sse_events(
+        self, payload: dict[str, Any], timeout: float = 600,
+    ) -> AsyncIterator[dict[str, Any]]:
+        reader, writer = await self._open_request(payload, timeout)
         try:
             status = 0
+            buffer = b""
             while True:
-                chunk = await reader.read(64 * 1024)
+                chunk = await asyncio.wait_for(reader.read(64 * 1024), timeout)
                 if not chunk:
                     break
                 buffer += chunk
@@ -322,26 +399,46 @@ class ServerEngine:
                     parts = head.decode("latin-1").splitlines()[0].split()
                     status = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 0
                     if status != 200:
-                        raise BackendError("generation_failed", _error_message(rest.decode("utf-8", "replace"), status))
+                        raise BackendError(
+                            "generation_failed",
+                            _error_message(rest.decode("utf-8", "replace"), status),
+                        )
                     buffer = rest
                 while b"\n" in buffer:
                     raw_line, buffer = buffer.split(b"\n", 1)
                     event = parse_sse_event(raw_line.decode("utf-8", errors="replace"))
-                    if not event:
-                        continue
-                    choices = event.get("choices") or []
-                    delta = (choices[0].get("delta") if choices else {}) or {}
-                    reasoning_piece = delta.get("reasoning_content")
-                    if reasoning_piece:
-                        yield {"type": "reasoning", "content": str(reasoning_piece)}
-                    content_piece = delta.get("content")
-                    if content_piece:
-                        if first_token_at is None:
-                            first_token_at = time.perf_counter()
-                        yield {"type": "token", "content": str(content_piece)}
-                    usage = event.get("usage")
-                    if isinstance(usage, dict) and usage.get("completion_tokens"):
-                        completion_tokens = int(usage["completion_tokens"])
+                    if event is not None:
+                        yield event
+        finally:
+            if self._writer is writer:
+                self._writer = None
+            writer.close()
+
+    async def chat_stream(
+        self, messages: list[dict[str, Any]], settings: dict[str, Any]
+    ) -> AsyncIterator[dict[str, Any]]:
+        payload = self._payload(messages, settings)
+        payload["stream"] = True
+        payload["stream_options"] = {"include_usage": True}
+        started = time.perf_counter()
+        first_token_at: float | None = None
+        completion_tokens = 0
+        finished = False
+        try:
+            async for event in self._sse_events(payload):
+                choices = event.get("choices") or []
+                delta = (choices[0].get("delta") if choices else {}) or {}
+                reasoning_piece = delta.get("reasoning_content")
+                if reasoning_piece:
+                    yield {"type": "reasoning", "content": str(reasoning_piece)}
+                content_piece = delta.get("content")
+                if content_piece:
+                    if first_token_at is None:
+                        first_token_at = time.perf_counter()
+                    yield {"type": "token", "content": str(content_piece)}
+                usage = event.get("usage")
+                if isinstance(usage, dict) and usage.get("completion_tokens"):
+                    completion_tokens = int(usage["completion_tokens"])
             if not finished:
                 window = max(time.perf_counter() - (first_token_at or started), 0.001)
                 if completion_tokens:
@@ -349,8 +446,7 @@ class ServerEngine:
                 yield {"type": "done"}
                 finished = True
         finally:
-            self._writer = None
-            writer.close()
+            self.cancel()
 
     async def benchmark(self) -> tuple[float, float]:
         result = await self.chat(

@@ -56,6 +56,7 @@ export interface ModelRecord {
   locations: ModelLocation[];
   fit: ModelFit;
   remoteOnly?: boolean;
+  mtp?: boolean;
 }
 
 export interface GpuLayerAllocation {
@@ -74,6 +75,7 @@ export interface ModelLoadConfig {
   useMlock?: boolean;
   cpuThreads?: number;
   batchSize?: number;
+  engine?: "builtin" | "llama-server";
 }
 
 export interface ModelLoadOptions {
@@ -140,6 +142,7 @@ export interface ClusterSession {
   coordinatorNodeId?: string;
   workerNodeId?: string;
   modelId?: string;
+  engine?: "builtin" | "llama-server";
   error?: string;
 }
 

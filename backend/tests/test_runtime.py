@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 
 import pytest
 
@@ -101,6 +102,73 @@ class FakePeer:
     remote_models: list[dict] = []
 
 
+class InactiveServerEngine:
+    active = False
+    model_id = None
+
+    def available(self):
+        return None
+
+    async def stop(self) -> None:
+        return None
+
+    def cancel(self) -> None:
+        return None
+
+
+class ActiveServerEngine:
+    active = True
+    model_id = "model"
+
+    def __init__(self) -> None:
+        self.cancelled = False
+        self.stopped = False
+        self.received: dict = {}
+
+    async def chat(self, messages, settings, tools=None, tool_choice=None):
+        self.received = {
+            "messages": messages, "settings": settings,
+            "tools": tools, "tool_choice": tool_choice,
+        }
+        return {"content": "server", "message": {"role": "assistant", "content": "server"}}
+
+    async def chat_stream(self, _messages, _settings):
+        yield {"type": "token", "content": "server"}
+        yield {"type": "done"}
+
+    async def benchmark(self):
+        return 100.0, 25.0
+
+    async def stop(self) -> None:
+        self.stopped = True
+        self.active = False
+        self.model_id = None
+
+    def cancel(self) -> None:
+        self.cancelled = True
+
+
+class LaunchServerEngine(InactiveServerEngine):
+    def __init__(self) -> None:
+        self.active = False
+        self.model_id = None
+        self.started: dict = {}
+        self.stopped = False
+
+    def available(self):
+        return Path("llama-server.exe")
+
+    async def start(self, **kwargs) -> None:
+        self.started = kwargs
+        self.active = True
+        self.model_id = kwargs["model_id"]
+
+    async def stop(self) -> None:
+        self.stopped = True
+        self.active = False
+        self.model_id = None
+
+
 class RecordingInference:
     model_id = None
 
@@ -156,6 +224,8 @@ def runtime_with(inference) -> BackendRuntime:
     runtime.model_paths = {"model": "model.gguf"}
     runtime.cluster = {"status": "idle"}
     runtime.inference = inference
+    runtime.server_engine = InactiveServerEngine()
+    runtime._server_forwarder = None
     runtime.peer = FakePeer()
     runtime.peer_active_model_id = None
     runtime.network = None
@@ -328,6 +398,108 @@ def test_local_cluster_beats_peer_heartbeat_for_routing() -> None:
 
     assert peer.calls == []
     assert inference.chatted is True
+
+
+def test_active_server_engine_handles_agent_chat_stream_cancel_and_benchmark() -> None:
+    inference = RecordingInference()
+    server = ActiveServerEngine()
+    runtime = runtime_with(inference)
+    runtime.server_engine = server
+    runtime.cluster = {
+        "status": "running", "coordinatorNodeId": "local",
+        "modelId": "model", "engine": "llama-server",
+    }
+    tools = [{"type": "function", "function": {"name": "Bash"}}]
+
+    result = asyncio.run(runtime.chat(
+        [{"role": "user", "content": "pwd"}], {}, [],
+        tools=tools, tool_choice="required",
+    ))
+
+    async def collect() -> list[dict]:
+        return [event async for event in runtime.chat_stream_events([], {}, [])]
+
+    events = asyncio.run(collect())
+    asyncio.run(runtime.cancel_generation())
+    benchmark = asyncio.run(runtime.run_inference_benchmark("model"))
+
+    assert result["content"] == "server"
+    assert server.received["tools"] == tools
+    assert server.received["tool_choice"] == "required"
+    assert events == [{"type": "token", "content": "server"}, {"type": "done"}]
+    assert server.cancelled is True
+    assert benchmark[0]["generationTokensPerSecond"] == 25.0
+    assert inference.chatted is False
+
+
+def test_mtp_model_launches_llama_server_instead_of_builtin_engine() -> None:
+    class NoBuiltinLoad(SuccessfulLoadInference):
+        async def load(self, *_args) -> None:
+            raise AssertionError("an MTP model with llama-server installed must use server mode")
+
+    runtime = runtime_with(NoBuiltinLoad())
+    runtime.models[0]["mtp"] = True
+    server = LaunchServerEngine()
+    runtime.server_engine = server
+
+    cluster = asyncio.run(runtime.start_cluster(
+        "model",
+        {"contextSize": 4096, "gpuLayers": [{"nodeId": "local", "layers": 1}]},
+    ))
+
+    assert cluster["engine"] == "llama-server"
+    assert server.started["model_path"] == "model.gguf"
+    assert server.started["mtp"] is True
+    assert server.started["rpc_endpoint"] is None
+
+
+def test_server_engine_uses_and_stops_the_peer_rpc_forwarder(monkeypatch) -> None:
+    class Forwarder:
+        instances: list["Forwarder"] = []
+
+        def __init__(self, peer, model_id, include_cpu=False) -> None:
+            self.peer = peer
+            self.model_id = model_id
+            self.include_cpu = include_cpu
+            self.stopped = False
+            self.instances.append(self)
+
+        async def start(self) -> str:
+            return "127.0.0.1:5000"
+
+        async def stop(self) -> None:
+            self.stopped = True
+
+    monkeypatch.setattr("sharedlocalllm_backend.runtime.RpcForwarder", Forwarder)
+    runtime = runtime_with(SuccessfulLoadInference())
+    runtime.models[0]["mtp"] = True
+    runtime.models[0]["layerCount"] = 2
+    runtime.server_engine = LaunchServerEngine()
+    runtime.store.values["peer"] = {
+        "id": "peer-1",
+        "capabilities": {
+            "id": "peer-1", "name": "Peer", "online": True,
+            "gpu": {"vramAvailableGb": 8}, "ramAvailableGb": 16,
+        },
+    }
+
+    cluster = asyncio.run(runtime.start_cluster(
+        "model",
+        {
+            "contextSize": 4096,
+            "gpuLayers": [
+                {"nodeId": "local", "layers": 1},
+                {"nodeId": "peer-1", "layers": 1},
+            ],
+        },
+    ))
+
+    assert cluster["engine"] == "llama-server"
+    assert runtime.server_engine.started["rpc_endpoint"] == "127.0.0.1:5000"
+    assert len(Forwarder.instances) == 1
+    asyncio.run(runtime.stop_cluster())
+    assert Forwarder.instances[0].stopped is True
+    assert runtime.server_engine.stopped is True
 
 
 def test_stop_cluster_stops_a_peer_loaded_model_from_this_computer() -> None:

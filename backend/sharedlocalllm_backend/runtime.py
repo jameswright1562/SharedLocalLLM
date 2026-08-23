@@ -57,6 +57,8 @@ class BackendRuntime:
                 pass
             self._peer_refresh_task = None
         await self.inference.unload()
+        await self.server_engine.stop()
+        await self._stop_server_forwarder()
         await self.peer.stop()
 
     async def _peer_refresh_loop(self) -> None:
@@ -257,6 +259,8 @@ class BackendRuntime:
                 await self.stop_cluster()
             except BackendError:
                 await self.inference.unload()
+                await self.server_engine.stop()
+                await self._stop_server_forwarder()
         self.store.update(peer=None)
         self.peer.remote_models = []
         self.peer_active_model_id = None
@@ -343,11 +347,17 @@ class BackendRuntime:
                         context=int(normalized_config.get("contextSize", 4096)),
                         api_key=self.store.get("apiKey"), mtp=bool(model.get("mtp")),
                         rpc_endpoint=rpc_endpoint,
+                        load_config=normalized_config,
                     )
                 except Exception:
                     await self.server_engine.stop()
                     if forwarder:
                         await forwarder.stop()
+                    self.cluster = {
+                        "status": "error", "coordinatorNodeId": self.local_node["id"],
+                        "modelId": model_id, "error": "llama-server failed to start",
+                    }
+                    self._publish_local_cluster()
                     raise
                 self._server_forwarder = forwarder
                 if save_config:
@@ -358,6 +368,8 @@ class BackendRuntime:
                 }
                 self._publish_local_cluster()
                 return self.cluster
+        await self.server_engine.stop()
+        await self._stop_server_forwarder()
         self.cluster = {"status": "loading", "coordinatorNodeId": self.local_node["id"], "modelId": model_id}
         self._publish_local_cluster()
         try:
@@ -445,6 +457,13 @@ class BackendRuntime:
                 "tools": tools, "toolChoice": tool_choice,
             }
             return await self.peer.request("chat", payload)
+        if self.server_engine.active:
+            if images:
+                raise BackendError(
+                    "vision_not_migrated",
+                    "Vision attachments are not enabled in the Python migration yet.",
+                )
+            return await self.server_engine.chat(messages, settings, tools, tool_choice)
         return await self.inference.chat(messages, settings, images, tools, tool_choice)
 
     async def chat_stream_events(
@@ -460,6 +479,15 @@ class BackendRuntime:
                 yield {"type": "stats", "tokensPerSecond": result["tokensPerSecond"]}
             yield {"type": "done"}
             return
+        if self.server_engine.active:
+            if images:
+                raise BackendError(
+                    "vision_not_migrated",
+                    "Vision attachments are not enabled in the Python migration yet.",
+                )
+            async for event in self.server_engine.chat_stream(messages, settings):
+                yield event
+            return
         async for event in self.inference.chat_stream(messages, settings, images):
             yield event
 
@@ -470,16 +498,20 @@ class BackendRuntime:
             except BackendError as error:
                 self.store.log("WARN", "peer_cancel_failed", error.message)
         self.inference.cancel()
+        self.server_engine.cancel()
 
     async def run_inference_benchmark(self, model_id: str, proxy_peer: bool = True) -> list[dict[str, Any]]:
         model = self._model(model_id)
-        runs_on_peer = proxy_peer and self.inference.model_id != model_id and (
+        active_model_id = (
+            self.server_engine.model_id if self.server_engine.active else self.inference.model_id
+        )
+        runs_on_peer = proxy_peer and active_model_id != model_id and (
             model.get("remoteOnly") or self.peer_active_model_id == model_id
         )
         if runs_on_peer:
             return await self.peer.request("benchmark_inference", {"modelId": model_id})
         load_started = time.perf_counter()
-        temporary = self.inference.model_id != model_id
+        temporary = active_model_id != model_id
         allocations: list[dict[str, Any]] = []
         error_message: str | None = None
         prompt = generation = 0.0
@@ -498,7 +530,10 @@ class BackendRuntime:
                     allow_peer=proxy_peer,
                     save_config=False,
                 )
-            prompt, generation = await self.inference.benchmark()
+            if self.server_engine.active:
+                prompt, generation = await self.server_engine.benchmark()
+            else:
+                prompt, generation = await self.inference.benchmark()
         except Exception as error:
             error_message = str(error)
         finally:
