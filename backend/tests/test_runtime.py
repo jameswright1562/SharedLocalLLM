@@ -2,18 +2,23 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+from typing import cast
 
 import pytest
 
 from sharedlocalllm_backend.errors import BackendError
+from sharedlocalllm_backend.inference import InferenceEngine
+from sharedlocalllm_backend.peer import PeerManager
 from sharedlocalllm_backend.runtime import BackendRuntime
+from sharedlocalllm_backend.server_engine import ServerEngine
+from sharedlocalllm_backend.store import Store
 
 
 class FakeStore:
     def __init__(self) -> None:
         self.values: dict = {"peer": None, "benchmarks": []}
         self.recorded: list[dict] = []
-        self.entries: list[tuple[str, str]] = []
+        self.entries: list[tuple[str, str, str]] = []
 
     def get(self, key: str, default=None):
         return self.values.get(key, default)
@@ -22,7 +27,7 @@ class FakeStore:
         self.values.update(values)
 
     def log(self, level: str, event: str, message: str = "") -> None:
-        self.entries.append((level, event))
+        self.entries.append((level, event, message))
 
     def append_benchmark(self, value: dict) -> None:
         self.recorded.append(value)
@@ -106,7 +111,7 @@ class InactiveServerEngine:
     active = False
     model_id = None
 
-    def available(self):
+    def available(self) -> Path | None:
         return None
 
     async def stop(self) -> None:
@@ -201,9 +206,9 @@ class ProxyingPeer:
         return self.response
 
 
-def runtime_with(inference) -> BackendRuntime:
+def runtime_with(inference: object) -> BackendRuntime:
     runtime = BackendRuntime.__new__(BackendRuntime)
-    runtime.store = FakeStore()
+    runtime.store = cast(Store, FakeStore())
     runtime.local_node = {
         "id": "local",
         "name": "Local",
@@ -223,20 +228,20 @@ def runtime_with(inference) -> BackendRuntime:
     ]
     runtime.model_paths = {"model": "model.gguf"}
     runtime.cluster = {"status": "idle"}
-    runtime.inference = inference
-    runtime.server_engine = InactiveServerEngine()
+    runtime.inference = cast(InferenceEngine, inference)
+    runtime.server_engine = cast(ServerEngine, InactiveServerEngine())
     runtime._server_forwarder = None
-    runtime.peer = FakePeer()
+    runtime.peer = cast(PeerManager, FakePeer())
     runtime.peer_active_model_id = None
     runtime.network = None
     runtime._runtime = {"status": "ready"}
     return runtime
 
 
-def peer_runtime(inference, peer) -> BackendRuntime:
+def peer_runtime(inference: object, peer: object) -> BackendRuntime:
     runtime = runtime_with(inference)
-    runtime.peer = peer
-    runtime.store.values["peer"] = {"id": "peer-1", "name": "Worker"}
+    runtime.peer = cast(PeerManager, peer)
+    cast(FakeStore, runtime.store).values["peer"] = {"id": "peer-1", "name": "Worker"}
     runtime.peer_active_model_id = "model"
     return runtime
 
@@ -274,7 +279,7 @@ def test_successful_load_saves_the_config_for_the_next_launch() -> None:
 def test_failed_load_keeps_the_previously_saved_config() -> None:
     runtime = runtime_with(FailingLoadInference())
     previous = {"contextSize": 8192, "gpuLayers": []}
-    runtime.store.values["modelLoadConfigs"] = {"model": previous}
+    cast(FakeStore, runtime.store).values["modelLoadConfigs"] = {"model": previous}
 
     with pytest.raises(BackendError):
         asyncio.run(runtime.start_cluster("model", {"contextSize": 512}))
@@ -285,7 +290,7 @@ def test_failed_load_keeps_the_previously_saved_config() -> None:
 def test_temporary_benchmark_load_does_not_replace_a_saved_config() -> None:
     runtime = runtime_with(TemporaryBenchmarkInference())
     saved = {"contextSize": 8192, "gpuLayers": []}
-    runtime.store.values["modelLoadConfigs"] = {"model": saved}
+    cast(FakeStore, runtime.store).values["modelLoadConfigs"] = {"model": saved}
 
     asyncio.run(runtime.run_inference_benchmark("model"))
 
@@ -297,7 +302,7 @@ def test_failed_benchmark_is_persisted() -> None:
     result = asyncio.run(runtime.run_inference_benchmark("model"))
     assert result[0]["recommended"] is False
     assert result[0]["error"] == "diagnostic benchmark failure"
-    assert runtime.store.recorded == result
+    assert cast(FakeStore, runtime.store).recorded == result
 
 
 def test_benchmark_reuses_the_running_instance_without_reloading() -> None:
@@ -404,7 +409,7 @@ def test_active_server_engine_handles_agent_chat_stream_cancel_and_benchmark() -
     inference = RecordingInference()
     server = ActiveServerEngine()
     runtime = runtime_with(inference)
-    runtime.server_engine = server
+    runtime.server_engine = cast(ServerEngine, server)
     runtime.cluster = {
         "status": "running", "coordinatorNodeId": "local",
         "modelId": "model", "engine": "llama-server",
@@ -440,7 +445,7 @@ def test_mtp_model_launches_llama_server_instead_of_builtin_engine() -> None:
     runtime = runtime_with(NoBuiltinLoad())
     runtime.models[0]["mtp"] = True
     server = LaunchServerEngine()
-    runtime.server_engine = server
+    runtime.server_engine = cast(ServerEngine, server)
 
     cluster = asyncio.run(runtime.start_cluster(
         "model",
@@ -474,8 +479,9 @@ def test_server_engine_uses_and_stops_the_peer_rpc_forwarder(monkeypatch) -> Non
     runtime = runtime_with(SuccessfulLoadInference())
     runtime.models[0]["mtp"] = True
     runtime.models[0]["layerCount"] = 2
-    runtime.server_engine = LaunchServerEngine()
-    runtime.store.values["peer"] = {
+    server = LaunchServerEngine()
+    runtime.server_engine = cast(ServerEngine, server)
+    cast(FakeStore, runtime.store).values["peer"] = {
         "id": "peer-1",
         "capabilities": {
             "id": "peer-1", "name": "Peer", "online": True,
@@ -495,11 +501,11 @@ def test_server_engine_uses_and_stops_the_peer_rpc_forwarder(monkeypatch) -> Non
     ))
 
     assert cluster["engine"] == "llama-server"
-    assert runtime.server_engine.started["rpc_endpoint"] == "127.0.0.1:5000"
+    assert server.started["rpc_endpoint"] == "127.0.0.1:5000"
     assert len(Forwarder.instances) == 1
     asyncio.run(runtime.stop_cluster())
     assert Forwarder.instances[0].stopped is True
-    assert runtime.server_engine.stopped is True
+    assert server.stopped is True
 
 
 def test_stop_cluster_stops_a_peer_loaded_model_from_this_computer() -> None:

@@ -11,6 +11,7 @@ from typing import Any
 import uvicorn
 from fastapi import FastAPI, Header, Request
 from fastapi.responses import JSONResponse, StreamingResponse
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from .errors import BackendError
 from .models import model_slug
@@ -125,10 +126,10 @@ class ResponseLoggingMiddleware:
     truncated — with image data redacted and newlines collapsed.
     """
 
-    def __init__(self, app: Any) -> None:
+    def __init__(self, app: ASGIApp) -> None:
         self.app = app
 
-    async def __call__(self, scope: dict, receive: Any, send: Any) -> None:
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
@@ -136,13 +137,13 @@ class ResponseLoggingMiddleware:
         response_chunks: list[bytes] = []
         status = 0
 
-        async def receive_wrapper() -> dict:
+        async def receive_wrapper() -> Message:
             message = await receive()
             if message.get("type") == "http.request":
                 request_chunks.append(message.get("body") or b"")
             return message
 
-        async def send_wrapper(message: dict) -> None:
+        async def send_wrapper(message: Message) -> None:
             nonlocal status
             if message["type"] == "http.response.start":
                 status = int(message.get("status") or 0)

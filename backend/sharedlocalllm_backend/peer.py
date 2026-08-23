@@ -243,7 +243,10 @@ class PeerManager:
                     "Run the Python-backend branch on both computers."
                 )
             op = request.get("op")
-            data = request.get("data") or {}
+            if not isinstance(op, str):
+                raise BackendError("peer_request_invalid", "The peer operation must be a string.")
+            raw_data = request.get("data")
+            data = raw_data if isinstance(raw_data, dict) else {}
             if op == "rpc_tunnel":
                 include_cpu = bool(data.get("includeCpu", False))
                 model_id = str(data.get("modelId") or "") or None

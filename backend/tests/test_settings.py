@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+from typing import cast
 
 from sharedlocalllm_backend.runtime import BackendRuntime
+from sharedlocalllm_backend.store import Store
 
 
 class SettingsStore:
@@ -22,22 +24,22 @@ class SettingsStore:
         return []
 
 
-def settings_runtime() -> BackendRuntime:
+def settings_runtime() -> tuple[BackendRuntime, SettingsStore]:
     runtime = BackendRuntime.__new__(BackendRuntime)
-    runtime.store = SettingsStore()
+    store = SettingsStore()
+    runtime.store = cast(Store, store)
     runtime.local_node = {"id": "local", "name": "Old name"}
     runtime.models = []
-    runtime.modelDirectories = []
     runtime.network = None
     runtime.cluster = {"status": "idle"}
     runtime._runtime = {"status": "ready"}
     runtime.api_health = None
     runtime.api_port_changed = None
-    return runtime
+    return runtime, store
 
 
 def test_update_settings_persists_the_authentication_toggle() -> None:
-    runtime = settings_runtime()
+    runtime, store = settings_runtime()
 
     snapshot = asyncio.run(
         runtime.update_settings(
@@ -45,18 +47,18 @@ def test_update_settings_persists_the_authentication_toggle() -> None:
         )
     )
 
-    assert runtime.store.values["authRequired"] is False
+    assert store.values["authRequired"] is False
     assert snapshot["authRequired"] is False
     assert runtime.get_api_config()["authRequired"] is False
 
 
 def test_update_settings_defaults_to_requiring_the_bearer_key() -> None:
-    runtime = settings_runtime()
-    runtime.store.values["authRequired"] = False
+    runtime, store = settings_runtime()
+    store.values["authRequired"] = False
 
     snapshot = asyncio.run(
         runtime.update_settings({"deviceName": "PC-1", "apiPort": 12000})
     )
 
-    assert runtime.store.values["authRequired"] is True
+    assert store.values["authRequired"] is True
     assert snapshot["authRequired"] is True

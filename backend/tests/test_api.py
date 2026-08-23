@@ -5,6 +5,7 @@ import json
 import logging
 import socket
 import time
+from typing import cast
 
 import httpx
 import pytest
@@ -19,6 +20,7 @@ from sharedlocalllm_backend.api import (
 )
 from sharedlocalllm_backend.errors import BackendError
 from sharedlocalllm_backend.runtime import BackendRuntime
+from sharedlocalllm_backend.store import Store as RuntimeStore
 
 
 class Store:
@@ -358,8 +360,9 @@ def test_try_api_request_round_trips_through_the_real_http_server() -> None:
                 await asyncio.sleep(0.05)
             port = int(server.servers[0].sockets[0].getsockname()[1])
             runtime = BackendRuntime.__new__(BackendRuntime)
-            runtime.store = Store()
-            runtime.store.values["apiPort"] = port
+            store = Store()
+            runtime.store = cast(RuntimeStore, store)
+            store.values["apiPort"] = port
             started = time.perf_counter()
             result = await BackendRuntime.try_api_request(runtime)
             assert result["status"] == 200
@@ -376,8 +379,9 @@ def test_try_api_request_round_trips_through_the_real_http_server() -> None:
 
 def test_try_api_request_reports_an_unreachable_api() -> None:
     runtime = BackendRuntime.__new__(BackendRuntime)
-    runtime.store = Store()
-    runtime.store.values["apiPort"] = _free_loopback_port()
+    store = Store()
+    runtime.store = cast(RuntimeStore, store)
+    store.values["apiPort"] = _free_loopback_port()
 
     with pytest.raises(BackendError) as excinfo:
         asyncio.run(BackendRuntime.try_api_request(runtime))

@@ -34,13 +34,18 @@ def test_network_benchmark_measures_upload_and_download_separately(monkeypatch) 
 
     peer = PeerManager(Runtime())
 
-    async def request(op: str, data=None):
+    async def request(op: str, data: dict[str, object] | None = None):
         if op == "heartbeat":
             return {}
+        assert data is not None
         if op == "upload":
-            return {"size": len(data["payload"]) // 2}
+            payload = data["payload"]
+            assert isinstance(payload, str)
+            return {"size": len(payload) // 2}
         if op == "download":
-            return {"payload": "x" * data["size"]}
+            size = data["size"]
+            assert isinstance(size, int)
+            return {"payload": "x" * size}
         raise AssertionError(op)
 
     peer.request = request  # type: ignore[method-assign]

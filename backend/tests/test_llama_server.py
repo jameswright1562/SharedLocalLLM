@@ -157,7 +157,7 @@ class _HealthHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(self.body)
 
-    def log_message(self, *_args) -> None:
+    def log_message(self, format: str, *args: object) -> None:
         logging.getLogger(__name__).debug("health probe: %s", self.requestline)
 
 

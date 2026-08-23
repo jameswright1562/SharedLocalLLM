@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import platform
+import socket
 import subprocess
 from typing import Any
 
@@ -51,7 +52,7 @@ def _adapter() -> dict[str, Any]:
     for name, stat in stats.items():
         if not stat.isup or name.lower().startswith(("loopback", "lo")):
             continue
-        has_ipv4 = any(getattr(addr, "family", None).name == "AF_INET" for addr in addrs.get(name, []))
+        has_ipv4 = any(addr.family == socket.AF_INET for addr in addrs.get(name, []))
         if has_ipv4:
             candidates.append((float(stat.speed or 0), name))
     if not candidates:

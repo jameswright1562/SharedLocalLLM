@@ -9,6 +9,7 @@ per-install bearer key gates every request.
 from __future__ import annotations
 
 import asyncio
+import itertools
 import json
 import os
 import socket
@@ -16,14 +17,17 @@ import subprocess
 import sys
 import threading
 import time
+from collections.abc import AsyncIterator
 from pathlib import Path
-from typing import Any, AsyncIterator, BinaryIO
+from typing import Any, BinaryIO, cast
 
 from .errors import BackendError
 from .llama_server import install_root_candidates, locate_llama_server, probe_health
 from .tool_calls import normalize_tool_message, normalize_tool_stream
 
 START_TIMEOUT_SECONDS = 300
+_CONSOLE_LOCK = threading.Lock()
+_MODEL_RESPONSE_IDS = itertools.count(1)
 
 
 def free_port() -> int:
@@ -59,8 +63,8 @@ def server_environment() -> dict[str, str]:
     }
 
 
-def _redact_server_output(text: str, model_path: str, api_key: str | None) -> str:
-    redacted = text.replace(model_path, "<model-path>")
+def _redact_server_output(text: str, model_path: str | None, api_key: str | None) -> str:
+    redacted = text.replace(model_path, "<model-path>") if model_path else text
     if api_key:
         redacted = redacted.replace(api_key, "<redacted>")
     roots = {
@@ -74,10 +78,36 @@ def _redact_server_output(text: str, model_path: str, api_key: str | None) -> st
     return redacted
 
 
+def _show_server_console_line(text: str) -> bool:
+    return not (
+        "create_tensor: loading tensor " in text
+        or ("CUDA Graph id " in text and " reused" in text)
+    )
+
+
+def write_model_output(
+    content: str,
+    *,
+    model_path: str | None = None,
+    api_key: str | None = None,
+    complete: bool = True,
+) -> None:
+    """Print one redacted answer block without exposing prompts or reasoning."""
+    output = _redact_server_output(content, model_path, api_key) or "<no text output>"
+    state = "" if complete else " partial"
+    with _CONSOLE_LOCK:
+        response_id = next(_MODEL_RESPONSE_IDS)
+        sys.stderr.write(
+            f"\n[model response #{response_id}{state}]\n{output}\n"
+            f"[/model response #{response_id}]\n"
+        )
+        sys.stderr.flush()
+
+
 def relay_server_output(
     stream: BinaryIO, log_path: Path, model_path: str, api_key: str | None,
 ) -> None:
-    """Copy redacted child output to its log and the parent process console."""
+    """Keep the full redacted log while hiding repetitive console-only noise."""
     try:
         with log_path.open("ab") as handle:
             while line := stream.readline():
@@ -86,9 +116,10 @@ def relay_server_output(
                 )
                 handle.write(text.encode("utf-8"))
                 handle.flush()
-                if sys.stderr is not None:
-                    sys.stderr.write(text)
-                    sys.stderr.flush()
+                if sys.stderr is not None and _show_server_console_line(text):
+                    with _CONSOLE_LOCK:
+                        sys.stderr.write(text)
+                        sys.stderr.flush()
     except OSError:
         return
 
@@ -196,6 +227,7 @@ class ServerEngine:
         self.port: int | None = None
         self.api_key: str | None = None
         self.model_id: str | None = None
+        self.model_path: str | None = None
         self.rpc_endpoint: str | None = None
         self._writer: asyncio.StreamWriter | None = None
         self._spec_support: dict[str, bool] = {}
@@ -276,6 +308,7 @@ class ServerEngine:
         self.port = port
         self.api_key = api_key
         self.model_id = model_id
+        self.model_path = model_path
         self.rpc_endpoint = rpc_endpoint
 
         deadline = time.monotonic() + START_TIMEOUT_SECONDS
@@ -288,6 +321,7 @@ class ServerEngine:
                 self.process = None
                 self.port = None
                 self.model_id = None
+                self.model_path = None
                 self.rpc_endpoint = None
                 raise BackendError(
                     "llama_server_failed",
@@ -314,6 +348,7 @@ class ServerEngine:
         process, self.process = self.process, None
         self.port = None
         self.model_id = None
+        self.model_path = None
         self.rpc_endpoint = None
         if process is None or process.poll() is not None:
             await self._finish_log_relay()
@@ -341,6 +376,14 @@ class ServerEngine:
 
     def _auth_header(self) -> dict[str, str]:
         return {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
+
+    def _write_model_output(self, content: str, complete: bool = True) -> None:
+        write_model_output(
+            content,
+            model_path=self.model_path,
+            api_key=self.api_key,
+            complete=complete,
+        )
 
     def _payload(
         self, messages: list[dict[str, Any]], settings: dict[str, Any],
@@ -390,7 +433,10 @@ class ServerEngine:
         try:
             chunks: list[bytes] = []
             while True:
-                chunk = await asyncio.wait_for(reader.read(64 * 1024), timeout)
+                chunk = cast(
+                    bytes,
+                    await asyncio.wait_for(reader.read(64 * 1024), timeout),
+                )
                 if not chunk:
                     break
                 chunks.append(chunk)
@@ -428,8 +474,10 @@ class ServerEngine:
             tools if tool_choice != "none" else None,
         )
         reasoning = str(message.get("reasoning_content") or "")
+        content = str(message.get("content") or "")
+        self._write_model_output(content)
         return {
-            "content": str(message.get("content") or ""),
+            "content": content,
             "reasoning": reasoning,
             "tokensPerSecond": round(completion / elapsed, 2),
             "message": message,
@@ -446,16 +494,26 @@ class ServerEngine:
         payload["stream"] = True
         payload["stream_options"] = {"include_usage": True}
         events = self._sse_events(payload)
+        output_parts: list[str] = []
+        completed = False
         needs_tool_fallback = bool(
             tools and tool_choice != "none" and not isinstance(tool_choice, dict)
         )
-        if needs_tool_fallback and tools:
-            buffered = [event async for event in events]
-            for event in normalize_tool_stream(buffered, tools):
+        try:
+            if needs_tool_fallback and tools:
+                buffered = [event async for event in events]
+                for event in normalize_tool_stream(buffered, tools):
+                    output_parts.append(_openai_event_content(event))
+                    yield event
+                completed = True
+                return
+            async for event in events:
+                output_parts.append(_openai_event_content(event))
                 yield event
-            return
-        async for event in events:
-            yield event
+            completed = True
+        finally:
+            if completed or output_parts:
+                self._write_model_output("".join(output_parts), completed)
 
     async def _sse_events(
         self, payload: dict[str, Any], timeout: float = 600,
@@ -465,7 +523,10 @@ class ServerEngine:
             status = 0
             buffer = b""
             while True:
-                chunk = await asyncio.wait_for(reader.read(64 * 1024), timeout)
+                chunk = cast(
+                    bytes,
+                    await asyncio.wait_for(reader.read(64 * 1024), timeout),
+                )
                 if not chunk:
                     break
                 buffer += chunk
@@ -501,6 +562,7 @@ class ServerEngine:
         first_token_at: float | None = None
         completion_tokens = 0
         finished = False
+        output_parts: list[str] = []
         try:
             async for event in self._sse_events(payload):
                 choices = event.get("choices") or []
@@ -510,6 +572,7 @@ class ServerEngine:
                     yield {"type": "reasoning", "content": str(reasoning_piece)}
                 content_piece = delta.get("content")
                 if content_piece:
+                    output_parts.append(str(content_piece))
                     if first_token_at is None:
                         first_token_at = time.perf_counter()
                     yield {"type": "token", "content": str(content_piece)}
@@ -524,6 +587,8 @@ class ServerEngine:
                 finished = True
         finally:
             self.cancel()
+            if finished or output_parts:
+                self._write_model_output("".join(output_parts), finished)
 
     async def benchmark(self) -> tuple[float, float]:
         result = await self.chat(
@@ -539,3 +604,9 @@ def _error_message(body: str, status: int) -> str:
         return str(parsed.get("error", {}).get("message") or body[:400])
     except ValueError:
         return f"llama-server returned HTTP {status}."
+
+
+def _openai_event_content(event: dict[str, Any]) -> str:
+    choices = event.get("choices") or []
+    delta = (choices[0].get("delta") if choices else {}) or {}
+    return str(delta.get("content") or "")

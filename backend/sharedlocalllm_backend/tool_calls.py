@@ -162,7 +162,7 @@ def normalize_tool_stream(
     if parsed is None:
         return chunks
     content, calls = parsed
-    normalized = [{
+    normalized: list[dict[str, Any]] = [{
         "choices": [{
             "index": 0, "delta": {"role": "assistant"}, "finish_reason": None,
         }],

@@ -1,0 +1,9 @@
+{
+  "include": ["backend/sharedlocalllm_backend", "backend/tests"],
+  "exclude": ["backend/.venv", "backend/build", "backend/dist", "backend/runtime"],
+  "extraPaths": ["backend"],
+  "pythonVersion": "3.12",
+  "venvPath": "backend",
+  "venv": ".venv",
+  "typeCheckingMode": "standard"
+}

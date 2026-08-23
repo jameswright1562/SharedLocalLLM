@@ -88,6 +88,7 @@ def test_template_inputs_decode_openai_argument_strings_without_mutating_history
     }]
 
     normalized_messages, normalized_tools = template_tool_inputs(messages, tools)
+    assert normalized_tools is not None
     assert normalized_messages[0]["tool_calls"][0]["function"]["arguments"] == {
         "command": "pwd"
     }

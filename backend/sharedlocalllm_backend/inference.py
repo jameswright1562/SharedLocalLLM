@@ -7,6 +7,9 @@ import threading
 import time
 from typing import Any, AsyncIterator
 
+import numpy as np
+import numpy.typing as npt
+
 from .errors import BackendError
 from .openai_compat import reasoning_stream_chunks
 from .peer import RpcForwarder
@@ -370,7 +373,9 @@ class InferenceEngine:
 
         wire = self._wire_messages(messages, settings)
 
-        def abort_on_cancel(_tokens: object, logits: object) -> object:
+        def abort_on_cancel(
+            _tokens: npt.NDArray[np.intc], logits: npt.NDArray[np.single]
+        ) -> npt.NDArray[np.single]:
             if self._cancel.is_set():
                 raise InterruptedError
             return logits
@@ -434,7 +439,9 @@ class InferenceEngine:
             self.llm.eval(tokens)
             prompt_rate = len(tokens) / max(time.perf_counter() - started, 0.001)
 
-            def abort_on_cancel(_tokens: object, logits: object) -> object:
+            def abort_on_cancel(
+                _tokens: npt.NDArray[np.intc], logits: npt.NDArray[np.single]
+            ) -> npt.NDArray[np.single]:
                 if self._cancel.is_set():
                     raise InterruptedError
                 return logits

@@ -12,6 +12,7 @@ from sharedlocalllm_backend.server_engine import (
     server_environment,
     startup_failure_message,
     wire_messages,
+    write_model_output,
 )
 
 
@@ -98,6 +99,8 @@ def test_server_output_is_redacted_and_tee_d_to_the_console(
     source = io.BytesIO(
         (
             f"loading model '{model_path}' with key top-secret\n"
+            "CUDA Graph id 1378 reused\n"
+            "create_tensor: loading tensor blk.15.attn_v.input_scale\n"
             "missing result_norm/result_embd tensor\n"
         ).encode()
     )
@@ -113,6 +116,10 @@ def test_server_output_is_redacted_and_tee_d_to_the_console(
         assert "<model-path>" in output
         assert "<redacted>" in output
         assert "missing result_norm/result_embd tensor" in output
+    assert "CUDA Graph id" not in console
+    assert "create_tensor: loading tensor" not in console
+    assert "CUDA Graph id 1378 reused" in saved
+    assert "create_tensor: loading tensor blk.15.attn_v.input_scale" in saved
 
 
 def test_known_mtp_embedding_assertion_has_an_actionable_summary() -> None:
@@ -123,6 +130,23 @@ def test_known_mtp_embedding_assertion_has_an_actionable_summary() -> None:
     assert "embedding or reranking mode" in message
     assert "MTP" in message
     assert "Restart SharedLocalLLM" in message
+
+
+def test_model_output_is_printed_in_full_with_sensitive_values_redacted(capsys) -> None:
+    model_path = r"D:\private-models\qwen.gguf"
+
+    write_model_output(
+        f"First line\nModel is at {model_path}; key is top-secret.\nLast line",
+        model_path=model_path,
+        api_key="top-secret",
+    )
+
+    console = capsys.readouterr().err
+    assert "[model response #" in console
+    assert "First line\nModel is at <model-path>; key is <redacted>.\nLast line" in console
+    assert model_path not in console
+    assert "top-secret" not in console
+    assert "[/model response #" in console
 
 
 def test_wire_messages_preserves_an_agent_tool_result_round_trip() -> None:
@@ -142,7 +166,7 @@ def test_wire_messages_preserves_an_agent_tool_result_round_trip() -> None:
     ]
 
 
-def test_chat_forwards_tools_and_returns_the_native_tool_message() -> None:
+def test_chat_forwards_tools_and_returns_the_native_tool_message(capsys) -> None:
     engine = ServerEngine(Store())
     captured: dict = {}
     call = {
@@ -171,6 +195,9 @@ def test_chat_forwards_tools_and_returns_the_native_tool_message() -> None:
     assert result["message"]["content"] is None
     assert result["finishReason"] == "tool_calls"
     assert result["usage"]["total_tokens"] == 14
+    console = capsys.readouterr().err
+    assert "<no text output>" in console
+    assert '"command":"pwd"' not in console
 
 
 def test_openai_stream_preserves_native_tool_call_argument_fragments() -> None:
@@ -218,6 +245,54 @@ def test_openai_stream_preserves_native_tool_call_argument_fragments() -> None:
     assert streamed == chunks
     assert captured["tools"] == TOOLS
     assert captured["stream_options"] == {"include_usage": True}
+
+
+def test_openai_stream_prints_the_complete_text_response(capsys) -> None:
+    chunks = [
+        {"choices": [{"index": 0, "delta": {"content": "Hello "}, "finish_reason": None}]},
+        {"choices": [{"index": 0, "delta": {"content": "world."}, "finish_reason": None}]},
+        {"choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]},
+    ]
+    body = "".join(f"data: {json.dumps(chunk)}\n\n" for chunk in chunks) + "data: [DONE]\n\n"
+    engine = ServerEngine(Store())
+
+    async def collect():
+        reader = asyncio.StreamReader()
+        reader.feed_data(f"HTTP/1.1 200 OK\r\n\r\n{body}".encode())
+        reader.feed_eof()
+
+        async def open_request(_payload, _timeout):
+            return reader, Writer()
+
+        engine._open_request = open_request  # type: ignore[method-assign]
+        return [chunk async for chunk in engine.chat_openai_stream([], {})]
+
+    assert asyncio.run(collect()) == chunks
+    console = capsys.readouterr().err
+    assert "Hello world." in console
+    assert console.count("[model response #") == 1
+
+
+def test_ui_stream_prints_the_complete_text_response(capsys) -> None:
+    engine = ServerEngine(Store())
+
+    async def sse_events(_payload):
+        yield {"choices": [{"delta": {"content": "One "}}]}
+        yield {"choices": [{"delta": {"content": "answer"}}]}
+        yield {"choices": [], "usage": {"completion_tokens": 2}}
+
+    engine._sse_events = sse_events  # type: ignore[method-assign]
+
+    async def collect():
+        return [event async for event in engine.chat_stream([], {})]
+
+    events = asyncio.run(collect())
+    assert [event.get("content") for event in events if event["type"] == "token"] == [
+        "One ", "answer",
+    ]
+    console = capsys.readouterr().err
+    assert "One answer" in console
+    assert console.count("[model response #") == 1
 
 
 def test_openai_stream_converts_text_tool_markup_for_agent_clients() -> None:

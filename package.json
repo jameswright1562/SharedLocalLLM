@@ -19,10 +19,11 @@
     "backend:install": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/setup-python-backend.ps1",
     "backend:install:llama-server": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install-llama-server.ps1",
     "backend:ensure": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/ensure-python-backend.ps1",
+    "backend:typecheck": "backend\\.venv\\Scripts\\python.exe -m pyright",
     "backend:test": "backend\\.venv\\Scripts\\python.exe -m pytest backend\\tests -p no:cacheprovider --basetemp backend\\.pytest-tmp",
     "backend:package": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-python-backend.ps1",
     "tauri": "tauri",
-    "check": "pnpm format:check && pnpm typecheck && pnpm lint && pnpm test:coverage && pnpm build && pnpm e2e && pnpm backend:test"
+    "check": "pnpm format:check && pnpm typecheck && pnpm lint && pnpm test:coverage && pnpm build && pnpm e2e && pnpm backend:typecheck && pnpm backend:test"
   },
   "dependencies": {
     "@mantine/charts": "^9.5.1",
