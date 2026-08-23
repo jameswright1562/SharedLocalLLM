@@ -278,6 +278,7 @@ describe("dashboard pages", () => {
 
     expect(screen.getByText(/40 of 40 layers on gpu/i)).toBeInTheDocument();
     expect(screen.getAllByText(/estimated vram/i)).toHaveLength(2);
+    expect(screen.queryByText("—")).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: /launch orchid/i }));
     expect(startCluster).toHaveBeenCalledWith("model-text", {

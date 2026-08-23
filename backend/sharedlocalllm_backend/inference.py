@@ -109,14 +109,18 @@ class InferenceEngine:
                 rpc_endpoint = await self._forwarder.start()
             total_layers = remote_gpu_layers + remote_cpu_layers + local_layers
             if rpc_endpoint and total_layers <= 0:
-                remote_gpu_layers = local_layers = 1
-                total_layers = 2
-            # Registers the worker RPC device and stages the exact device list,
-            # so llama.cpp enumerates the worker ahead of the local GPU and
-            # actually splits layers across both computers.
-            tensor_split = await asyncio.to_thread(
-                prepare_rpc_load, rpc_endpoint, remote_gpu_layers, remote_cpu_layers, local_layers
-            )
+                # Forced launch of a combined-GPU model without any usable
+                # split: stage the worker devices, then let llama.cpp spread
+                # layers evenly across them instead of pretending two layers
+                # exist (which silently degraded the model to near-pure CPU).
+                load_config = {**load_config, "automaticGpuOffload": True}
+                await asyncio.to_thread(prepare_rpc_load, rpc_endpoint, 0, 0, 0)
+                tensor_split = None
+            else:
+                tensor_split = await asyncio.to_thread(
+                    prepare_rpc_load, rpc_endpoint, remote_gpu_layers, remote_cpu_layers,
+                    local_layers,
+                )
             context = max(512, int(load_config.get("contextSize", 4096)))
             self.store.log(
                 "INFO", "model_load",
@@ -341,13 +345,19 @@ class InferenceEngine:
 
             thread = threading.Thread(target=run, name="llama-chat-stream", daemon=True)
             thread.start()
-            while True:
-                item = await queue.get()
-                if item is None:
-                    break
-                if isinstance(item, BaseException):
-                    raise BackendError("generation_failed", str(item)) from item
-                yield item
+            try:
+                while True:
+                    item = await queue.get()
+                    if item is None:
+                        break
+                    if isinstance(item, BaseException):
+                        raise BackendError("generation_failed", str(item)) from item
+                    yield item
+            finally:
+                # A consumer that disconnects (GeneratorExit) must stop the
+                # producer; otherwise generation runs to max_tokens while
+                # holding _sync_lock and blocks chats, benchmarks, and unload.
+                self._cancel.set()
 
     def _wire_messages(
         self, messages: list[dict[str, Any]], settings: dict[str, Any]

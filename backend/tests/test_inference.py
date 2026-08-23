@@ -356,3 +356,74 @@ def test_chat_reports_an_actionable_incompatible_template_error() -> None:
     with pytest.raises(BackendError, match="chat template") as excinfo:
         engine._chat_sync([{"role": "user", "content": "hi"}], {}, [], "auto")
     assert excinfo.value.code == "chat_template_tools_invalid"
+
+
+def test_chat_stream_sets_cancel_when_the_consumer_disconnects() -> None:
+    class FakeLlama:
+        def create_chat_completion(self, **_kwargs):
+            for index in range(500):
+                yield {
+                    "choices": [{
+                        "index": 0, "delta": {"content": f"t{index}"},
+                        "finish_reason": None,
+                    }]
+                }
+
+        def tokenize(self, text: bytes, add_bos: bool = False):
+            return [1]
+
+    engine = InferenceEngine(None)
+    engine.llm = FakeLlama()
+
+    async def consume() -> None:
+        stream = engine.chat_stream([{"role": "user", "content": "hi"}], {})
+        async for _chunk in stream:
+            break
+        await stream.aclose()
+
+    asyncio.run(consume())
+    assert engine._cancel.is_set()
+
+
+def test_forced_combined_gpu_launch_without_split_offloads_automatically(monkeypatch) -> None:
+    class FakeForwarder:
+        def __init__(self, peer, model_id=None, include_cpu=False) -> None:
+            return None
+
+        async def start(self) -> str:
+            return "127.0.0.1:5000"
+
+        async def stop(self) -> None:
+            return None
+
+    class FakeStore:
+        def log(self, *_args) -> None:
+            return None
+
+    captured: dict = {}
+
+    def fake_load_sync(self, path, context, gpu_layers, tensor_split, load_config):
+        captured["gpu_layers"] = gpu_layers
+        captured["load_config"] = load_config
+
+    monkeypatch.setattr("sharedlocalllm_backend.inference.RpcForwarder", FakeForwarder)
+    monkeypatch.setattr(
+        "sharedlocalllm_backend.inference.prepare_rpc_load", lambda *_args: [1.0]
+    )
+    monkeypatch.setattr(InferenceEngine, "_load_sync", fake_load_sync)
+
+    engine = InferenceEngine(FakeStore())
+    model = {"id": "model", "name": "Model", "fit": "combined-gpu"}
+    asyncio.run(engine.load(
+        model,
+        "model.gguf",
+        {"contextSize": 4096, "gpuLayers": [], "automaticGpuOffload": False},
+        peer=object(),
+        local_id="local",
+        peer_id="remote",
+    ))
+
+    kwargs = build_llama_kwargs(
+        captured["load_config"], "model.gguf", 4096, captured["gpu_layers"], None
+    )
+    assert kwargs["n_gpu_layers"] == -1

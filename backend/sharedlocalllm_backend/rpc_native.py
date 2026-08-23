@@ -36,7 +36,7 @@ class NativeRpcServer:
         self._thread: threading.Thread | None = None
         self._error: Exception | None = None
         self._dll_directory: Any = None
-        self.include_cpu = True
+        self.include_cpu = False
         self.cache_dir: str | None = None
 
     def start(self, include_cpu: bool = False) -> str:
@@ -44,13 +44,17 @@ class NativeRpcServer:
             self.endpoint
             and self._thread
             and self._thread.is_alive()
+            and self.include_cpu == include_cpu
         ):
             return self.endpoint
-        # Expose the stable superset once. The coordinator omits the final CPU
-        # device unless remote CPU offload is explicitly selected. llama.cpp's
-        # embedded RPC server has no shutdown API, so starting a fresh daemon on
-        # every toggle would leak threads and ports for the process lifetime.
-        self.include_cpu = True
+        # Expose the devices the load actually needs. The coordinator omits the
+        # final CPU device unless remote CPU offload is explicitly selected, so
+        # a daemon that advertises it unconditionally would let llama-server
+        # place layers on the worker's RAM even when the option is off. The
+        # embedded RPC server has no shutdown API, so honouring a changed flag
+        # abandons the previous daemon's thread and port until process exit;
+        # toggles are rare and correctness of placement wins.
+        self.include_cpu = include_cpu
         self.endpoint = None
         self._error = None
         # Same file cache as rpc-server's -c/--cache flag: tensors persist in a
@@ -59,7 +63,7 @@ class NativeRpcServer:
         port = _free_port()
         self.endpoint = f"127.0.0.1:{port}"
         self._thread = threading.Thread(
-            target=self._run, args=(True, self.cache_dir), name="llama-rpc-worker", daemon=True
+            target=self._run, args=(include_cpu, self.cache_dir), name="llama-rpc-worker", daemon=True
         )
         self._thread.start()
         deadline = time.monotonic() + 15
@@ -218,9 +222,12 @@ def prepare_rpc_load(
     info = device_info()
     rpc, gpus = classify_devices(info)
     del rpc
+    # The worker's daemon is (re)started to match this load's remote-CPU opt-in
+    # (NativeRpcServer.start), so the CPU-as-final-device identification is
+    # valid exactly when this load actually reserves remote CPU layers.
     remote_gpus, remote_cpus = split_rpc_devices(
         selected_rpc,
-        include_cpu=True,
+        include_cpu=remote_cpu_layers > 0,
     )
     if remote_gpu_layers > 0 and not remote_gpus:
         raise BackendError(

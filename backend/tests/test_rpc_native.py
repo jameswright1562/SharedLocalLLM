@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ctypes
+import threading
 from pathlib import Path
 
 import pytest
@@ -192,3 +193,55 @@ def test_prepare_rpc_load_reserves_remote_cpu_device(monkeypatch, tmp_path) -> N
         assert abs(sum(split) - 32.0) < 0.001
 
     asyncio.run(scenario())
+
+
+def stubbed_worker(monkeypatch) -> tuple[object, list[bool], threading.Event]:
+    """A NativeRpcServer whose daemon thread and readiness probe are faked."""
+    from sharedlocalllm_backend import rpc_native
+    from sharedlocalllm_backend.rpc_native import NativeRpcServer
+
+    class DummySocket:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+    ports = iter((50001, 50002))
+    monkeypatch.setattr(rpc_native, "_free_port", lambda: next(ports))
+    monkeypatch.setattr(
+        rpc_native.socket, "create_connection", lambda *_args, **_kwargs: DummySocket()
+    )
+
+    worker = NativeRpcServer()
+    runs: list[bool] = []
+    release = threading.Event()
+
+    def fake_run(include_cpu: bool, cache_dir: str | None) -> None:
+        runs.append(include_cpu)
+        release.wait(timeout=5)
+
+    monkeypatch.setattr(worker, "_run", fake_run)
+    return worker, runs, release
+
+
+def test_rpc_worker_start_honours_the_requested_include_cpu_flag(monkeypatch) -> None:
+    worker, runs, release = stubbed_worker(monkeypatch)
+
+    # The daemon stays alive, so an unchanged request must reuse it.
+    assert worker.start(False) == "127.0.0.1:50001"
+    assert runs == [False]
+    assert worker.start(False) == "127.0.0.1:50001"
+    assert runs == [False]
+    release.set()
+
+
+def test_rpc_worker_restarts_when_the_cpu_opt_in_changes(monkeypatch) -> None:
+    worker, runs, release = stubbed_worker(monkeypatch)
+
+    assert worker.start(False) == "127.0.0.1:50001"
+    assert worker.include_cpu is False
+    assert worker.start(True) == "127.0.0.1:50002"
+    assert runs == [False, True]
+    assert worker.include_cpu is True
+    release.set()

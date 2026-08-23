@@ -8,6 +8,7 @@ from .errors import BackendError
 MIB = 1_048_576
 GPU_RUNTIME_ALLOWANCE_MIB = 512
 MIN_CONTEXT = 512
+MAX_BATCH_SIZE = 4096
 
 
 def active_nodes(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -47,6 +48,16 @@ def normalize_load_config(
     except (TypeError, ValueError) as error:
         raise BackendError("context_invalid", "Context size must be a whole number.") from error
     normalized["contextSize"] = max(MIN_CONTEXT, min(requested_context, model_context))
+
+    # Batch size comes from peer-forwarded load configs; a huge value makes
+    # llama.cpp allocate proportional compute buffers and can OOM the machine.
+    try:
+        requested_batch = int(config.get("batchSize") or 512)
+    except (TypeError, ValueError) as error:
+        raise BackendError(
+            "batch_size_invalid", "Batch size must be a whole number."
+        ) from error
+    normalized["batchSize"] = max(1, min(requested_batch, MAX_BATCH_SIZE))
 
     total_layers = int(model.get("layerCount") or 0)
     raw_allocations = config.get("gpuLayers") or []

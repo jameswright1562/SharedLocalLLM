@@ -82,3 +82,21 @@ def test_rejects_overallocated_duplicate_unknown_and_negative_splits() -> None:
                 },
                 [node("local", 8), node("peer", 8)],
             )
+
+
+def test_batch_size_is_clamped_to_a_safe_upper_bound() -> None:
+    config = normalize_load_config(
+        MODEL, {"contextSize": 4096, "batchSize": 100_000_000}, [node("local", 8)]
+    )
+    assert config["batchSize"] == 4096
+
+
+def test_batch_size_stays_positive_and_rejects_non_numeric_input() -> None:
+    zeroed = normalize_load_config(
+        MODEL, {"contextSize": 4096, "batchSize": 0}, [node("local", 8)]
+    )
+    assert zeroed["batchSize"] == 512
+    with pytest.raises(BackendError, match="Batch size"):
+        normalize_load_config(
+            MODEL, {"contextSize": 4096, "batchSize": "huge"}, [node("local", 8)]
+        )

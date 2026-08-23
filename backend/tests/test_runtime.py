@@ -568,3 +568,40 @@ def test_benchmark_generation_honours_cancellation() -> None:
     with pytest.raises(BackendError):
         asyncio.run(asyncio.to_thread(engine._benchmark_sync))
     assert stub.reset_calls >= 2
+
+
+def test_peer_refresh_loop_survives_unexpected_errors(monkeypatch) -> None:
+    from sharedlocalllm_backend import runtime as runtime_module
+
+    runtime = runtime_with(SuccessfulLoadInference())
+    calls = {"count": 0}
+    failures = iter([KeyError("capabilities"), ValueError("bad port")])
+
+    async def flaky_refresh() -> None:
+        calls["count"] += 1
+        failure = next(failures, None)
+        if failure is not None:
+            raise failure
+
+    spins = {"count": 0}
+
+    async def fast_sleep(_seconds: float) -> None:
+        spins["count"] += 1
+        if spins["count"] >= 6:
+            raise asyncio.CancelledError
+
+    monkeypatch.setattr(runtime_module.asyncio, "sleep", fast_sleep)
+    runtime.refresh_peer = flaky_refresh  # type: ignore[method-assign]
+
+    async def run() -> None:
+        task = asyncio.create_task(runtime._peer_refresh_loop())
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+    asyncio.run(run())
+
+    assert calls["count"] == 5
+    warnings = [entry for entry in runtime.store.entries if entry[0] == "WARN"]
+    assert len(warnings) == 2

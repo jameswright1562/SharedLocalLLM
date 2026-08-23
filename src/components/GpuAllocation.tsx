@@ -75,7 +75,7 @@ export function GpuAllocation({
                 selected={selected}
                 allocation={gpuLayers.find((item) => item.nodeId === node.id)}
                 estimate={splitEstimate?.devices.find(
-                  (device) => device.nodeId === node.id && !device.kind,
+                  (device) => device.nodeId === node.id && device.kind !== "cpu",
                 )}
                 gpuLayers={gpuLayers}
                 setGpuLayers={setGpuLayers}

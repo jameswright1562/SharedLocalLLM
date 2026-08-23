@@ -64,7 +64,15 @@ class BackendRuntime:
     async def _peer_refresh_loop(self) -> None:
         while True:
             await asyncio.sleep(8)
-            await self.refresh_peer()
+            try:
+                await self.refresh_peer()
+            except Exception as error:
+                # One malformed peer record or bad stored address must not kill
+                # heartbeats for the process lifetime; log and keep retrying.
+                self.store.log(
+                    "WARN", "peer_refresh_failed",
+                    f"The worker heartbeat failed; retrying in 8 seconds: {error}",
+                )
 
     async def refresh_peer(self) -> None:
         peer = self.store.get("peer")
