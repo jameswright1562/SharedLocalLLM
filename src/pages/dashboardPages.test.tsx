@@ -296,6 +296,51 @@ describe("dashboard pages", () => {
     });
   });
 
+  it("edits saved GPU layer shares that carry an explicit gpu kind tag", async () => {
+    const user = userEvent.setup();
+    const snapshot = cloneSnapshot();
+    Object.assign(snapshot.models[0]!, { layerCount: 40 });
+    snapshot.modelLoadConfigs = {
+      "model-text": {
+        contextSize: 8192,
+        gpuLayers: [
+          { nodeId: "node-a", layers: 30, kind: "gpu" },
+          { nodeId: "node-b", layers: 10, kind: "gpu" },
+        ],
+        includeRemoteCpu: false,
+        force: false,
+        flashAttention: false,
+        useMmap: true,
+        useMlock: false,
+        cpuThreads: 0,
+        batchSize: 512,
+      },
+    };
+    const startCluster = vi.fn().mockResolvedValue({ status: "running", modelId: "model-text" });
+    render(<ModelsPage {...props(snapshot, { startCluster })} />);
+
+    const orchidRow = within(screen.getByTestId("model-list"))
+      .getByText(/orchid 9b/i)
+      .closest("tr");
+    await user.click(orchidRow as HTMLElement);
+
+    const localLayers = await screen.findByLabelText(/gpu layers on studio host/i);
+    await user.clear(localLayers);
+    await user.type(localLayers, "24");
+    expect(screen.getByText(/34 of 40 layers on gpu/i)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /launch orchid/i }));
+    expect(startCluster).toHaveBeenCalledWith(
+      "model-text",
+      expect.objectContaining({
+        gpuLayers: [
+          { nodeId: "node-a", layers: 24, kind: "gpu" },
+          { nodeId: "node-b", layers: 10, kind: "gpu" },
+        ],
+      }),
+    );
+  });
+
   it("offloads a layer share to the worker's CPU when requested", async () => {
     const user = userEvent.setup();
     const snapshot = cloneSnapshot();

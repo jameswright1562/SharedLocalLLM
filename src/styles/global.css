@@ -148,3 +148,12 @@ tr[data-recommended="true"] > td {
   max-height: 340px;
   overflow: auto;
 }
+
+/* Mantine hides native number-input spin buttons; bring them back so figures
+   like GPU layer counts can be adjusted with the arrows. */
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button,
+input[type="number"] {
+  appearance: auto;
+  -moz-appearance: number-input;
+}

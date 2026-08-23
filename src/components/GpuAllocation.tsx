@@ -153,7 +153,7 @@ function DeviceAllocation({
     if (kind === "gpu") {
       setGpuLayers(
         gpuLayers.map((item) =>
-          item.nodeId === node.id && !item.kind ? { ...item, layers } : item,
+          item.nodeId === node.id && item.kind !== "cpu" ? { ...item, layers } : item,
         ),
       );
       return;
@@ -168,7 +168,7 @@ function DeviceAllocation({
       withoutCpu.reduce((total, item) => total + item.layers, 0) + layers - maxLayers,
     );
     const trimWorkerFirst = (item: GpuLayerAllocation) => {
-      if (overflow === 0 || item.nodeId !== node.id || item.kind) return item;
+      if (overflow === 0 || item.nodeId !== node.id || item.kind === "cpu") return item;
       const removed = Math.min(item.layers, overflow);
       overflow -= removed;
       return { ...item, layers: item.layers - removed };
