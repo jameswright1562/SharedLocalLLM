@@ -250,3 +250,59 @@ def test_openai_stream_converts_qwen_text_tool_markup() -> None:
     assert all("<tool_call>" not in str(chunk) for chunk in chunks)
     assert chunks[1]["choices"][0]["delta"]["tool_calls"][0]["function"]["name"] == "Bash"
     assert chunks[-1]["choices"][0]["finish_reason"] == "tool_calls"
+
+
+def test_tool_choice_none_keeps_tool_markup_as_plain_content() -> None:
+    tools = [{"type": "function", "function": {"name": "Bash", "parameters": {}}}]
+
+    class FakeLlama:
+        def create_chat_completion(self, **_kwargs):
+            return {
+                "choices": [{
+                    "message": {
+                        "role": "assistant",
+                        "content": '<tool_call>{"name":"Bash","arguments":{}}</tool_call>',
+                    },
+                    "finish_reason": "stop",
+                }],
+                "usage": {},
+            }
+
+    engine = InferenceEngine(None)
+    engine.llm = FakeLlama()
+    result = engine._chat_sync([], {}, tools, "none")
+    assert "tool_calls" not in result["message"]
+    assert "<tool_call>" in result["message"]["content"]
+    assert result["finishReason"] == "stop"
+
+
+def test_openai_stream_separates_reasoning_from_answer_content() -> None:
+    class FakeLlama:
+        def create_chat_completion(self, **_kwargs):
+            return iter([
+                {"choices": [{
+                    "index": 0, "delta": {"content": "<think>secret"},
+                    "finish_reason": None,
+                }]},
+                {"choices": [{
+                    "index": 0, "delta": {"content": " plan</think>answer"},
+                    "finish_reason": None,
+                }]},
+                {"choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]},
+            ])
+
+    engine = InferenceEngine(None)
+    engine.llm = FakeLlama()
+    engine.reasoning = True
+
+    async def collect() -> list[dict]:
+        return [chunk async for chunk in engine.chat_openai_stream([], {})]
+
+    chunks = asyncio.run(collect())
+    deltas = [chunk["choices"][0]["delta"] for chunk in chunks]
+    reasoning = "".join(delta.get("reasoning_content", "") for delta in deltas)
+    content = "".join(delta.get("content", "") for delta in deltas)
+    assert reasoning == "secret plan"
+    assert content == "answer"
+    assert "<think>" not in str(chunks)
+    assert chunks[-1]["choices"][0]["finish_reason"] == "stop"

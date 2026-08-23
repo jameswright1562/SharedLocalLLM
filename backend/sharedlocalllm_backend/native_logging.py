@@ -12,7 +12,9 @@ GGML_LOG_LEVEL_ERROR = 3
 GGML_LOG_LEVEL_DEBUG = 4
 GGML_LOG_LEVEL_CONT = 5
 
-_VISIBLE_LEVELS = frozenset({GGML_LOG_LEVEL_INFO, GGML_LOG_LEVEL_ERROR})
+_VISIBLE_LEVELS = frozenset({
+    GGML_LOG_LEVEL_INFO, GGML_LOG_LEVEL_WARN, GGML_LOG_LEVEL_ERROR,
+})
 _callback_ref: Any | None = None
 _show_continuations = True
 
@@ -22,10 +24,14 @@ def filtered_native_log(
 ) -> None:
     """Keep performance reports and errors while dropping loader noise."""
     global _show_continuations
+    decoded = text.decode("utf-8", "replace")
     if level != GGML_LOG_LEVEL_CONT:
-        _show_continuations = level in _VISIBLE_LEVELS
+        unused_tensor = level == GGML_LOG_LEVEL_WARN and (
+            "model has unused tensor " in decoded and " -- ignoring" in decoded
+        )
+        _show_continuations = level in _VISIBLE_LEVELS and not unused_tensor
     if _show_continuations:
-        sys.stderr.write(text.decode("utf-8", "replace"))
+        sys.stderr.write(decoded)
         sys.stderr.flush()
 
 

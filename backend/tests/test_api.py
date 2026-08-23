@@ -262,6 +262,21 @@ def test_remote_stream_synthesizes_tool_call_and_terminal_chunks() -> None:
     assert events[-1] == "[DONE]"
 
 
+def test_chat_rejects_unreliable_required_tool_choice() -> None:
+    async def request():
+        transport = httpx.ASGITransport(app=create_openai_app(Runtime()))
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            return await client.post(
+                "/v1/chat/completions",
+                headers={"Authorization": "Bearer secret"},
+                json={"messages": [], "tools": tool_spec(), "tool_choice": "required"},
+            )
+
+    response = asyncio.run(request())
+    assert response.status_code == 400
+    assert response.json()["error"]["type"] == "api_tool_choice_unsupported"
+
+
 def _free_loopback_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.bind(("127.0.0.1", 0))

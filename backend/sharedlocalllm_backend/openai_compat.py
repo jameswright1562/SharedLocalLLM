@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from typing import Any, Iterator
+from typing import Any, Iterable, Iterator
 
 from .errors import BackendError
+from .reasoning import ReasoningStreamSplitter
 
 
 def request_tool_options(
@@ -24,7 +25,12 @@ def request_tool_options(
     if tool_choice is None:
         return tools, None
     if isinstance(tool_choice, str):
-        if tool_choice not in ("auto", "none", "required"):
+        if tool_choice == "required":
+            raise BackendError(
+                "api_tool_choice_unsupported",
+                "tool_choice 'required' is not reliable with this llama.cpp runtime; use 'auto' or name a function.",
+            )
+        if tool_choice not in ("auto", "none"):
             raise BackendError("api_tool_choice_invalid", "tool_choice is not supported.")
         return tools, tool_choice
     if not isinstance(tool_choice, dict):
@@ -91,3 +97,53 @@ def buffered_stream_choices(response: dict[str, Any]) -> Iterator[list[dict[str,
         "index": 0, "delta": {},
         "finish_reason": completion_finish_reason(response),
     }]
+
+
+def reasoning_stream_chunks(
+    chunks: Iterable[dict[str, Any]], reasoning: bool,
+) -> Iterator[dict[str, Any]]:
+    """Map reasoning text to reasoning_content without leaking its markers."""
+    if not reasoning:
+        yield from chunks
+        return
+    splitter = ReasoningStreamSplitter(True)
+    terminal: list[dict[str, Any]] = []
+
+    def with_delta(
+        chunk: dict[str, Any], choice: dict[str, Any], delta: dict[str, Any],
+        finish_reason: str | None = None,
+    ) -> dict[str, Any]:
+        return {
+            **chunk,
+            "choices": [{**choice, "delta": delta, "finish_reason": finish_reason}],
+        }
+
+    for chunk in chunks:
+        choices = chunk.get("choices", [])
+        if len(choices) != 1 or not isinstance(choices[0], dict):
+            yield chunk
+            continue
+        choice = choices[0]
+        delta = choice.get("delta", {})
+        text = delta.get("content") if isinstance(delta, dict) else None
+        if isinstance(text, str):
+            base = {key: value for key, value in delta.items() if key != "content"}
+            if base:
+                yield with_delta(chunk, choice, base)
+            for kind, piece in splitter.push(text):
+                field = "reasoning_content" if kind == "reasoning" else "content"
+                if piece:
+                    yield with_delta(chunk, choice, {field: piece})
+        elif choice.get("finish_reason") is not None:
+            terminal.append(chunk)
+        else:
+            yield chunk
+    for kind, piece in splitter.finish():
+        field = "reasoning_content" if kind == "reasoning" else "content"
+        if piece:
+            yield {
+                "choices": [{
+                    "index": 0, "delta": {field: piece}, "finish_reason": None,
+                }],
+            }
+    yield from terminal

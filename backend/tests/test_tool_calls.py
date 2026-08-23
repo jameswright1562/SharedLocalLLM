@@ -47,3 +47,27 @@ def test_does_not_parse_unknown_or_malformed_tools() -> None:
     malformed = "<tool_call><function=Bash>missing parameters</function></tool_call>"
     assert parse_text_tool_calls(unknown, TOOLS) is None
     assert parse_text_tool_calls(malformed, TOOLS) is None
+
+
+def test_xml_parameters_follow_declared_json_schema_types() -> None:
+    tools = [{
+        "type": "function",
+        "function": {
+            "name": "SetOptions",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "enabled": {"type": "boolean"},
+                    "count": {"type": "integer"},
+                },
+            },
+        },
+    }]
+    text = (
+        "<tool_call><function=SetOptions>"
+        "<parameter=enabled>true</parameter>"
+        "<parameter=count>3</parameter>"
+        "</function></tool_call>"
+    )
+    _, calls = parse_text_tool_calls(text, tools) or (None, [])
+    assert json.loads(calls[0]["function"]["arguments"]) == {"enabled": True, "count": 3}

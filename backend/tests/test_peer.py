@@ -67,9 +67,9 @@ def test_chat_dispatch_preserves_tool_options() -> None:
     tools = [{"type": "function", "function": {"name": "Bash"}}]
     asyncio.run(peer._dispatch("chat", {
         "messages": [{"role": "user", "content": "hi"}],
-        "settings": {}, "images": [], "tools": tools, "toolChoice": "required",
+        "settings": {}, "images": [], "tools": tools, "toolChoice": "auto",
     }))
 
     assert runtime.received["tools"] == tools
-    assert runtime.received["tool_choice"] == "required"
+    assert runtime.received["tool_choice"] == "auto"
     assert runtime.received["proxy_peer"] is False

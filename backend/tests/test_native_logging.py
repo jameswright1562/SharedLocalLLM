@@ -41,6 +41,13 @@ def test_debug_and_warn_noise_is_dropped(capsys: pytest.CaptureFixture[str]) -> 
     assert capsys.readouterr().err == ""
 
 
+def test_actionable_warnings_are_kept(capsys: pytest.CaptureFixture[str]) -> None:
+    native_logging.filtered_native_log(
+        native_logging.GGML_LOG_LEVEL_WARN, b"context size exceeds the trained limit\n"
+    )
+    assert "context size exceeds" in capsys.readouterr().err
+
+
 def test_none_level_is_dropped(capsys: pytest.CaptureFixture[str]) -> None:
     native_logging.filtered_native_log(native_logging.GGML_LOG_LEVEL_NONE, b"hidden\n")
     assert capsys.readouterr().err == ""

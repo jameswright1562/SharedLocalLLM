@@ -8,6 +8,7 @@ import time
 from typing import Any, AsyncIterator
 
 from .errors import BackendError
+from .openai_compat import reasoning_stream_chunks
 from .peer import RpcForwarder
 from .reasoning import ReasoningStreamSplitter, is_reasoning_model, split_reasoning
 from .rpc_native import NativeRpcServer, prepare_rpc_load
@@ -218,31 +219,37 @@ class InferenceEngine:
                             tool_choice=tool_choice,
                             stream=True,
                         )
-                        buffered: list[dict[str, Any]] = []
-                        for chunk in chunks:
-                            if self._cancel.is_set():
-                                break
-                            value = dict(chunk)
-                            if tools:
-                                buffered.append(value)
-                            else:
-                                loop.call_soon_threadsafe(queue.put_nowait, value)
-                        if tools:
-                            for value in normalize_tool_stream(buffered, tools):
-                                loop.call_soon_threadsafe(queue.put_nowait, value)
+                        needs_tool_fallback = bool(
+                            tools and tool_choice != "none" and not isinstance(tool_choice, dict)
+                        )
+
+                        def native_values():
+                            for chunk in chunks:
+                                if self._cancel.is_set():
+                                    break
+                                yield dict(chunk)
+
+                        values = native_values()
+                        if needs_tool_fallback and tools:
+                            values = iter(normalize_tool_stream(list(values), tools))
+                        for value in reasoning_stream_chunks(values, self.reasoning):
+                            loop.call_soon_threadsafe(queue.put_nowait, value)
                 except BaseException as error:
                     loop.call_soon_threadsafe(queue.put_nowait, error)
                 finally:
                     loop.call_soon_threadsafe(queue.put_nowait, None)
 
             threading.Thread(target=run, name="llama-openai-stream", daemon=True).start()
-            while True:
-                item = await queue.get()
-                if item is None:
-                    break
-                if isinstance(item, BaseException):
-                    raise BackendError("generation_failed", str(item)) from item
-                yield item
+            try:
+                while True:
+                    item = await queue.get()
+                    if item is None:
+                        break
+                    if isinstance(item, BaseException):
+                        raise BackendError("generation_failed", str(item)) from item
+                    yield item
+            finally:
+                self._cancel.set()
 
     async def chat_stream(
         self, messages: list[dict[str, Any]], settings: dict[str, Any], images: list[str] | None = None
@@ -361,7 +368,7 @@ class InferenceEngine:
         choice = result["choices"][0]
         message = dict(choice["message"])
         message, finish_reason = normalize_tool_message(
-            message, choice.get("finish_reason"), tools
+            message, choice.get("finish_reason"), tools if tool_choice != "none" else None
         )
         native_content = message.get("content")
         content = str(native_content or "")

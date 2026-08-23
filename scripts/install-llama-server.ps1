@@ -124,9 +124,14 @@ $Server = Join-Path $Destination "llama-server.exe"
 if (-not (Test-Path $Server)) {
     throw "llama-server.exe was not found after extraction."
 }
-$VersionOutput = & $Server --version 2>&1
+# llama-server prints its banner on stderr. Merging through cmd keeps that
+# output visible while preventing PowerShell 5.x from turning stderr lines
+# into terminating errors under $ErrorActionPreference = 'Stop'.
+$VersionOutput = & cmd /c "`"$Server`" --version 2>&1"
 if ($LASTEXITCODE -ne 0) {
     throw "llama-server.exe failed its --version executable health check."
 }
 Write-Host "llama-server installed at $Server"
-Write-Host ($VersionOutput | Select-Object -First 1)
+if ($VersionOutput) {
+    Write-Host ($VersionOutput | Select-Object -First 1)
+}

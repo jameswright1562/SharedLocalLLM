@@ -16,9 +16,9 @@ _PARAMETER = re.compile(
 )
 
 
-def _tool_names(tools: list[dict[str, Any]]) -> set[str]:
+def _tool_definitions(tools: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     return {
-        str(tool["function"]["name"])
+        str(tool["function"]["name"]): tool["function"]
         for tool in tools
         if isinstance(tool.get("function"), dict) and tool["function"].get("name")
     }
@@ -33,14 +33,30 @@ def _tool_call(name: str, arguments: dict[str, Any] | str) -> dict[str, Any]:
     }
 
 
-def _parse_block(body: str, available: set[str]) -> dict[str, Any] | None:
+def _parse_block(
+    body: str, available: dict[str, dict[str, Any]],
+) -> dict[str, Any] | None:
     function_match = _FUNCTION_BLOCK.match(body)
     if function_match:
         name = function_match.group(1).strip()
-        parameters = {
-            match.group(1).strip(): match.group(2).strip("\r\n")
-            for match in _PARAMETER.finditer(function_match.group(2))
-        }
+        parameter_body = function_match.group(2)
+        matches = list(_PARAMETER.finditer(parameter_body))
+        if _PARAMETER.sub("", parameter_body).strip():
+            return None
+        schema = available.get(name, {}).get("parameters", {})
+        properties = schema.get("properties", {}) if isinstance(schema, dict) else {}
+        parameters: dict[str, Any] = {}
+        for match in matches:
+            key = match.group(1).strip()
+            value: Any = match.group(2).strip("\r\n")
+            property_schema = properties.get(key, {}) if isinstance(properties, dict) else {}
+            declared_type = property_schema.get("type") if isinstance(property_schema, dict) else None
+            if declared_type and declared_type != "string":
+                try:
+                    value = json.loads(value)
+                except ValueError:
+                    pass
+            parameters[key] = value
         if name in available and parameters:
             return _tool_call(name, parameters)
         return None
@@ -65,7 +81,7 @@ def parse_text_tool_calls(
     text: str, tools: list[dict[str, Any]],
 ) -> tuple[str | None, list[dict[str, Any]]] | None:
     """Parse known Qwen tool markup, limited to functions the client supplied."""
-    available = _tool_names(tools)
+    available = _tool_definitions(tools)
     calls: list[dict[str, Any]] = []
     remaining: list[str] = []
     cursor = 0
