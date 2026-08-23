@@ -119,3 +119,36 @@ def read_metadata(path: Path) -> dict[str, Any]:
     except (OSError, ValueError, struct.error):
         return {}
     return result
+
+
+def has_nextn_tensors(path: Path) -> bool:
+    """True when the GGUF carries NextN/MTP draft tensors (Qwen3.x-MTP class).
+
+    Walks only the tensor directory — names, shapes, offsets — never the data
+    section, so this stays cheap even on multi-gigabyte files.
+    """
+    try:
+        with path.open("rb") as handle:
+            if handle.read(4) != b"GGUF":
+                return False
+            version = _read("I", handle)
+            if version not in (2, 3):
+                return False
+            tensor_count = _read("Q", handle)
+            metadata_count = _read("Q", handle)
+            if tensor_count > 1_000_000 or metadata_count > 1_000_000:
+                return False
+            for _ in range(metadata_count):
+                _string(handle)
+                _skip(handle, _read("I", handle))
+            for _ in range(tensor_count):
+                name = _string(handle)
+                if "nextn" in name.lower():
+                    return True
+                dimensions = _read("I", handle)
+                if dimensions > 8:
+                    return False
+                handle.seek(dimensions * 8 + 4 + 8, 1)
+            return False
+    except (OSError, ValueError, struct.error):
+        return False

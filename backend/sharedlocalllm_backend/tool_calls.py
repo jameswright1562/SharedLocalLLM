@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import json
 import re
 import secrets
@@ -14,6 +15,38 @@ _PARAMETER = re.compile(
     r"<parameter=([^>\r\n]+)>\s*(.*?)\s*</parameter>",
     re.IGNORECASE | re.DOTALL,
 )
+
+
+def _decoded_mapping(value: Any) -> Any:
+    if not isinstance(value, str):
+        return value
+    try:
+        decoded = json.loads(value)
+    except ValueError:
+        return value
+    return decoded if isinstance(decoded, dict) else value
+
+
+def template_tool_inputs(
+    messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]] | None]:
+    """Adapt OpenAI JSON strings for GGUF templates that require mappings."""
+    normalized_messages = copy.deepcopy(messages)
+    for message in normalized_messages:
+        calls = message.get("tool_calls")
+        if not isinstance(calls, list):
+            continue
+        for call in calls:
+            function = call.get("function") if isinstance(call, dict) else None
+            if isinstance(function, dict) and "arguments" in function:
+                function["arguments"] = _decoded_mapping(function["arguments"])
+
+    normalized_tools = copy.deepcopy(tools)
+    for tool in normalized_tools or []:
+        function = tool.get("function") if isinstance(tool, dict) else None
+        if isinstance(function, dict) and "parameters" in function:
+            function["parameters"] = _decoded_mapping(function["parameters"])
+    return normalized_messages, normalized_tools
 
 
 def _tool_definitions(tools: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-from sharedlocalllm_backend.tool_calls import parse_text_tool_calls
+from sharedlocalllm_backend.tool_calls import parse_text_tool_calls, template_tool_inputs
 
 
 TOOLS = [{
@@ -71,3 +71,26 @@ def test_xml_parameters_follow_declared_json_schema_types() -> None:
     )
     _, calls = parse_text_tool_calls(text, tools) or (None, [])
     assert json.loads(calls[0]["function"]["arguments"]) == {"enabled": True, "count": 3}
+
+
+def test_template_inputs_decode_openai_argument_strings_without_mutating_history() -> None:
+    messages = [{
+        "role": "assistant",
+        "content": None,
+        "tool_calls": [{
+            "id": "call_1", "type": "function",
+            "function": {"name": "Bash", "arguments": '{"command":"pwd"}'},
+        }],
+    }]
+    tools = [{
+        "type": "function",
+        "function": {"name": "Bash", "parameters": '{"type":"object"}'},
+    }]
+
+    normalized_messages, normalized_tools = template_tool_inputs(messages, tools)
+    assert normalized_messages[0]["tool_calls"][0]["function"]["arguments"] == {
+        "command": "pwd"
+    }
+    assert normalized_tools[0]["function"]["parameters"] == {"type": "object"}
+    assert isinstance(messages[0]["tool_calls"][0]["function"]["arguments"], str)
+    assert isinstance(tools[0]["function"]["parameters"], str)

@@ -12,7 +12,7 @@ from .openai_compat import reasoning_stream_chunks
 from .peer import RpcForwarder
 from .reasoning import ReasoningStreamSplitter, is_reasoning_model, split_reasoning
 from .rpc_native import NativeRpcServer, prepare_rpc_load
-from .tool_calls import normalize_tool_message, normalize_tool_stream
+from .tool_calls import normalize_tool_message, normalize_tool_stream, template_tool_inputs
 
 LLAMA_SPLIT_MODE_LAYER = 1
 
@@ -211,7 +211,7 @@ class InferenceEngine:
             def run() -> None:
                 try:
                     with self._sync_lock:
-                        chunks = self.llm.create_chat_completion(
+                        chunks = self._create_chat_completion(
                             messages=self._wire_messages(messages, settings),
                             temperature=float(settings.get("temperature", 0.7)),
                             max_tokens=int(settings.get("maxTokens", 512)),
@@ -250,6 +250,30 @@ class InferenceEngine:
                     yield item
             finally:
                 self._cancel.set()
+
+    def _create_chat_completion(self, **kwargs: Any) -> Any:
+        """Retry mapping-oriented GGUF templates with decoded tool arguments."""
+        mapping_error = "Can only get item pairs from a mapping."
+        try:
+            return self.llm.create_chat_completion(**kwargs)
+        except TypeError as error:
+            if mapping_error not in str(error):
+                raise
+        messages, tools = template_tool_inputs(
+            kwargs.get("messages", []), kwargs.get("tools")
+        )
+        retry = {**kwargs, "messages": messages, "tools": tools}
+        if messages != kwargs.get("messages", []) or tools != kwargs.get("tools"):
+            try:
+                return self.llm.create_chat_completion(**retry)
+            except TypeError as error:
+                if mapping_error not in str(error):
+                    raise
+        raise BackendError(
+            "chat_template_tools_invalid",
+            "The model's embedded chat template rejected the OpenAI tool history or schema.",
+            "Use a GGUF with a tool-compatible chat template.",
+        )
 
     async def chat_stream(
         self, messages: list[dict[str, Any]], settings: dict[str, Any], images: list[str] | None = None
@@ -325,7 +349,10 @@ class InferenceEngine:
     def _wire_messages(
         self, messages: list[dict[str, Any]], settings: dict[str, Any]
     ) -> list[dict[str, Any]]:
-        allowed = ("role", "content", "tool_calls", "tool_call_id", "function_call", "name")
+        allowed = (
+            "role", "content", "reasoning_content", "tool_calls",
+            "tool_call_id", "function_call", "name",
+        )
         wire = [
             {key: item[key] for key in allowed if key in item}
             for item in messages
@@ -351,7 +378,7 @@ class InferenceEngine:
         started = time.monotonic()
         with self._sync_lock:
             try:
-                result = self.llm.create_chat_completion(
+                result = self._create_chat_completion(
                     messages=wire,
                     temperature=float(settings.get("temperature", 0.7)),
                     max_tokens=int(settings.get("maxTokens", 512)),

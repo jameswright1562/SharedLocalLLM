@@ -3,6 +3,9 @@ from __future__ import annotations
 import asyncio
 import os
 
+import pytest
+
+from sharedlocalllm_backend.errors import BackendError
 from sharedlocalllm_backend.inference import InferenceEngine, build_llama_kwargs, layer_totals
 
 
@@ -102,7 +105,10 @@ def test_wire_messages_preserves_tool_calls_and_tool_results() -> None:
         "function": {"name": "Bash", "arguments": '{"command":"pwd"}'},
     }]
     messages = [
-        {"role": "assistant", "content": None, "tool_calls": tool_calls},
+        {
+            "role": "assistant", "content": None,
+            "reasoning_content": "Need the current directory.", "tool_calls": tool_calls,
+        },
         {"role": "tool", "content": "C:\\code", "tool_call_id": "call_1"},
     ]
 
@@ -306,3 +312,47 @@ def test_openai_stream_separates_reasoning_from_answer_content() -> None:
     assert content == "answer"
     assert "<think>" not in str(chunks)
     assert chunks[-1]["choices"][0]["finish_reason"] == "stop"
+
+
+def test_chat_retries_qwen_template_with_mapping_arguments() -> None:
+    class FakeLlama:
+        def __init__(self) -> None:
+            self.arguments: list[object] = []
+
+        def create_chat_completion(self, **kwargs):
+            arguments = kwargs["messages"][0]["tool_calls"][0]["function"]["arguments"]
+            self.arguments.append(arguments)
+            if isinstance(arguments, str):
+                raise TypeError("Can only get item pairs from a mapping.")
+            return {
+                "choices": [{
+                    "message": {"role": "assistant", "content": "continued"},
+                    "finish_reason": "stop",
+                }],
+                "usage": {"completion_tokens": 1},
+            }
+
+    engine = InferenceEngine(None)
+    engine.llm = FakeLlama()
+    messages = [{
+        "role": "assistant", "content": None,
+        "tool_calls": [{
+            "id": "call_1", "type": "function",
+            "function": {"name": "Bash", "arguments": '{"command":"pwd"}'},
+        }],
+    }]
+    result = engine._chat_sync(messages, {}, [], "auto")
+    assert engine.llm.arguments == ['{"command":"pwd"}', {"command": "pwd"}]
+    assert result["content"] == "continued"
+
+
+def test_chat_reports_an_actionable_incompatible_template_error() -> None:
+    class FakeLlama:
+        def create_chat_completion(self, **_kwargs):
+            raise TypeError("Can only get item pairs from a mapping.")
+
+    engine = InferenceEngine(None)
+    engine.llm = FakeLlama()
+    with pytest.raises(BackendError, match="chat template") as excinfo:
+        engine._chat_sync([{"role": "user", "content": "hi"}], {}, [], "auto")
+    assert excinfo.value.code == "chat_template_tools_invalid"

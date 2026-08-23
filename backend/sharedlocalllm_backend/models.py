@@ -7,7 +7,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from .gguf import read_metadata
+from .gguf import has_nextn_tensors, read_metadata
 
 SHARD = re.compile(r"^(.*?)-(\d{5})-of-(\d{5})\.gguf$", re.IGNORECASE)
 QUANT = re.compile(r"(?:^|[-_.])(Q\d(?:_[A-Z0-9]+)+|Q\d_[A-Z0-9]+)(?:[-_.]|$)", re.IGNORECASE)
@@ -150,6 +150,7 @@ def discover_local(
             "locations": [{"nodeId": node_id, "path": str(first), "source": _source(first)}],
             "fit": _fit(total_size, node, peer, metadata),
             "remoteOnly": False,
+            "mtp": has_nextn_tensors(first),
         }
         for key in ("layerCount", "embeddingLength", "attentionHeadCount", "attentionHeadCountKv"):
             if key in metadata:

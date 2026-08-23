@@ -12,11 +12,12 @@ from typing import Any, AsyncIterator, Awaitable, Callable
 
 from .errors import BackendError
 from .hardware import probe_node
-from .inference import InferenceEngine
+from .inference import InferenceEngine, layer_totals
 from .models import discover_local, lm_studio_roots, merge_remote, refresh_fits
-from .peer import PeerManager
+from .peer import PeerManager, RpcForwarder
 from .placement import estimate_split, normalize_load_config, validate_fit
 from .rpc_native import runtime_health
+from .server_engine import ServerEngine
 from .store import Store
 
 
@@ -34,6 +35,8 @@ class BackendRuntime:
         self.peer_active_model_id: str | None = None
         self.inference = InferenceEngine(self.store)
         self.peer = PeerManager(self)
+        self.server_engine = ServerEngine(self.store)
+        self._server_forwarder: RpcForwarder | None = None
         self.api_port_changed: Callable[[int], Awaitable[None]] | None = None
         self.api_health: Callable[[], bool] | None = None
         self._peer_refresh_task: asyncio.Task[None] | None = None
@@ -303,6 +306,58 @@ class BackendRuntime:
                 bool(normalized_config.get("force")),
             )
         peer_id = peer["id"] if peer else None
+        engine = str(
+            load_config.get("engine")
+            or ("llama-server" if model.get("mtp") else "builtin")
+        )
+        if engine == "llama-server":
+            exe = self.server_engine.available()
+            if exe is None:
+                self.store.log(
+                    "WARN", "llama_server_missing",
+                    "Pinned llama-server is not installed; using the built-in engine.",
+                )
+            else:
+                await self.inference.unload()
+                await self._stop_server_forwarder()
+                include_remote_cpu = bool(normalized_config.get("includeRemoteCpu"))
+                remote_gpu, remote_cpu, _local_layers = layer_totals(
+                    normalized_config.get("gpuLayers") or [], peer_id,
+                    self.local_node["id"], include_remote_cpu,
+                )
+                forwarder: RpcForwarder | None = None
+                rpc_endpoint = None
+                if peer_id and (remote_gpu + remote_cpu > 0 or model.get("fit") == "combined-gpu"):
+                    # Same tunnel the built-in engine uses: llama-server reaches
+                    # the worker's RPC daemon through loopback only.
+                    forwarder = RpcForwarder(self.peer, model_id=model_id, include_cpu=remote_cpu > 0)
+                    rpc_endpoint = await forwarder.start()
+                self.cluster = {
+                    "status": "loading", "coordinatorNodeId": self.local_node["id"],
+                    "modelId": model_id,
+                }
+                self._publish_local_cluster()
+                try:
+                    await self.server_engine.start(
+                        exe=exe, model_path=path, model_id=model_id,
+                        context=int(normalized_config.get("contextSize", 4096)),
+                        api_key=self.store.get("apiKey"), mtp=bool(model.get("mtp")),
+                        rpc_endpoint=rpc_endpoint,
+                    )
+                except Exception:
+                    await self.server_engine.stop()
+                    if forwarder:
+                        await forwarder.stop()
+                    raise
+                self._server_forwarder = forwarder
+                if save_config:
+                    self.store.save_model_load_config(model_id, normalized_config)
+                self.cluster = {
+                    "status": "running", "coordinatorNodeId": self.local_node["id"],
+                    "modelId": model_id, "engine": "llama-server",
+                }
+                self._publish_local_cluster()
+                return self.cluster
         self.cluster = {"status": "loading", "coordinatorNodeId": self.local_node["id"], "modelId": model_id}
         self._publish_local_cluster()
         try:
@@ -350,6 +405,11 @@ class BackendRuntime:
             return str(peer["id"])
         return None
 
+    async def _stop_server_forwarder(self) -> None:
+        forwarder, self._server_forwarder = self._server_forwarder, None
+        if forwarder:
+            await forwarder.stop()
+
     async def stop_cluster(self, proxy_peer: bool = True) -> dict[str, Any]:
         remote_coordinator = self._remote_coordinator() if proxy_peer else None
         if remote_coordinator and self.store.get("peer"):
@@ -360,6 +420,8 @@ class BackendRuntime:
                 self._publish_local_cluster()
                 raise
         await self.inference.unload()
+        await self.server_engine.stop()
+        await self._stop_server_forwarder()
         self.cluster = {"status": "ready" if self.store.get("peer") else "idle"}
         self._publish_local_cluster()
         return self.cluster
