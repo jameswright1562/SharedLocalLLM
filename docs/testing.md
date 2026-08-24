@@ -62,22 +62,6 @@ A lighter-weight network/firewall/loopback sanity check to run on one of the two
 manual matrix below. These are smoke checks only, not proof of distributed GPU inference; the
 physical two-computer acceptance matrix below remains authoritative for performance and correctness.
 
-### Rust ignored tests (`src-tauri/tests/physical_peer.rs`)
-
-With the SharedLocalLLM app running on the peer PC, on this PC:
-
-```powershell
-$env:SHARED_LOCAL_LLM_PEER_ENDPOINT = "10.10.10.2"
-$env:SHARED_LOCAL_LLM_PEER_CHANNEL_KEY = "<channel key shown by the app on the peer PC>"
-cargo test --manifest-path src-tauri/Cargo.toml --test physical_peer -- --ignored --nocapture
-```
-
-`SHARED_LOCAL_LLM_PEER_ENDPOINT` accepts a bare IP (`10.10.10.2`) or `IP:port`
-(`10.10.10.2:49158`); the port defaults to 49158. The three tests check that TCP 49158 is reachable
-over the cable, that discovery announcements arrive on UDP 49157 (non-empty `device_id` and
-`peer_port == 49158`), and that a heartbeat completes over the peer channel using the shared channel
-key. `SHARED_LOCAL_LLM_PEER_CHANNEL_KEY` is only needed by the third test.
-
 ### PowerShell harness (`scripts/two-pc-acceptance.ps1`)
 
 ```powershell
@@ -87,14 +71,16 @@ key. `SHARED_LOCAL_LLM_PEER_CHANNEL_KEY` is only needed by the third test.
 Checks are reported per-check as PASS/FAIL/SKIP with a final `RESULT: PASS|FAIL` and an exit code of
 0 on pass or 1 on any FAIL:
 
-1. Firewall rules `SharedLocalLLM` (TCP 49158) and `SharedLocalLLM Discovery` (UDP 49157) exist,
+1. Firewall rules `SharedLocalLLM Peer Backend` (TCP 49158) and
+   `SharedLocalLLM Peer Discovery` (UDP 49157) exist,
    are Enabled, Inbound, Allow, and `Profile = Any`.
 2. Something is listening on TCP 49158 with a non-loopback `LocalAddress` (the peer channel binds
    `0.0.0.0`).
 3. A UDP endpoint is bound on port 49157.
 4. `Test-NetConnection` to `$PeerAddress` port 49158 succeeds.
-5. If `ggml-rpc-server` or `llama-server` is running, every listener owned by them is loopback-only
-   (`127.0.0.1`/`::1`); if neither is running the check is skipped, not failed.
+5. If the packaged Python backend or a llama.cpp sidecar is running, every listener except the
+   Python backend's peer port is loopback-only (`127.0.0.1`/`::1`); if none is running the check is
+   skipped, not failed.
 
 These are network/firewall/loopback smoke checks, not proof of distributed GPU inference; that
 remains the manual matrix below.
@@ -111,24 +97,41 @@ specific products into application logic.
 - Run a model that fits one node; compare both valid single-node placements with distributed mode.
 - Run a model too large for either GPU but small enough for combined VRAM.
 - Run a valid model requiring coordinator RAM spill and confirm the operating-system reserve.
-- Exercise text and supported vision chat from both computers, including SSE and cancellation.
+- Enable "remote CPU" offload in the manual split, assign a few layers to the worker's CPU, and
+  confirm both GPUs plus the worker CPU allocate work while the model loads. Record that remote-CPU
+  offload is presented as an experimental manual placement, not a distributed speedup.
+- Exercise text chat from both computers, including SSE and cancellation. Confirm that vision
+  attachments return the documented migration limitation instead of silently failing.
 - Disconnect during model load and generation; confirm clear failure and complete process cleanup.
 - Close and reopen each app independently; confirm the saved peer returns to Reachable without a
   new pairing code. Then use **Nodes > Forget**, confirm both peers require a fresh pairing, and
   verify every configured model path and file remains unchanged.
+- Adjust a model's context size, GPU split, and advanced options, launch it, quit both apps, start
+  them again, and confirm the model inspector pre-fills the same values. Relaunching must reuse the
+  saved configuration instead of defaults; then run an inference benchmark and confirm the saved
+  configuration was not replaced by the benchmark's temporary settings.
 - Run a distributed benchmark and record the displayed per-computer GPU layer counts. Confirm both
   GPUs allocate memory while `llama-bench` runs and the result is labelled `distributed`; a browser
   demo or command-construction test is not physical acceptance.
+- Right-click a local model row and choose **Delete folder…**; confirm the modal. Verify exactly the
+  containing folder disappears from disk (for example
+  `…\hub\lmstudio-community\Muse-Glimmer-30B-GGUF`), sibling folders and unrelated files survive,
+  the entry leaves the catalogue after the automatic refresh, and a folder outside `%USERPROFILE%`
+  fails with a visible permission error while its files remain intact.
+- With a cluster loading or running, verify **Delete folder…** is refused with an actionable message
+  and no files change. Verify models stored only on the paired computer (`isLocal: false`) offer no
+  delete action at all.
 - Exercise Ethernet, Wi-Fi, manual IP, static direct Ethernet (`10.10.10.x`), automatic link-local
   (`169.254.x.x`), operation while Windows reports the network as Public (which must now work without
   any profile change), multiple simultaneous adapters (Wi-Fi + Ethernet) with a stable
   manually-selected peer route, and Windows network-category changing while connected (the session
   must not terminate).
-- Confirm model directories are unchanged after indexing, benchmarking, chat, and uninstall.
+- Confirm model directories are unchanged after indexing, benchmarking, chat, and uninstall. The
+  only operation that removes model files is the explicit catalogue deletion covered above.
 
 Windows network-category enforcement has been removed: the Public/Private category is informational
 only, and the app pairs and launches identically on every category. The automated suite covers
-firewall-rule construction (program-scoped, Profile Any) and endpoint parsing for static and
+firewall-rule construction (port-scoped, Profile Any) and endpoint parsing for static and
 link-local addresses, but Public-profile and multi-adapter behaviour still needs physical two-PC
 validation.
 

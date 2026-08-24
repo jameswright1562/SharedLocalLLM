@@ -3,5 +3,29 @@
   "identifier": "default",
   "description": "Default main-window capability",
   "windows": ["main"],
-  "permissions": ["core:default"]
+  "permissions": [
+    "core:default",
+    "opener:default",
+    {
+      "identifier": "opener:allow-open-path",
+      "allow": [
+        {
+          "path": "$HOME/**"
+        }
+      ]
+    },
+    {
+      "identifier": "opener:allow-reveal-item-in-dir",
+      "allow": [
+        {
+          "path": "$HOME/**"
+        }
+      ]
+    },
+    "fs:allow-remove",
+    {
+      "identifier": "fs:scope",
+      "allow": ["$HOME/**"]
+    }
+  ]
 }

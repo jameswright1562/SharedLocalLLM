@@ -1,24 +1,27 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "SharedLocalLLM",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "identifier": "dev.sharedlocalllm.app",
   "build": {
-    "beforeDevCommand": "pnpm dev",
+    "beforeDevCommand": "pnpm backend:ensure && pnpm dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "pnpm build",
+    "beforeBuildCommand": "pnpm backend:package && pnpm build",
     "frontendDist": "../dist"
   },
   "app": {
     "windows": [{ "title": "SharedLocalLLM", "width": 1280, "height": 820 }],
     "security": {
-      "csp": "default-src 'self'; connect-src 'self' ipc: http://ipc.localhost http://127.0.0.1:11435; img-src 'self' asset: http://asset.localhost data: blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; script-src 'self'"
+      "csp": "default-src 'self'; connect-src 'self' ipc: http://ipc.localhost http://127.0.0.1:11435 http://127.0.0.1:11436; img-src 'self' asset: http://asset.localhost data: blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; script-src 'self'"
     }
   },
   "bundle": {
     "active": true,
     "targets": ["nsis"],
     "icon": ["icons/icon.ico", "icons/icon.svg"],
+    "resources": {
+      "../backend/dist/sharedlocalllm-backend.exe": "backend/sharedlocalllm-backend.exe"
+    },
     "windows": { "webviewInstallMode": { "type": "downloadBootstrapper", "silent": true } }
   }
 }

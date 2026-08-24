@@ -24,6 +24,12 @@
       "sha256": "8c79a9b226de4b3cacfd1f83d24f962d0773be79f1e7b75c6af4ded7e32ae1d6"
     }
   },
+  "llamaServer": {
+    "assetKey": "llamaCpp",
+    "entry": "llama-server.exe",
+    "healthEndpoint": "/health",
+    "role": "Optional MTP speculative-decoding engine (dual-engine plan, phase 1 pin). Installed only through the verified installer; launched by the backend in a later phase."
+  },
   "requiredExecutables": ["llama-server.exe", "llama-bench.exe", "ggml-rpc-server.exe"],
   "notes": [
     "Assets and SHA-256 values are pinned from the official GitHub release metadata for b10405.",

@@ -11,11 +11,17 @@ export function estimateModelSplitLocally(
   const totalLayers = model.layerCount;
   if (!totalLayers) throw new Error("This model does not report a usable layer count.");
 
-  const gpuLayers = loadConfig.gpuLayers.reduce((total, item) => total + item.layers, 0);
-  if (gpuLayers > totalLayers)
-    throw new Error(`The split selects ${gpuLayers} GPU layers, but the model has ${totalLayers}.`);
+  const gpuLayers = loadConfig.gpuLayers
+    .filter((item) => item.kind !== "cpu")
+    .reduce((total, item) => total + item.layers, 0);
+  const assignedLayers = loadConfig.gpuLayers.reduce((total, item) => total + item.layers, 0);
+  if (assignedLayers > totalLayers)
+    throw new Error(
+      `The split selects ${assignedLayers} layers, but the model has ${totalLayers}.`,
+    );
 
-  const contextSize = Math.max(4096, Math.min(loadConfig.contextSize, model.contextLength));
+  const modelContext = Math.max(512, model.contextLength ?? 4096);
+  const contextSize = Math.max(512, Math.min(loadConfig.contextSize, modelContext));
   const modelMib = Math.ceil(model.sizeBytes / MIB);
   const hasAttentionMetadata = Boolean(
     model.embeddingLength && model.attentionHeadCount && model.attentionHeadCountKv,
@@ -33,19 +39,30 @@ export function estimateModelSplitLocally(
 
   const devices = loadConfig.gpuLayers.map((allocation) => {
     const node = nodes.find((candidate) => candidate.id === allocation.nodeId);
-    const availableVramMib = Math.floor(Math.max(0, node?.gpu.vramAvailableGb ?? 0) * 1024);
     const weightMib = Math.ceil((modelMib * allocation.layers) / totalLayers);
+    if (allocation.kind === "cpu") {
+      const availableVramMib = Math.floor(Math.max(0, node?.ramAvailableGb ?? 0) * 1024);
+      return {
+        ...allocation,
+        kind: "cpu" as const,
+        estimatedVramMib: weightMib,
+        availableVramMib,
+        fits: weightMib <= availableVramMib,
+      };
+    }
+    const availableVramMib = Math.floor(Math.max(0, node?.gpu.vramAvailableGb ?? 0) * 1024);
     const estimatedVramMib = allocation.layers
       ? weightMib + kvMibPerLayer * allocation.layers + GPU_RUNTIME_ALLOWANCE_MIB
       : 0;
     return {
       ...allocation,
+      kind: "gpu" as const,
       estimatedVramMib,
       availableVramMib,
       fits: estimatedVramMib <= availableVramMib,
     };
   });
-  const cpuLayers = totalLayers - gpuLayers;
+  const cpuLayers = totalLayers - assignedLayers;
   return {
     totalLayers,
     gpuLayers,
@@ -61,18 +78,18 @@ export function distributeLayersByVram(
   nodes: NodeCapabilities[],
 ): ModelLoadConfig["gpuLayers"] {
   if (!nodes.length) return [];
-  const reservedPerNode = totalLayers >= nodes.length ? 1 : 0;
-  const distributable = Math.max(0, totalLayers - reservedPerNode * nodes.length);
-  const totalVram = nodes.reduce((total, node) => total + Math.max(0, node.gpu.vramAvailableGb), 0);
+  const capable = nodes.filter((node) => node.online && node.gpu.vramAvailableGb > 0);
+  if (!capable.length) return [];
+  const totalVram = capable.reduce(
+    (total, node) => total + Math.max(0, node.gpu.vramAvailableGb),
+    0,
+  );
   let assigned = 0;
-  return nodes.map((node, index) => {
+  return capable.map((node, index) => {
     const layers =
-      index === nodes.length - 1
+      index === capable.length - 1
         ? totalLayers - assigned
-        : totalVram > 0
-          ? reservedPerNode +
-            Math.floor((distributable * Math.max(0, node.gpu.vramAvailableGb)) / totalVram)
-          : reservedPerNode + Math.floor(distributable / nodes.length);
+        : Math.floor((totalLayers * Math.max(0, node.gpu.vramAvailableGb)) / totalVram);
     assigned += layers;
     return { nodeId: node.id, layers };
   });
@@ -83,7 +100,7 @@ export function fitLayersByVram(
   nodes: NodeCapabilities[],
 ): ModelLoadConfig["gpuLayers"] {
   if (!model.layerCount || !nodes.length) return [];
-  for (let gpuLayerCount = model.layerCount; gpuLayerCount >= nodes.length; gpuLayerCount -= 1) {
+  for (let gpuLayerCount = model.layerCount; gpuLayerCount >= 1; gpuLayerCount -= 1) {
     const gpuLayers = distributeLayersByVram(gpuLayerCount, nodes);
     const estimate = estimateModelSplitLocally(model, nodes, {
       contextSize: 4096,

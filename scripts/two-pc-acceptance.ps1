@@ -38,8 +38,8 @@ function Add-Check {
 }
 
 foreach ($rule in @(
-        @{ Name = 'SharedLocalLLM'; Protocol = 'TCP'; Port = $PeerPort },
-        @{ Name = 'SharedLocalLLM Discovery'; Protocol = 'UDP'; Port = $DiscoveryPort }
+        @{ Name = 'SharedLocalLLM Peer Backend'; Protocol = 'TCP'; Port = $PeerPort },
+        @{ Name = 'SharedLocalLLM Peer Discovery'; Protocol = 'UDP'; Port = $DiscoveryPort }
     )) {
     try {
         $firewall = Get-NetFirewallRule -DisplayName $rule.Name -ErrorAction Stop |
@@ -116,7 +116,10 @@ try {
     Add-Check "TCP reachability $PeerAddress`:$PeerPort" 'FAIL' $_.Exception.Message
 }
 
-$sidecars = @(Get-Process -Name 'ggml-rpc-server', 'llama-server' -ErrorAction SilentlyContinue)
+$sidecars = @(
+    Get-Process -Name 'sharedlocalllm-backend', 'ggml-rpc-server', 'llama-server' `
+        -ErrorAction SilentlyContinue
+)
 if ($sidecars.Count -eq 0) {
     Add-Check 'Loopback-only sidecars' 'SKIP' 'cluster not running - loopback check skipped'
 } else {
@@ -127,7 +130,9 @@ if ($sidecars.Count -eq 0) {
                 -ErrorAction SilentlyContinue)
         foreach ($connection in $owned) {
             $address = "$($connection.LocalAddress)"
-            if ($address -and $address -ne '127.0.0.1' -and $address -ne '::1') {
+            $isPeerListener = $process.ProcessName -eq 'sharedlocalllm-backend' -and `
+                $connection.LocalPort -eq $PeerPort
+            if (-not $isPeerListener -and $address -and $address -ne '127.0.0.1' -and $address -ne '::1') {
                 $violations += "$($process.ProcessName) pid $($process.Id) listens on $address`:$($connection.LocalPort)"
             }
         }

@@ -25,34 +25,25 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
-
       - uses: pnpm/action-setup@v6
         with:
           version: 11.21.0
-
       - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: pnpm
-
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
-
       - name: Check formatting
         run: pnpm format:check
-
       - name: Typecheck
         run: pnpm typecheck
-
       - name: Lint
         run: pnpm lint
-
       - name: Unit tests and coverage
         run: pnpm test:coverage
-
       - name: Production web build
         run: pnpm build
-
       - name: Upload coverage
         if: always()
         uses: actions/upload-artifact@v7
@@ -62,30 +53,54 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
-  rust:
-    name: Rust checks
+  python-backend:
+    name: Python backend checks
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install lightweight test dependencies
+        run: python -m pip install pytest psutil fastapi uvicorn httpx numpy
+      - name: Compile Python sources
+        run: python -m compileall -q backend/sharedlocalllm_backend
+      - name: Unit tests
+        shell: pwsh
+        run: |
+          $env:PYTHONPATH = "backend"
+          python -m pytest backend/tests
 
+  rust:
+    name: Thin Tauri shell checks
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
       - name: Install stable Rust
         uses: dtolnay/rust-toolchain@1.97.1
         with:
           targets: x86_64-pc-windows-msvc
           components: rustfmt, clippy
-
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
           cache-on-failure: true
-
+      # tauri.conf.json bundles ../backend/dist/sharedlocalllm-backend.exe and
+      # tauri-build refuses to run when that path is missing. Real builds get
+      # it from `pnpm backend:package`; the check job only needs the file to
+      # exist, so a stub keeps fmt/test/clippy runnable without PyInstaller.
+      - name: Stub the packaged backend resource
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path backend/dist | Out-Null
+          New-Item -ItemType File -Force -Path backend/dist/sharedlocalllm-backend.exe | Out-Null
       - name: Rust formatting
         run: cargo fmt --manifest-path src-tauri/Cargo.toml --all --check
-
       - name: Rust tests
         run: cargo test --manifest-path src-tauri/Cargo.toml --all-targets
-
       - name: Rust lint
         run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
 
@@ -95,25 +110,19 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
-
       - uses: pnpm/action-setup@v6
         with:
           version: 11.21.0
-
       - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: pnpm
-
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
-
       - name: Install Chromium
         run: pnpm exec playwright install chromium
-
       - name: Run browser workflows
         run: pnpm e2e
-
       - name: Upload Playwright report
         if: always()
         uses: actions/upload-artifact@v7
@@ -125,37 +134,37 @@ jobs:
 
   windows-installer:
     name: Unsigned Windows installer
-    needs: [frontend, rust, browser]
+    needs: [frontend, python-backend, rust, browser]
     runs-on: windows-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v7
-
       - uses: pnpm/action-setup@v6
         with:
           version: 11.21.0
-
       - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: pnpm
-
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install CUDA toolkit for llama-cpp-python packaging
+        uses: Jimver/cuda-toolkit@v0.2.35
+        with:
+          cuda: "13.2.0"
       - name: Install stable Rust
         uses: dtolnay/rust-toolchain@1.97.1
         with:
           targets: x86_64-pc-windows-msvc
-
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
           cache-on-failure: true
-
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
-
       - name: Build unsigned NSIS installer
         run: pnpm tauri build --bundles nsis
-
       - name: Write installer checksum
         shell: pwsh
         run: |
@@ -167,7 +176,6 @@ jobs:
             "$digest  $($_.Name)"
           }
           $lines | Set-Content -LiteralPath (Join-Path $bundlePath "SHA256SUMS.txt") -Encoding ascii
-
       - name: Upload installer
         uses: actions/upload-artifact@v7
         with:

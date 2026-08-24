@@ -1,102 +1,170 @@
 # Architecture
 
-SharedLocalLLM uses one Tauri application on both Windows computers. Roles are selected at runtime,
-not encoded in separate builds.
+SharedLocalLLM runs the same application on both Windows computers. Roles are selected at runtime.
+The desktop process is deliberately split into a small native shell and a Python control/inference
+backend.
 
 ## Components
 
-- **React renderer:** setup, nodes, models, network measurements, recommendations, chat, API setup,
-  and diagnostics. It receives typed events but cannot start arbitrary executables.
-- **Rust application core:** trusted identities, peer protocol, capability discovery, catalogue,
-  profile selection, process supervision, API proxy, and persistence.
-- **Runtime manager:** installs only a pinned official `llama.cpp` release whose archive size and
-  SHA-256 match the bundled manifest. A previous verified runtime remains available for rollback.
-- **Coordinator runtime:** `llama-server.exe` owns the selected model and connects to the local and
-  remote GPU devices using layer split.
-- **Worker runtime:** `ggml-rpc-server.exe` listens on an ephemeral loopback port. It is reachable
-  only through the Rust process's peer tunnel.
-- **Local API:** binds to `127.0.0.1`. Chat from the worker is proxied over the peer channel to the
-  computer that launched `llama-server`.
+### React renderer
 
-## Session lifecycle
+Owns setup, nodes, model selection, placement controls, network measurements, chat, API details, and
+diagnostics. Its existing `AppService` interface is preserved.
+
+### Thin Tauri/Rust shell
+
+Rust no longer owns inference or peer networking. It is responsible for:
+
+- starting and supervising the Python backend process;
+- bridging Tauri commands to the backend's loopback control endpoint;
+- Windows tray/window lifecycle;
+- Start-with-Windows registration;
+- folder selection and opening Windows Settings/log folders;
+- UAC and Windows Firewall rules for the Python-owned peer ports.
+
+The shell does not link `llama-cpp-4` or `llama-cpp-sys-4`.
+
+### Python backend
+
+`backend/sharedlocalllm_backend` owns:
+
+- persisted application state and migration from the previous Rust settings file;
+- hardware telemetry and GGUF/LM Studio discovery;
+- peer discovery, connection, heartbeat, network benchmark, and remote catalogue;
+- RPC forwarding over the peer TCP channel;
+- `llama-cpp-python` model loading and generation;
+- embedded llama.cpp RPC worker hosting through the native libraries shipped with llama-cpp-python;
+- inference benchmarks;
+- local OpenAI-compatible HTTP endpoints.
+
+The backend's internal control server binds `127.0.0.1:11436`. It is an implementation detail and is
+only called by the local Tauri shell.
+
+## Model catalogue: locality and deletion
+
+Discovery records every local GGUF with `isLocal: true`. When peer catalogues merge, the backend
+recomputes `isLocal` per model from location node IDs against the snapshot's `deviceId`: a model is
+local when at least one copy exists on this computer, even if the paired computer also holds a copy.
+Remote-only entries keep `remoteOnly: true` with `isLocal: false`.
+
+Deletion is renderer-initiated and deliberately narrow:
+
+- Right-clicking a catalogue row offers Copy ID, Open folder (native opener), and **Delete folder…**;
+  the delete entry only appears for `isLocal` models.
+- A confirmation modal shows the model name, containing folder, and size before anything happens.
+  The request is refused while the cluster is loading, running, or stopping, because llama.cpp may
+  hold the files open.
+- On confirm, the renderer calls Tauri's fs plugin `remove(folder, { recursive: true })` on exactly
+  the parent folder of the first local shard path. The capability file grants `fs:allow-remove`
+  scoped to `$HOME/**`; folders outside that scope surface a permission error instead of deleting.
+- After deletion the app refreshes discovery, so the entry disappears without any backend command
+  touching model paths. Nothing else in the application moves, renames, overwrites, or deletes model
+  files.
+
+## Distributed model load
 
 ```text
-unconnected -> connected -> measuring -> ready -> loading -> running -> draining -> stopped
-                                      |          |
-                                      +-> failed <-+
+Coordinator                                        Worker
+
+start_cluster
+    │
+    ├─ resolve model + node allocation
+    ├─ start loopback RpcForwarder
+    │       │
+    │       └──────── TCP 49158 / rpc_tunnel ──────────┐
+    │                                                   │
+    └─ Llama(                                           ▼
+         model_path=...,                        embedded ggml RPC server
+         n_gpu_layers=...,                             │
+         split_mode=LAYER,                             ▼
+         tensor_split=[remote, local],             worker CUDA GPU
+         rpc_servers="127.0.0.1:<forwarder>"
+       )
+         │
+         └─ local CUDA GPU
 ```
 
-One renewable coordinator lease prevents both peers from loading competing sessions. A role change
-first stops accepting work, drains active requests within a deadline, tears down managed processes,
-and then transfers the lease. A disconnected peer makes distributed generation fail with a clear
-error; single-node retry is offered only if the selected model fits.
+The raw RPC server and coordinator-side RPC forwarder both bind dynamically allocated loopback
+ports. Only the SharedLocalLLM peer listener is visible to the LAN.
 
-Child executables run in Windows Job Objects. Stopping the cluster or losing the supervising app
-terminates the process tree. Normal window close hides to the tray while a session is active.
+llama.cpp registers RPC devices before local CUDA devices. The Python inference layer therefore
+constructs `tensor_split` in remote-then-local order rather than assuming the UI order equals the
+native device order.
 
-## Peer protocol and trust
+## Peer protocol
 
-Discovery uses a small UDP announcement on local interfaces. Manual IPv4 entry reaches the same
-connect flow: a computer connects to the peer (discovered or by explicit IP) and exchanges a plain,
-versioned `Connect` handshake that carries each side's device identity and capabilities. Both sides
-then keep a peer record.
+UDP `49157` announces the app on each IPv4 interface. The broadcaster binds each usable interface
+before sending to its directed broadcast address, which lets a dedicated direct-Ethernet link be
+used even when Wi-Fi remains the default Internet route.
 
-All later peer traffic uses a plain, length-prefixed application protocol. One TCP listener on port
-`49158` multiplexes control messages, the bounded RPC byte tunnel, network tests, catalogue metadata,
-worker stop, and proxied chat. Incompatible protocol versions fail before launch with upgrade
-guidance. There is no pairing code and no application-layer encryption: this is a trusted-private-LAN
-design, not production-hardened peer identity or authorization.
+TCP `49158` carries newline-delimited JSON control requests. An `rpc_tunnel` request changes that
+connection into a raw bidirectional byte tunnel after a short ready response. Protocol version 5 is
+specific to the Python backend branch, so mixed Rust/Python peers fail explicitly instead of trying
+to interpret different framing.
 
-Security invariants:
+Connect is symmetric: the initiator sends its node capabilities and local model catalogue, and the
+receiver persists the initiator using the source IPv4 address. Both computers therefore have enough
+state to reconnect after a restart.
 
-- Raw RPC binds only to `127.0.0.1` and is never advertised, firewall-opened, or routed to the LAN.
-- Local API binds only to `127.0.0.1`; it requires a per-install bearer key.
-- The Windows network category (Public/Private/Domain) is informational only; the app operates
-  identically on all profiles, with a program-scoped firewall rule permitting only the
-  SharedLocalLLM executable on the peer ports.
-- API keys are DPAPI-protected, not stored in SQLite.
-- Logs redact secrets, prompts, image content, and personal path prefixes.
-- `llama-server` filesystem, shell, MCP, and agent tools stay disabled.
+## Inference concurrency
 
-These controls reduce exposure; they do not turn upstream experimental RPC into a safe service for
-untrusted networks. A direct RPC socket must be treated as a security defect.
+There is one `InferenceEngine` and one loaded `llama_cpp.Llama` instance per backend process.
+Operations are serialized with an asyncio lock and a native-thread lock. Blocking llama.cpp calls
+run off the event loop. The control API, OpenAI API, peer server, and inference coordinator all run
+on the same asyncio event loop so an asyncio primitive is never shared across event loops.
 
-SharedLocalLLM idempotently creates program-scoped Windows Firewall rules (Profile Any) for the
-peer ports: TCP `49158` and UDP `49157`. On startup it checks whether the rules exist; if they are
-missing and the process is not elevated, it relaunches itself with a UAC prompt so the rules can be
-created. Only the SharedLocalLLM executable is permitted by these rules; `ggml-rpc-server.exe` and
-`llama-server.exe` are never opened to the LAN.
+OpenAI SSE generation uses llama-cpp-python's streaming iterator on a worker thread and forwards
+chunks through an asyncio queue. The Tauri renderer currently receives the completed response via
+the generic command bridge; the public OpenAI endpoint streams tokens when this computer owns the
+model.
 
-## Model and inference data flow
+## Worker RPC lifecycle
 
-Each node indexes its own read-only sources. Peer catalogue metadata (names and locations) can be
-merged for display, but model bytes stay in place and launch requires a local GGUF. Split GGUF
-shards become one record; adjacent `mmproj` files are associated with eligible vision models. The
-computer that clicks Launch is the coordinator.
+The worker starts lazily on the first RPC tunnel request. Python loads the native libraries bundled
+with llama-cpp-python, locates the exported ggml backend registry/RPC symbols, enumerates accelerator
+devices, and calls `ggml_backend_rpc_start_server` on a daemon OS thread. The server is never bound
+to a LAN address.
 
-The recommendation engine performs these stages:
+The llama.cpp global backend is initialized exactly once. The code synchronizes that initialization
+with llama-cpp-python's high-level `Llama` class so later model loads do not initialize the same
+global backend twice.
 
-1. Reserve operating-system memory and a per-GPU safety margin.
-2. Determine whether each single node, combined VRAM, or combined GPU plus coordinator RAM can fit
-   the requested context.
-3. Build a layer-split seed proportional to usable VRAM.
-4. Benchmark valid single-node, seed, and nearby distributed profiles.
-5. Recommend the fastest valid result and retain the measurements with their complete cache key.
+## HTTP APIs
 
-`llama-bench` records warmup, three `pp512` and `tg128` repetitions, load time, peak resources, and
-the full redacted error on failure. Recommendations never assume a particular GPU model or promise
-a token rate before measurement.
+- `127.0.0.1:11436`: internal Tauri control bridge.
+- configured `127.0.0.1:11435` by default: bearer-protected OpenAI-compatible API.
 
-## State and compatibility
+The API port can be changed at runtime. The replacement port is checked before the current server is
+stopped, then Uvicorn is restarted on the same asyncio loop.
 
-JSON settings store non-secret preferences, peer records, and benchmark history. Chat stays in
-renderer memory for the session. Credentials are stored separately with DPAPI. Model directories
-remain untouched.
+## Persistence
 
-Cache keys include model fingerprint, both hardware identities, drivers, runtime version, requested
-context, and route/adapter identity. Any change invalidates the result. Peer messages and persisted
-records are schema-versioned; unsupported future versions are rejected rather than guessed.
+Python writes `%LOCALAPPDATA%\SharedLocalLLM\python-backend.json`. On first use it imports compatible
+fields from the previous `settings.json`, including install identity, device name, custom model
+folders, peer record, autostart preference, and benchmark history. The previous DPAPI API key is not
+read by Python; a new local bearer key is generated for this branch.
 
-The runtime manifest in `public/runtime` is part of the release trust root. Release engineering must
-pin exact upstream assets and hashes, verify expected archive entries, and exercise new executables
-before changing the active release.
+A successful `start_cluster` also records the model's normalized load configuration under
+`modelLoadConfigs`: context size, GPU layer split, remote-CPU offload, force flag, and the advanced
+options (flash attention, mmap, mlock, CPU threads, batch size). The snapshot exposes these entries
+and the renderer pre-fills the model inspector with them, so relaunching a model reuses the exact
+values that launched it previously. A failed load never replaces the saved entry, and temporary
+loads for inference benchmarks skip saving so they cannot overwrite the user's configuration.
+
+## Windows firewall
+
+The Python process owns the peer sockets, so old program-scoped rules for the Rust executable cannot
+be reused. The shell creates two new Profile-Any, port-scoped rules:
+
+- `SharedLocalLLM Peer Backend` — TCP 49158
+- `SharedLocalLLM Peer Discovery` — UDP 49157
+
+This avoids the Windows Public/Private profile distinction and works for direct Ethernet links.
+
+## Packaging
+
+Development uses `backend/.venv/Scripts/python.exe`. Production runs a PyInstaller executable that
+Tauri bundles as `backend/sharedlocalllm-backend.exe`. `llama-cpp-python` is built from source with
+CUDA, RPC, and shared native libraries enabled before packaging.
+
+The installed application therefore does not require a user-managed Python installation.

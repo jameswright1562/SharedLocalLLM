@@ -1,6 +1,11 @@
 coverage/
 dist/
 node_modules/
+backend/.pytest_cache/
+backend/.venv/
+backend/build/
+backend/dist/
+backend/*.egg-info/
 playwright-report/
 pnpm-lock.yaml
 src-tauri/target/

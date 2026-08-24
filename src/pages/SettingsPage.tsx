@@ -1,4 +1,23 @@
 import { useState } from "react";
+import type { ReactNode } from "react";
+import {
+  Badge,
+  Box,
+  Button,
+  Flex,
+  Group,
+  Paper,
+  Stack,
+  Switch,
+  Tabs,
+  Text,
+  TextInput,
+  ThemeIcon,
+  Title,
+} from "@mantine/core";
+import { IconFolder } from "@tabler/icons-react";
+
+import { StatusBanner } from "../components/StatusBanner";
 import { describeAppError } from "../services/errors";
 import type { PageProps } from "../types";
 
@@ -6,6 +25,7 @@ export function SettingsPage({ snapshot, service, refreshSnapshot }: PageProps) 
   const [tab, setTab] = useState<"general" | "runtime" | "sources" | "logs">("general");
   const [deviceName, setDeviceName] = useState(snapshot.deviceName);
   const [apiPort, setApiPort] = useState(snapshot.apiPort);
+  const [authRequired, setAuthRequired] = useState(snapshot.authRequired);
   const [autostart, setAutostart] = useState(snapshot.autostart);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
@@ -15,7 +35,12 @@ export function SettingsPage({ snapshot, service, refreshSnapshot }: PageProps) 
     setBusy(true);
     setMessage("");
     try {
-      await service.updateSettings({ deviceName: deviceName.trim(), apiPort, autostart });
+      await service.updateSettings({
+        deviceName: deviceName.trim(),
+        apiPort,
+        authRequired,
+        autostart,
+      });
       await refreshSnapshot();
       setMessage("Settings saved.");
     } catch (reason) {
@@ -80,204 +105,228 @@ export function SettingsPage({ snapshot, service, refreshSnapshot }: PageProps) 
     }
   }
 
-  const tabs = ["general", "runtime", "sources", "logs"] as const;
   return (
-    <div className="page">
-      <header className="page-header">
-        <p className="section-kicker">Application</p>
-        <h1>Settings & logs</h1>
-        <p>Runtime, local model sources, and diagnostics for this computer.</p>
-      </header>
-      <div className="settings-layout">
-        <nav className="settings-nav" role="tablist" aria-label="Settings sections">
-          {tabs.map((value) => (
-            <button
-              key={value}
-              id={`settings-tab-${value}`}
-              role="tab"
-              aria-selected={tab === value}
-              aria-controls={`settings-panel-${value}`}
-              className={tab === value ? "active" : ""}
-              onClick={() => setTab(value)}
+    <Box>
+      <Box mb="lg">
+        <Text size="xs" fw={700} tt="uppercase" lts={1.5} c="cyan">
+          Application
+        </Text>
+        <Title order={1}>Settings &amp; logs</Title>
+        <Text c="dimmed">Runtime, local model sources, and diagnostics for this computer.</Text>
+      </Box>
+
+      <Tabs value={tab} onChange={(value) => value && setTab(value as typeof tab)}>
+        <Tabs.List aria-label="Settings sections" mb="lg">
+          <Tabs.Tab value="general">General</Tabs.Tab>
+          <Tabs.Tab value="runtime">Runtime</Tabs.Tab>
+          <Tabs.Tab value="sources">Model sources</Tabs.Tab>
+          <Tabs.Tab value="logs">Logs</Tabs.Tab>
+        </Tabs.List>
+
+        <Tabs.Panel value="general">
+          <Stack gap="lg">
+            <Title order={3}>General</Title>
+            <SettingsRow title="Device name" description="Shown to the paired computer.">
+              <TextInput
+                aria-label="Device name"
+                maxLength={80}
+                w={280}
+                value={deviceName}
+                onChange={(event) => setDeviceName(event.target.value)}
+              />
+            </SettingsRow>
+            <SettingsRow
+              title="Local API port"
+              description="Loopback only. SharedLocalLLM will not silently choose a new port."
             >
-              {value === "sources"
-                ? "Model sources"
-                : value === "runtime"
-                  ? "Runtime"
-                  : `${value[0]!.toUpperCase()}${value.slice(1)}`}
-            </button>
-          ))}
-        </nav>
-        <section
-          className="settings-content"
-          id={`settings-panel-${tab}`}
-          role="tabpanel"
-          aria-labelledby={`settings-tab-${tab}`}
-        >
-          {tab === "general" && (
-            <>
-              <h2>General</h2>
-              <div className="settings-row">
-                <div>
-                  <strong>Device name</strong>
-                  <p>Shown to the paired computer.</p>
-                </div>
-                <input
-                  aria-label="Device name"
-                  maxLength={80}
-                  value={deviceName}
-                  onChange={(event) => setDeviceName(event.target.value)}
-                />
+              <TextInput
+                aria-label="Local API port"
+                type="number"
+                min={1024}
+                max={65535}
+                w={130}
+                value={apiPort}
+                onChange={(event) => setApiPort(Number(event.target.value))}
+              />
+            </SettingsRow>
+            <SettingsRow
+              title="Require API key"
+              description="When off, local tools can call the loopback API without the bearer key."
+            >
+              <Switch
+                role="switch"
+                aria-label="Require API key"
+                aria-checked={authRequired}
+                checked={authRequired}
+                onChange={(event) => setAuthRequired(event.currentTarget.checked)}
+              />
+            </SettingsRow>
+            <SettingsRow title="Start with Windows" description="Launch to the notification area.">
+              <Switch
+                role="switch"
+                aria-label="Start with Windows"
+                aria-checked={autostart}
+                checked={autostart}
+                onChange={(event) => setAutostart(event.currentTarget.checked)}
+              />
+            </SettingsRow>
+            <Group>
+              <Button
+                disabled={
+                  busy ||
+                  !deviceName.trim() ||
+                  deviceName.trim().length > 80 ||
+                  apiPort < 1024 ||
+                  apiPort > 65535
+                }
+                onClick={() => void saveSettings()}
+              >
+                {busy ? "Saving…" : "Save changes"}
+              </Button>
+            </Group>
+          </Stack>
+        </Tabs.Panel>
+
+        <Tabs.Panel value="runtime">
+          <Stack gap="lg">
+            <Title order={3}>Runtime</Title>
+            <Text c="dimmed" maw={620}>
+              Install or repair the pinned llama.cpp CUDA runtime. Failed downloads are never
+              activated.
+            </Text>
+            <SettingsRow
+              title="llama.cpp runtime"
+              description={
+                snapshot.runtime.error ||
+                runtimeProgress ||
+                "Verified backend used by this computer."
+              }
+            >
+              <Badge color={snapshot.runtime.status === "ready" ? "mint" : "gray"} variant="light">
+                {snapshot.runtime.version ?? snapshot.runtime.status}
+              </Badge>
+            </SettingsRow>
+            <Group>
+              <Button disabled={busy} onClick={() => void installRuntime()}>
+                {busy
+                  ? "Installing…"
+                  : snapshot.runtime.status === "ready"
+                    ? "Repair runtime"
+                    : "Install runtime"}
+              </Button>
+            </Group>
+          </Stack>
+        </Tabs.Panel>
+
+        <Tabs.Panel value="sources">
+          <Stack gap="md">
+            <Flex justify="space-between" align="flex-end" gap="md" wrap="wrap">
+              <div>
+                <Title order={3}>Model sources</Title>
+                <Text size="sm" c="dimmed">
+                  Directories are read-only and configured per computer.
+                </Text>
               </div>
-              <div className="settings-row">
-                <div>
-                  <strong>Local API port</strong>
-                  <p>Loopback only. SharedLocalLLM will not silently choose a new port.</p>
-                </div>
-                <input
-                  aria-label="Local API port"
-                  className="narrow-input"
-                  type="number"
-                  min={1024}
-                  max={65535}
-                  value={apiPort}
-                  onChange={(event) => setApiPort(Number(event.target.value))}
-                />
-              </div>
-              <div className="settings-row">
-                <div>
-                  <strong>Start with Windows</strong>
-                  <p>Launch to the notification area.</p>
-                </div>
-                <button
-                  role="switch"
-                  aria-label="Start with Windows"
-                  aria-checked={autostart}
-                  className="switch"
-                  onClick={() => setAutostart(!autostart)}
-                >
-                  <span />
-                </button>
-              </div>
-              <div className="button-row">
-                <button
-                  className="button primary"
-                  disabled={
-                    busy ||
-                    !deviceName.trim() ||
-                    deviceName.trim().length > 80 ||
-                    apiPort < 1024 ||
-                    apiPort > 65535
-                  }
-                  onClick={() => void saveSettings()}
-                >
-                  {busy ? "Saving…" : "Save changes"}
-                </button>
-              </div>
-            </>
-          )}
-          {tab === "runtime" && (
-            <>
-              <h2>Runtime</h2>
-              <p>
-                Install or repair the pinned llama.cpp CUDA runtime. Failed downloads are never
-                activated.
-              </p>
-              <div className="settings-row">
-                <div>
-                  <strong>llama.cpp runtime</strong>
-                  <p>
-                    {snapshot.runtime.error ||
-                      runtimeProgress ||
-                      "Verified backend used by this computer."}
-                  </p>
-                </div>
-                <span
-                  className={`status-pill ${snapshot.runtime.status === "ready" ? "online" : "offline"}`}
-                >
-                  <i aria-hidden="true" />
-                  {snapshot.runtime.version ?? snapshot.runtime.status}
-                </span>
-              </div>
-              <div className="button-row">
-                <button
-                  className="button primary"
-                  disabled={busy}
-                  onClick={() => void installRuntime()}
-                >
-                  {busy
-                    ? "Installing…"
-                    : snapshot.runtime.status === "ready"
-                      ? "Repair runtime"
-                      : "Install runtime"}
-                </button>
-              </div>
-            </>
-          )}
-          {tab === "sources" && (
-            <>
-              <div className="section-title">
-                <div>
-                  <h2>Model sources</h2>
-                  <p>Directories are read-only and configured per computer.</p>
-                </div>
-                <button className="button primary" disabled={busy} onClick={() => void addFolder()}>
-                  Add folder
-                </button>
-              </div>
-              <div className="directory-list">
-                {snapshot.modelDirectories.map((directory) => (
-                  <div key={directory.id}>
-                    <span className="source-glyph">
-                      {directory.source === "lm-studio" ? "LM" : "＋"}
-                    </span>
-                    <div>
-                      <strong>{directory.path}</strong>
-                      <small>
+              <Button disabled={busy} onClick={() => void addFolder()}>
+                Add folder
+              </Button>
+            </Flex>
+            <Stack gap="xs">
+              {snapshot.modelDirectories.map((directory) => (
+                <Paper key={directory.id} p="sm" bg="dark.8" withBorder>
+                  <Flex align="center" gap="sm" wrap="wrap">
+                    <ThemeIcon variant="light" color="cyan">
+                      {directory.source === "lm-studio" ? (
+                        <Text size="10px" ff="monospace" fw={700}>
+                          LM
+                        </Text>
+                      ) : (
+                        <IconFolder size={15} />
+                      )}
+                    </ThemeIcon>
+                    <Box style={{ flex: 1, minWidth: 200 }}>
+                      <Text size="sm" fw={600}>
+                        {directory.path}
+                      </Text>
+                      <Text size="xs" c="dimmed">
                         {directory.source === "lm-studio"
                           ? "LM Studio · automatic"
                           : "Custom folder"}
-                      </small>
-                    </div>
+                      </Text>
+                    </Box>
                     {directory.source === "custom" && (
-                      <button
-                        className="text-button danger-text"
+                      <Button
+                        variant="subtle"
+                        color="coral"
+                        size="compact-sm"
                         disabled={busy}
                         onClick={() => void removeFolder(directory.id)}
                       >
                         Remove
-                      </button>
+                      </Button>
                     )}
-                  </div>
-                ))}
+                  </Flex>
+                </Paper>
+              ))}
+            </Stack>
+          </Stack>
+        </Tabs.Panel>
+
+        <Tabs.Panel value="logs">
+          <Stack gap="md">
+            <Flex justify="space-between" align="flex-end" gap="md" wrap="wrap">
+              <div>
+                <Title order={3}>Live logs</Title>
+                <Text size="sm" c="dimmed">
+                  Secrets, prompt text, and personal path prefixes are redacted.
+                </Text>
               </div>
-            </>
-          )}
-          {tab === "logs" && (
-            <>
-              <div className="section-title">
-                <div>
-                  <h2>Live logs</h2>
-                  <p>Secrets, prompt text, and personal path prefixes are redacted.</p>
-                </div>
-                <button className="button secondary" onClick={() => void openLogs()}>
-                  Open logs folder
-                </button>
-              </div>
-              <pre className="log-viewer" aria-label="Application logs">
-                {snapshot.logs.length
-                  ? snapshot.logs.join("\n")
-                  : "No log entries in this session."}
-              </pre>
-            </>
-          )}
-        </section>
-      </div>
-      {message && (
-        <div className="toast-message" role="status">
-          {message}
-        </div>
-      )}
-    </div>
+              <Button variant="default" onClick={() => void openLogs()}>
+                Open logs folder
+              </Button>
+            </Flex>
+            <Paper
+              component="pre"
+              className="log-viewer"
+              aria-label="Application logs"
+              withBorder
+              p="md"
+              fz="xs"
+              style={{
+                fontFamily: "var(--mantine-font-family-monospace)",
+                margin: 0,
+                whiteSpace: "pre-wrap",
+              }}
+            >
+              {snapshot.logs.length ? snapshot.logs.join("\n") : "No log entries in this session."}
+            </Paper>
+          </Stack>
+        </Tabs.Panel>
+      </Tabs>
+
+      {message && <StatusBanner message={message} />}
+    </Box>
+  );
+}
+
+function SettingsRow({
+  title,
+  description,
+  children,
+}: {
+  title: string;
+  description: string;
+  children: ReactNode;
+}) {
+  return (
+    <Flex justify="space-between" align="center" gap="xl" wrap="wrap">
+      <Box maw={420}>
+        <Text fw={600}>{title}</Text>
+        <Text size="sm" c="dimmed">
+          {description}
+        </Text>
+      </Box>
+      {children}
+    </Flex>
   );
 }

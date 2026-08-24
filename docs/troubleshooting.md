@@ -91,7 +91,7 @@ manually. Check **Settings > Logs** for `peer_listener_ready`, `peer_connected`,
 
 ## Firewall or connection failure
 
-SharedLocalLLM checks for its program-scoped Windows Firewall rules on startup. If they are missing
+SharedLocalLLM checks for its port-scoped Windows Firewall rules on startup. If they are missing
 and the app is not already elevated, it relaunches itself with a UAC prompt and creates the rules for
 TCP `49158` and UDP `49157` across all network profiles (Profile Any). No network-profile change is
 needed. Do not create a broad port rule manually.
@@ -206,7 +206,21 @@ lms ls --json --detailed
 lms ls --json --detailed
 ```
 
-SharedLocalLLM never moves, renames, deletes, or downloads into a configured model folder.
+SharedLocalLLM never moves, renames, or downloads into a configured model folder. The only
+operation that deletes files is the explicit **Delete folder…** action in the Models catalogue,
+which requires your confirmation and removes exactly that model's containing folder.
+
+## Deleting a model folder fails or does nothing
+
+1. **"Stop the running cluster before deleting model files."** A loaded model keeps its GGUF files
+   open. Stop the cluster from the Models page header, then delete again.
+2. **No Delete folder… entry on right-click.** The model is stored only on the other computer
+   (`isLocal: false`). Deletion must be done from the computer that holds the files.
+3. **Permission error and the folder remains.** Deletion is restricted to paths under your user
+   profile (`%USERPROFILE%`). Move the folder inside your profile, add its parent through
+   **Add folder**, and retry.
+4. After a successful deletion the catalogue refreshes automatically; if the entry lingers, click
+   **Refresh** to re-index.
 
 ## LM Studio is already using VRAM
 
@@ -283,6 +297,9 @@ After selecting another port, regenerate client examples from the API page. Keep
 - Keep CPU/RAM spill enabled only when needed; it can sharply reduce generation speed.
 - Re-run the benchmark after a driver/runtime/model/network change. Old results should be invalidated
   automatically.
+- The model inspector restores each model's last successful launch settings. If the hardware changed
+  since then (driver update, another app holding VRAM), the remembered split may no longer fit;
+  reduce context or layers, or enable force launch. Every successful launch saves its values again.
 
 If benchmarking fails, expand the failed row. It should show the redacted executable error and profile
 rather than omitting the result. Export diagnostics if that information is absent.

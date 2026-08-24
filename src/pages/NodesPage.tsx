@@ -1,8 +1,23 @@
 import { useState } from "react";
+import {
+  Alert,
+  Box,
+  Button,
+  Card,
+  DataList,
+  Flex,
+  Group,
+  Paper,
+  Stack,
+  Text,
+  Title,
+} from "@mantine/core";
+
 import { PairingPanel } from "../components/PairingPanel";
+import { StatusBanner } from "../components/StatusBanner";
+import { StatusPill } from "../components/Telemetry";
 import { describeAppError } from "../services/errors";
 import type { PageProps } from "../types";
-import { StatusPill } from "../components/Telemetry";
 import { formatGb } from "./pageFormat";
 
 export function NodesPage({ snapshot, service, refreshSnapshot }: PageProps) {
@@ -51,121 +66,128 @@ export function NodesPage({ snapshot, service, refreshSnapshot }: PageProps) {
     }
   }
   return (
-    <div className="page">
-      <header className="page-header split-header">
-        <div>
-          <p className="section-kicker">Inventory</p>
-          <h1>Node capabilities</h1>
-          <p>Hardware and availability reported by each trusted computer.</p>
-        </div>
-        <button className="button secondary" disabled={refreshing} onClick={() => void refresh()}>
+    <Box>
+      <Flex justify="space-between" align="flex-start" gap="md" wrap="wrap" mb="lg">
+        <Box>
+          <Text size="xs" fw={700} tt="uppercase" lts={1.5} c="cyan">
+            Inventory
+          </Text>
+          <Title order={1}>Node capabilities</Title>
+          <Text c="dimmed">Hardware and availability reported by each trusted computer.</Text>
+        </Box>
+        <Button variant="default" disabled={refreshing} onClick={() => void refresh()}>
           {refreshing ? "Refreshing…" : "Refresh hardware"}
-        </button>
-      </header>
-      <div className="detail-node-list">
+        </Button>
+      </Flex>
+
+      <Stack gap="md">
         {snapshot.nodes.map((node, index) => (
-          <article className="detail-node" key={node.id}>
-            <div className="node-ordinal">NODE {String(index + 1).padStart(2, "0")}</div>
-            <header>
-              <div>
-                <h2>{node.name}</h2>
-                <p>
+          <Card key={node.id} withBorder p="lg" component="article">
+            <Text size="10px" ff="monospace" c="dimmed" tt="uppercase" lts={2} mb={4}>
+              Node {String(index + 1).padStart(2, "0")}
+            </Text>
+            <Group justify="space-between" wrap="nowrap" mb="sm">
+              <Box>
+                <Title order={3}>{node.name}</Title>
+                <Text size="sm" c="dimmed">
                   {node.role} · {node.cpu}
-                </p>
-              </div>
+                </Text>
+              </Box>
               <StatusPill online={node.online}>{node.online ? "Reachable" : "Offline"}</StatusPill>
-            </header>
-            <dl className="spec-grid">
-              <div>
-                <dt>Graphics processor</dt>
-                <dd>{node.gpu.name}</dd>
-              </div>
-              <div>
-                <dt>GPU memory</dt>
-                <dd>
+            </Group>
+            <DataList size="sm" mb="md" labelWidth={150}>
+              <DataList.Item>
+                <DataList.ItemLabel>Graphics processor</DataList.ItemLabel>
+                <DataList.ItemValue>{node.gpu.name}</DataList.ItemValue>
+              </DataList.Item>
+              <DataList.Item>
+                <DataList.ItemLabel>GPU memory</DataList.ItemLabel>
+                <DataList.ItemValue>
                   {formatGb(node.gpu.vramAvailableGb)} free / {formatGb(node.gpu.vramTotalGb)}
-                </dd>
-              </div>
-              <div>
-                <dt>System memory</dt>
-                <dd>
+                </DataList.ItemValue>
+              </DataList.Item>
+              <DataList.Item>
+                <DataList.ItemLabel>System memory</DataList.ItemLabel>
+                <DataList.ItemValue>
                   {formatGb(node.ramAvailableGb)} free / {formatGb(node.ramTotalGb)}
-                </dd>
-              </div>
-              <div>
-                <dt>Network path</dt>
-                <dd>
+                </DataList.ItemValue>
+              </DataList.Item>
+              <DataList.Item>
+                <DataList.ItemLabel>Network path</DataList.ItemLabel>
+                <DataList.ItemValue>
                   {node.adapter.name}
                   {node.adapter.linkSpeedMbps ? ` · ${node.adapter.linkSpeedMbps} Mbit/s` : ""}
-                </dd>
-              </div>
-            </dl>
+                </DataList.ItemValue>
+              </DataList.Item>
+            </DataList>
             {index > 0 && !confirmingReset && (
-              <button
-                className="text-button danger-text"
+              <Button
+                variant="subtle"
+                color="coral"
+                size="compact-sm"
                 disabled={refreshing}
                 onClick={() => setConfirmingReset(true)}
               >
                 Forget {node.name}
-              </button>
+              </Button>
             )}
             {index > 0 && confirmingReset && (
-              <div className="error-panel" role="alert">
-                <div>
-                  <strong>Forget {node.name}?</strong>
-                  <p>
+              <Alert role="alert" variant="light" color="coral" title={`Forget ${node.name}?`}>
+                <Stack gap="sm">
+                  <Text size="sm">
                     Trust and connection settings will reset. Model files and folders stay
                     untouched.
-                  </p>
-                  <div className="button-row">
-                    <button
-                      className="button secondary"
+                  </Text>
+                  <Group gap="sm">
+                    <Button
+                      variant="default"
+                      size="xs"
                       disabled={refreshing}
                       onClick={() => setConfirmingReset(false)}
                     >
                       Keep node
-                    </button>
-                    <button
-                      className="button stop-button"
+                    </Button>
+                    <Button
+                      color="coral"
+                      size="xs"
                       aria-label={`Confirm forget ${node.name}`}
                       disabled={refreshing}
                       onClick={() => void resetPairing()}
                     >
                       {refreshing ? "Forgetting…" : `Forget ${node.name}`}
-                    </button>
-                  </div>
-                </div>
-              </div>
+                    </Button>
+                  </Group>
+                </Stack>
+              </Alert>
             )}
-          </article>
+          </Card>
         ))}
         {snapshot.nodes.length < 2 && (
-          <div className="empty-state compact">
-            <span>02</span>
-            <div>
-              <h2>No worker connected</h2>
-              <p>
-                The local node can still run models that fit. Enter a peer IP or let discovery find
-                the other computer.
-              </p>
-            </div>
-          </div>
+          <>
+            <Paper withBorder p="lg">
+              <Stack gap={4}>
+                <Text size="24px" ff="monospace" c="dimmed" fw={600}>
+                  02
+                </Text>
+                <Title order={3}>No worker connected</Title>
+                <Text c="dimmed">
+                  The local node can still run models that fit. Enter a peer IP or let discovery
+                  find the other computer.
+                </Text>
+              </Stack>
+            </Paper>
+            <PairingPanel
+              manualEndpoint={manualEndpoint}
+              setManualEndpoint={setManualEndpoint}
+              pairedNode={null}
+              busy={refreshing}
+              connect={() => void connect()}
+            />
+          </>
         )}
-        {snapshot.nodes.length < 2 && (
-          <PairingPanel
-            manualEndpoint={manualEndpoint}
-            setManualEndpoint={setManualEndpoint}
-            pairedNode={null}
-            busy={refreshing}
-            connect={() => void connect()}
-          />
-        )}
-      </div>
-      {message && (
-        <div className="toast-message" role="status">
-          {message}
-        </div>
-      )}
-    </div>
+      </Stack>
+
+      {message && <StatusBanner message={message} />}
+    </Box>
   );
 }

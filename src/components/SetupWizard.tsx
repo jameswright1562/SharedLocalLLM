@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { Alert, Box, Flex, Group, Progress, Stepper, Text, Title } from "@mantine/core";
 
 import { describeAppError } from "../services/errors";
 import type { AppService, AppSnapshot, NetworkBenchmark, NodeCapabilities } from "../types";
@@ -145,60 +146,83 @@ export function SetupWizard({ snapshot, service, onComplete }: SetupWizardProps)
   }
 
   return (
-    <div className="setup-shell">
-      <aside className="setup-rail" aria-label="Setup progress">
-        <div className="brand-mark" aria-hidden="true">
-          <span />
-          <span />
-        </div>
-        <p className="eyebrow">SharedLocalLLM</p>
-        <h1>Build your compute link.</h1>
-        <p>
+    <Flex mih="100vh" direction={{ base: "column", md: "row" }}>
+      <Box
+        component="aside"
+        aria-label="Setup progress"
+        w={{ base: "100%", md: 340 }}
+        p="xl"
+        bg="dark.8"
+        style={{ borderRight: "1px solid var(--mantine-color-dark-4)" }}
+      >
+        <Group gap="sm" mb="lg">
+          <div className="brand-mark" aria-hidden="true">
+            <span />
+            <span />
+          </div>
+          <Text size="xs" fw={700} tt="uppercase" lts={2} c="cyan">
+            SharedLocalLLM
+          </Text>
+        </Group>
+        <Title order={1} lh={1}>
+          Build your compute link.
+        </Title>
+        <Text c="dimmed" mt="sm" mb="xl">
           Connect two trusted Windows computers, inspect the link, then load one model across the
           memory they can safely share.
-        </p>
-        <ol>
-          {steps.map((label, index) => (
-            <li key={label} className={index === step ? "current" : index < step ? "complete" : ""}>
-              <span>{index < step ? "✓" : String(index + 1).padStart(2, "0")}</span>
-              {label}
-            </li>
+        </Text>
+        <Stepper
+          orientation="vertical"
+          active={step}
+          color="cyan"
+          size="sm"
+          allowNextStepsSelect={false}
+          iconSize={30}
+        >
+          {steps.map((label) => (
+            <Stepper.Step key={label} label={label} />
           ))}
-        </ol>
-        <div className="setup-progress" aria-hidden="true">
-          <span style={{ width: `${progress}%` }} />
-        </div>
-      </aside>
-      <main className="setup-panel">
-        <div className="setup-step-count">
-          Step {step + 1} of {steps.length}
-        </div>
-        <SetupStepContent
-          step={step}
-          snapshot={liveSnapshot}
-          service={service}
-          deviceName={deviceName}
-          setDeviceName={setDeviceName}
-          manualEndpoint={manualEndpoint}
-          setManualEndpoint={setManualEndpoint}
-          pairedNode={pairedNode}
-          network={network}
-          busy={busy}
-          runtimeProgress={runtimeProgress}
-          installRuntime={installRuntime}
-          checkAgain={checkAgain}
-          connect={connect}
-          addFolder={addFolder}
-          testNetwork={testNetwork}
-          setStep={setStep}
-          finish={finish}
-        />
-        {error && (
-          <div className="form-error" role="alert">
-            <p>{error}</p>
-          </div>
-        )}
-      </main>
-    </div>
+        </Stepper>
+        <Progress value={progress} mt="xl" color="cyan" size="sm" radius="xs" aria-hidden />
+      </Box>
+      <Flex
+        component="main"
+        justify="center"
+        align="flex-start"
+        p={{ base: "md", md: "xl" }}
+        style={{ flex: 1 }}
+      >
+        <Box w={640} maw="100%">
+          <Text size="xs" tt="uppercase" lts={2} c="dimmed" mb="xs">
+            Step {step + 1} of {steps.length}
+          </Text>
+          <SetupStepContent
+            step={step}
+            snapshot={liveSnapshot}
+            service={service}
+            deviceName={deviceName}
+            setDeviceName={setDeviceName}
+            manualEndpoint={manualEndpoint}
+            setManualEndpoint={setManualEndpoint}
+            pairedNode={pairedNode}
+            network={network}
+            busy={busy}
+            runtimeProgress={runtimeProgress}
+            installRuntime={installRuntime}
+            checkAgain={checkAgain}
+            connect={connect}
+            addFolder={addFolder}
+            testNetwork={testNetwork}
+            setStep={setStep}
+            finish={finish}
+          />
+          {error && (
+            <Alert role="alert" variant="light" color="coral" mt="md">
+              {error}
+            </Alert>
+          )}
+        </Box>
+      </Flex>
+    </Flex>
   );
 }

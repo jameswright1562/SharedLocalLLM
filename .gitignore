@@ -9,6 +9,16 @@ src-tauri/target/
 src-tauri/target-package/
 src-tauri/gen/
 
+# Python backend
+backend/.venv/
+backend/build/
+backend/dist/
+backend/*.spec
+backend/**/__pycache__/
+backend/.pytest_cache/
+backend/.pytest-tmp/
+backend/*.egg-info/
+
 # Tests
 playwright-report/
 test-results/
@@ -27,6 +37,8 @@ Thumbs.db
 .runtime/
 diagnostics/
 runtime-downloads/
+# Installed pinned llama-server binaries (pnpm backend:install:llama-server)
+backend/runtime/
 
 graphify-out/
 

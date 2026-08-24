@@ -16,7 +16,10 @@ documentation.
 
 - Do not hardcode or optimize for the user's example GPU/RAM specifications. Detect capabilities.
 - Support optional LM Studio discovery and arbitrary user-selected read-only model directories.
-- Keep model files in place. Never move, rename, overwrite, or delete them.
+- Keep model files in place. Never move, rename, overwrite, or implicitly delete them. The single
+  permitted deletion is the explicit user-initiated **Delete folder…** action in the Models
+  catalogue (confirmation modal, local `isLocal` models only, blocked while a cluster is running);
+  it removes exactly the selected model's containing folder via scoped Tauri fs permissions.
 - Raw `llama.cpp` RPC must bind to loopback only and must never be exposed to the LAN.
 - The inference API must bind to loopback only and require a per-install bearer key.
 - Peer traffic uses a plain TCP tunnel over a trusted private LAN (no pairing code and no

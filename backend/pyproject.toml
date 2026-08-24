@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=75", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sharedlocalllm-backend"
+version = "0.2.0"
+description = "Python control, networking, and llama.cpp backend for SharedLocalLLM"
+requires-python = ">=3.12"
+dependencies = [
+  "fastapi>=0.116,<1",
+  "uvicorn>=0.35,<1",
+  "psutil>=7,<8",
+  "llama-cpp-python==0.3.35",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.4,<9",
+  "httpx>=0.28,<1",
+  "pyinstaller>=6.15,<7",
+  "pyright==1.1.411",
+]
+
+[project.scripts]
+sharedlocalllm-backend = "sharedlocalllm_backend.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["sharedlocalllm_backend*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

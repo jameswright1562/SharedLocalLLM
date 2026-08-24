@@ -1,4 +1,16 @@
 import type { FormEvent, KeyboardEvent } from "react";
+import {
+  ActionIcon,
+  Box,
+  Button,
+  Flex,
+  Group,
+  Pill,
+  Text,
+  Textarea,
+  VisuallyHidden,
+} from "@mantine/core";
+import { IconPaperclip } from "@tabler/icons-react";
 
 interface ChatComposerProps {
   draft: string;
@@ -36,29 +48,40 @@ export function ChatComposer({
   }
 
   return (
-    <form className="chat-composer" data-testid="chat-composer" onSubmit={onSubmit}>
+    <Box
+      component="form"
+      data-testid="chat-composer"
+      onSubmit={onSubmit}
+      mt="md"
+      p="md"
+      style={{
+        borderRadius: "var(--mantine-radius-xs)",
+        border: "1px solid var(--mantine-color-dark-4)",
+        background: "var(--mantine-color-dark-8)",
+      }}
+    >
       {allowImages && (
-        <p className="estimate-note">
+        <Text size="xs" c="dimmed" mb={4}>
           Image attach is experimental and only sent to vision models.
-        </p>
+        </Text>
       )}
       {images.length > 0 && (
-        <div className="composer-attachments">
+        <Flex gap="xs" wrap="wrap" mb="sm">
           {images.map((image) => (
-            <span className="attachment-chip" key={image.name}>
+            <Pill
+              key={image.name}
+              withRemoveButton
+              removeButtonProps={{
+                "aria-label": `Remove ${image.name}`,
+                onClick: () => setImages(images.filter((item) => item !== image)),
+              }}
+            >
               {image.name}
-              <button
-                type="button"
-                aria-label={`Remove ${image.name}`}
-                onClick={() => setImages(images.filter((item) => item !== image))}
-              >
-                ×
-              </button>
-            </span>
+            </Pill>
           ))}
-        </div>
+        </Flex>
       )}
-      <textarea
+      <Textarea
         aria-label="Message"
         placeholder={disabledReason || "Ask the loaded model…"}
         value={draft}
@@ -66,52 +89,58 @@ export function ChatComposer({
         onKeyDown={onKeyDown}
         disabled={!!disabledReason}
         rows={2}
+        variant="unstyled"
+        mb="sm"
       />
-      <div className="composer-actions">
-        {allowImages && (
-          <button
-            type="button"
-            className={`icon-button attach-button ${disabledReason ? "disabled" : ""}`}
-            aria-label="Choose image files"
-            disabled={!!disabledReason}
-            onClick={() => document.getElementById("chat-image-input")?.click()}
-          >
-            ▧
-          </button>
-        )}
-        <input
-          id="chat-image-input"
-          className="visually-hidden"
-          aria-label="Attach image"
-          type="file"
-          accept="image/png,image/jpeg,image/webp"
-          multiple
-          disabled={!!disabledReason || !allowImages}
-          onChange={(event) => {
-            setImages([...images, ...Array.from(event.target.files ?? [])]);
-            event.target.value = "";
-          }}
-        />
-        <span>
-          {images.length
-            ? `${images.length} image${images.length === 1 ? "" : "s"}`
-            : "Enter to send · Shift+Enter for new line"}
-        </span>
+      <Group justify="space-between" wrap="nowrap">
+        <Group gap="sm" wrap="nowrap">
+          {allowImages && (
+            <>
+              <ActionIcon
+                variant="default"
+                size="lg"
+                aria-label="Choose image files"
+                disabled={!!disabledReason}
+                onClick={() => document.getElementById("chat-image-input")?.click()}
+              >
+                <IconPaperclip size={16} />
+              </ActionIcon>
+              <VisuallyHidden>
+                <input
+                  id="chat-image-input"
+                  aria-label="Attach image"
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp"
+                  multiple
+                  disabled={!!disabledReason || !allowImages}
+                  onChange={(event) => {
+                    setImages([...images, ...Array.from(event.target.files ?? [])]);
+                    event.target.value = "";
+                  }}
+                />
+              </VisuallyHidden>
+            </>
+          )}
+          <Text size="xs" c="dimmed">
+            {images.length
+              ? `${images.length} image${images.length === 1 ? "" : "s"}`
+              : "Enter to send · Shift+Enter for new line"}
+          </Text>
+        </Group>
         {generating ? (
-          <button type="button" className="button stop-button" onClick={stop}>
+          <Button color="coral" type="button" onClick={stop}>
             ■ Stop
-          </button>
+          </Button>
         ) : (
-          <button
+          <Button
             type="submit"
-            className="button primary"
             disabled={!!disabledReason || !draft.trim()}
             aria-label="Send message"
           >
             Send ↗
-          </button>
+          </Button>
         )}
-      </div>
-    </form>
+      </Group>
+    </Box>
   );
 }

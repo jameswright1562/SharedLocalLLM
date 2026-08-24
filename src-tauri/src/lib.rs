@@ -1,20 +1,9 @@
 pub mod autostart;
-pub mod capacity;
-pub mod commands;
+mod backend;
 pub mod firewall;
-pub mod gguf;
-pub mod hardware;
-pub mod inference;
-pub mod models;
-pub mod network;
-pub mod pairing;
-pub mod peer;
-pub mod runtime;
-pub mod secrets;
-pub mod state;
 pub mod types;
 
-use state::AppState;
+use backend::BackendProcess;
 use tauri::{
     menu::{Menu, MenuItem},
     tray::TrayIconBuilder,
@@ -24,52 +13,35 @@ use tauri::{
 pub fn run() {
     crate::firewall::ensure_firewall_elevation();
     tauri::Builder::default()
-        .manage(AppState::new())
+        .plugin(tauri_plugin_fs::init())
+        .plugin(tauri_plugin_opener::init())
+        .manage(BackendProcess::default())
         .setup(|app| {
-            inference::rpc_worker::start_rpc_worker().map_err(|error| error.to_string())?;
-            let handle = app.handle().clone();
-            tauri::async_runtime::spawn(async move {
-                commands::pairing::lifecycle::start_persistent_peer_service(handle).await;
-            });
+            app.state::<BackendProcess>().start(app.handle())?;
+            if let Ok(executable) = std::env::current_exe() {
+                tauri::async_runtime::spawn(async move {
+                    let _ =
+                        crate::firewall::ensure_peer_firewall_rules(&executable, 49_158, 49_157)
+                            .await;
+                });
+            }
             install_tray(app)?;
             Ok(())
         })
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                let running = window
-                    .state::<AppState>()
-                    .lock()
-                    .map(|inner| inner.cluster.status == "running")
-                    .unwrap_or(false);
-                if running {
+                if window.state::<BackendProcess>().is_cluster_running() {
                     api.prevent_close();
                     let _ = window.hide();
                 }
             }
         })
         .invoke_handler(tauri::generate_handler![
-            commands::app::get_app_snapshot,
-            commands::app::install_runtime,
-            commands::app::refresh_hardware,
-            commands::app::complete_setup,
-            commands::app::update_settings,
-            commands::models::discover_models,
-            commands::models::add_model_directory,
-            commands::models::remove_model_directory,
-            commands::network::run_network_test,
-            commands::pairing::connect_peer,
-            commands::pairing::reset::reset_pairing,
-            commands::cluster::split::estimate_model_split,
-            commands::cluster::start_cluster,
-            commands::cluster::stop_cluster,
-            commands::cluster::benchmark::run_inference_benchmark,
-            commands::cluster::benchmark::cancel_inference_benchmark,
-            commands::chat::send_chat_message,
-            commands::chat::cancel_generation,
-            commands::api::get_api_config,
-            commands::api::regenerate_api_key,
-            commands::app::open_network_settings,
-            commands::app::open_logs_folder
+            backend::backend_request,
+            backend::backend_stream,
+            backend::pick_model_directory,
+            backend::open_network_settings,
+            backend::open_logs_folder,
         ])
         .run(tauri::generate_context!())
         .expect("error while running SharedLocalLLM");

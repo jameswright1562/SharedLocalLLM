@@ -1,6 +1,7 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
+import { render } from "../test/render";
 import { cloneSnapshot, serviceWith } from "../test/fixtures";
 import type { AppSnapshot, PageProps } from "../types";
 import { BenchmarksPage } from "./BenchmarksPage";
@@ -155,19 +156,75 @@ describe("dashboard pages", () => {
     await user.click(screen.getByRole("button", { name: /^add folder$/i }));
     await waitFor(() => expect(pageProps.refreshSnapshot).toHaveBeenCalled());
 
-    await user.click(screen.getByRole("button", { name: /^split$/i }));
-    expect(within(screen.getByTestId("model-list")).getByText(/atlas/i)).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: /^text$/i }));
+    await user.click(screen.getByRole("radio", { name: /^split$/i }));
+    expect(within(screen.getByTestId("model-list")).getByText(/atlas vision/i)).toBeInTheDocument();
+    await user.click(screen.getByRole("radio", { name: /^text$/i }));
     await user.clear(screen.getByRole("searchbox"));
     await user.type(screen.getByRole("searchbox"), "Colossus");
-    expect(screen.getByRole("button", { name: /launch colossus/i })).toBeDisabled();
+    const colossusRow = within(screen.getByTestId("model-list"))
+      .getByText(/colossus 70b/i)
+      .closest("tr");
+    await user.click(colossusRow as HTMLElement);
+    expect(await screen.findByRole("button", { name: /launch colossus/i })).toBeDisabled();
 
     await user.clear(screen.getByRole("searchbox"));
     await user.type(screen.getByRole("searchbox"), "Orchid");
-    await user.click(screen.getByRole("button", { name: /launch orchid/i }));
+    const orchidRow = within(screen.getByTestId("model-list"))
+      .getByText(/orchid 9b/i)
+      .closest("tr");
+    await user.click(orchidRow as HTMLElement);
+    await user.click(await screen.findByRole("button", { name: /launch orchid/i }));
     expect(await screen.findByRole("status")).toHaveTextContent("runtime busy");
     await user.click(screen.getByRole("button", { name: /launch orchid/i }));
     await waitFor(() => expect(startCluster).toHaveBeenCalledTimes(2));
+  });
+
+  it("deletes a local model folder only after confirmation", async () => {
+    const user = userEvent.setup();
+    const snapshot = cloneSnapshot();
+    const deleteModelFolder = vi
+      .fn()
+      .mockRejectedValueOnce("file locked")
+      .mockResolvedValue(undefined);
+    const pageProps = props(snapshot, { deleteModelFolder });
+    render(<ModelsPage {...pageProps} />);
+
+    const orchidRow = within(screen.getByTestId("model-list"))
+      .getByText(/orchid 9b/i)
+      .closest("tr") as HTMLElement;
+    fireEvent.contextMenu(orchidRow);
+    await user.click(await screen.findByText("Delete folder…"));
+    expect(await screen.findByText(/cannot be undone/i)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /^delete folder$/i }));
+    expect(deleteModelFolder).toHaveBeenCalledWith("D:\\Models");
+    expect(await screen.findByRole("status")).toHaveTextContent("file locked");
+    expect(pageProps.refreshSnapshot).not.toHaveBeenCalled();
+
+    fireEvent.contextMenu(orchidRow);
+    await user.click(await screen.findByText("Delete folder…"));
+    await user.click(screen.getByRole("button", { name: /^delete folder$/i }));
+    expect(await screen.findByRole("status")).toHaveTextContent(/deleted orchid 9b/i);
+    expect(pageProps.refreshSnapshot).toHaveBeenCalled();
+  });
+
+  it("blocks folder deletion while a cluster is running", async () => {
+    const user = userEvent.setup();
+    const snapshot = cloneSnapshot();
+    snapshot.cluster = { ...snapshot.cluster, status: "running", modelId: "model-text" };
+    const deleteModelFolder = vi.fn();
+    const pageProps = props(snapshot, { deleteModelFolder });
+    render(<ModelsPage {...pageProps} />);
+
+    const orchidRow = within(screen.getByTestId("model-list"))
+      .getByText(/orchid 9b/i)
+      .closest("tr") as HTMLElement;
+    fireEvent.contextMenu(orchidRow);
+    await user.click(await screen.findByText("Delete folder…"));
+
+    expect(await screen.findByRole("status")).toHaveTextContent(/stop the running cluster/i);
+    expect(deleteModelFolder).not.toHaveBeenCalled();
+    expect(screen.queryByText(/cannot be undone/i)).not.toBeInTheDocument();
   });
 
   it("uses the selected context and treats a cancelled folder dialog as no change", async () => {
@@ -178,18 +235,127 @@ describe("dashboard pages", () => {
     const pageProps = props(snapshot, { addModelDirectory, startCluster });
     render(<ModelsPage {...pageProps} />);
 
-    await user.clear(screen.getByLabelText("Requested context"));
-    await user.type(screen.getByLabelText("Requested context"), "12288");
+    const orchidRow = within(screen.getByTestId("model-list"))
+      .getByText(/orchid 9b/i)
+      .closest("tr");
+    await user.click(orchidRow as HTMLElement);
+    const contextInput = await screen.findByLabelText("Requested context");
+    await user.clear(contextInput);
+    await user.type(contextInput, "12288");
     await user.click(screen.getByRole("button", { name: /launch orchid/i }));
     expect(startCluster).toHaveBeenCalledWith("model-text", {
       contextSize: 12288,
       gpuLayers: expect.any(Array),
+      includeRemoteCpu: false,
       force: false,
+      flashAttention: false,
+      useMmap: true,
+      useMlock: false,
+      cpuThreads: 0,
+      batchSize: 512,
+      kvUnified: false,
     });
 
     await user.click(screen.getByRole("button", { name: /^add folder$/i }));
     expect(await screen.findByRole("status")).toHaveTextContent(/no folder selected/i);
     expect(pageProps.refreshSnapshot).toHaveBeenCalledTimes(1);
+  });
+
+  it("relaunches a model with its saved load configuration", async () => {
+    const user = userEvent.setup();
+    const snapshot = cloneSnapshot();
+    Object.assign(snapshot.models[0]!, { layerCount: 40 });
+    snapshot.modelLoadConfigs = {
+      "model-text": {
+        contextSize: 4096,
+        gpuLayers: [{ nodeId: "node-a", layers: 12 }],
+        includeRemoteCpu: false,
+        force: false,
+        flashAttention: true,
+        useMmap: false,
+        useMlock: true,
+        cpuThreads: 6,
+        batchSize: 1024,
+      },
+    };
+    const startCluster = vi.fn().mockResolvedValue({ status: "running", modelId: "model-text" });
+    render(<ModelsPage {...props(snapshot, { startCluster })} />);
+
+    const orchidRow = within(screen.getByTestId("model-list"))
+      .getByText(/orchid 9b/i)
+      .closest("tr");
+    await user.click(orchidRow as HTMLElement);
+
+    expect(await screen.findByLabelText("Requested context")).toHaveValue(4096);
+    expect(screen.getByRole("checkbox", { name: /flash attention/i })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: /lock model in ram/i })).toBeChecked();
+
+    await user.click(screen.getByRole("button", { name: /launch orchid/i }));
+    expect(startCluster).toHaveBeenCalledWith("model-text", {
+      contextSize: 4096,
+      gpuLayers: [{ nodeId: "node-a", layers: 12 }],
+      includeRemoteCpu: false,
+      force: false,
+      flashAttention: true,
+      useMmap: false,
+      useMlock: true,
+      cpuThreads: 6,
+      batchSize: 1024,
+      kvUnified: false,
+    });
+  });
+
+  it("launches with every setting from an applied model tune", async () => {
+    const user = userEvent.setup();
+    const snapshot = cloneSnapshot();
+    snapshot.models[0]!.layerCount = 40;
+    const tune = {
+      modelId: "model-text",
+      modelName: "Orchid 9B Q4_K_M",
+      depth: "full" as const,
+      ranAt: "2026-08-20T10:00:00Z",
+      fingerprint: "current",
+      winners: { batchSize: 2048, uBatch: 512, cpuThreads: 8 },
+      promptTokensPerSecond: 120,
+      generationTokensPerSecond: 24,
+    };
+    snapshot.modelTunes = { "model-text": tune };
+    const appliedConfig = {
+      contextSize: 16384,
+      gpuLayers: [{ nodeId: "node-a", layers: 20, kind: "gpu" as const }],
+      includeRemoteCpu: false,
+      force: false,
+      flashAttention: true,
+      useMmap: false,
+      useMlock: true,
+      cpuThreads: 8,
+      batchSize: 2048,
+      uBatch: 512,
+      kvCacheK: "q4_0",
+      kvCacheV: "q8_0",
+      kvUnified: false,
+      noOpOffload: 1,
+      rpcPoll: 50,
+    };
+    const applyModelTune = vi.fn().mockResolvedValue({
+      loadConfig: appliedConfig,
+      staleTopology: false,
+      tunedAt: tune.ranAt,
+    });
+    const startCluster = vi.fn().mockResolvedValue({ status: "running", modelId: "model-text" });
+    render(<ModelsPage {...props(snapshot, { applyModelTune, startCluster })} />);
+
+    const orchidRow = within(screen.getByTestId("model-list"))
+      .getByText(/orchid 9b/i)
+      .closest("tr");
+    await user.click(orchidRow as HTMLElement);
+    await user.click(await screen.findByRole("button", { name: /auto-tune orchid/i }));
+    await user.click(await screen.findByRole("button", { name: /apply tuned settings/i }));
+    await waitFor(() => expect(applyModelTune).toHaveBeenCalledWith("model-text"));
+    await user.keyboard("{Escape}");
+    await user.click(screen.getByRole("button", { name: /launch orchid/i }));
+
+    expect(startCluster).toHaveBeenCalledWith("model-text", appliedConfig);
   });
 
   it("configures GPU layers per computer and previews estimated VRAM before launch", async () => {
@@ -199,10 +365,14 @@ describe("dashboard pages", () => {
     const startCluster = vi.fn().mockResolvedValue({ status: "running", modelId: "model-text" });
     render(<ModelsPage {...props(snapshot, { startCluster })} />);
 
-    await user.click(screen.getByRole("button", { name: /manual gpu split/i }));
+    const orchidRow = within(screen.getByTestId("model-list"))
+      .getByText(/orchid 9b/i)
+      .closest("tr");
+    await user.click(orchidRow as HTMLElement);
+    await user.click(await screen.findByRole("radio", { name: /manual gpu split/i }));
 
     expect(screen.getByRole("heading", { name: /gpu layer allocation/i })).toBeInTheDocument();
-    const localLayers = screen.getByLabelText(/gpu layers on studio host/i);
+    const localLayers = await screen.findByLabelText(/gpu layers on studio host/i);
     const remoteLayers = screen.getByLabelText(/gpu layers on remote node/i);
     await user.clear(localLayers);
     await user.type(localLayers, "24");
@@ -211,6 +381,7 @@ describe("dashboard pages", () => {
 
     expect(screen.getByText(/40 of 40 layers on gpu/i)).toBeInTheDocument();
     expect(screen.getAllByText(/estimated vram/i)).toHaveLength(2);
+    expect(screen.queryByText("—")).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: /launch orchid/i }));
     expect(startCluster).toHaveBeenCalledWith("model-text", {
@@ -219,7 +390,135 @@ describe("dashboard pages", () => {
         { nodeId: "node-a", layers: 24 },
         { nodeId: "node-b", layers: 16 },
       ],
+      includeRemoteCpu: false,
       force: false,
+      flashAttention: false,
+      useMmap: true,
+      useMlock: false,
+      cpuThreads: 0,
+      batchSize: 512,
+      kvUnified: false,
+    });
+  });
+
+  it("edits saved GPU layer shares that carry an explicit gpu kind tag", async () => {
+    const user = userEvent.setup();
+    const snapshot = cloneSnapshot();
+    Object.assign(snapshot.models[0]!, { layerCount: 40 });
+    snapshot.modelLoadConfigs = {
+      "model-text": {
+        contextSize: 8192,
+        gpuLayers: [
+          { nodeId: "node-a", layers: 30, kind: "gpu" },
+          { nodeId: "node-b", layers: 10, kind: "gpu" },
+        ],
+        includeRemoteCpu: false,
+        force: false,
+        flashAttention: false,
+        useMmap: true,
+        useMlock: false,
+        cpuThreads: 0,
+        batchSize: 512,
+      },
+    };
+    const startCluster = vi.fn().mockResolvedValue({ status: "running", modelId: "model-text" });
+    render(<ModelsPage {...props(snapshot, { startCluster })} />);
+
+    const orchidRow = within(screen.getByTestId("model-list"))
+      .getByText(/orchid 9b/i)
+      .closest("tr");
+    await user.click(orchidRow as HTMLElement);
+
+    const localLayers = await screen.findByLabelText(/gpu layers on studio host/i);
+    await user.clear(localLayers);
+    await user.type(localLayers, "24");
+    expect(screen.getByText(/34 of 40 layers on gpu/i)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /launch orchid/i }));
+    expect(startCluster).toHaveBeenCalledWith(
+      "model-text",
+      expect.objectContaining({
+        gpuLayers: [
+          { nodeId: "node-a", layers: 24, kind: "gpu" },
+          { nodeId: "node-b", layers: 10, kind: "gpu" },
+        ],
+      }),
+    );
+  });
+
+  it("offloads a layer share to the worker's CPU when requested", async () => {
+    const user = userEvent.setup();
+    const snapshot = cloneSnapshot();
+    Object.assign(snapshot.models[0]!, { layerCount: 40 });
+    const startCluster = vi.fn().mockResolvedValue({ status: "running", modelId: "model-text" });
+    render(<ModelsPage {...props(snapshot, { startCluster })} />);
+
+    const orchidRow = within(screen.getByTestId("model-list"))
+      .getByText(/orchid 9b/i)
+      .closest("tr");
+    await user.click(orchidRow as HTMLElement);
+    await user.click(await screen.findByRole("radio", { name: /manual gpu split/i }));
+
+    await user.click(screen.getByRole("checkbox", { name: /offload layers to remote node/i }));
+    const cpuLayers = await screen.findByLabelText(/cpu layers on remote node/i);
+    expect(cpuLayers).toBeInTheDocument();
+    await user.clear(cpuLayers);
+    await user.type(cpuLayers, "4");
+
+    await user.click(screen.getByRole("button", { name: /launch orchid/i }));
+    expect(startCluster).toHaveBeenCalledWith(
+      "model-text",
+      expect.objectContaining({
+        includeRemoteCpu: true,
+        gpuLayers: expect.arrayContaining([{ nodeId: "node-b", layers: 4, kind: "cpu" }]),
+      }),
+    );
+  });
+
+  it("describes advanced load options and forwards their values on launch", async () => {
+    const user = userEvent.setup();
+    const startCluster = vi.fn().mockResolvedValue({ status: "running", modelId: "model-text" });
+    render(<ModelsPage {...props(cloneSnapshot(), { startCluster })} />);
+
+    const orchidRow = within(screen.getByTestId("model-list"))
+      .getByText(/orchid 9b/i)
+      .closest("tr");
+    await user.click(orchidRow as HTMLElement);
+
+    expect(
+      await screen.findByRole("heading", { name: /advanced load options/i }),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/uses flash attention to accelerate generation/i)).toBeInTheDocument();
+    expect(screen.getByText(/maps the model file into memory/i)).toBeInTheDocument();
+    expect(screen.getByText(/prevents windows from swapping/i)).toBeInTheDocument();
+    expect(screen.getByText(/0 lets llama.cpp choose/i)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("checkbox", { name: /flash attention/i }));
+    await user.click(screen.getByRole("checkbox", { name: /lock model in ram/i }));
+    const threads = screen.getByRole("spinbutton", { name: /cpu threads/i });
+    await user.type(threads, "{Control>}a{/Control}8");
+    const batch = screen.getByRole("spinbutton", { name: /batch size/i });
+    await user.type(batch, "{Control>}a{/Control}2048");
+
+    expect(
+      screen.getByText(/unsupported gpus fall back to standard attention/i),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/needs free ram equal to the whole model/i)).toBeInTheDocument();
+    expect(screen.getByText(/can oversubscribe the cpu/i)).toBeInTheDocument();
+    expect(screen.getByText(/very large batches use more memory/i)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /launch orchid/i }));
+    expect(startCluster).toHaveBeenCalledWith("model-text", {
+      contextSize: 8192,
+      gpuLayers: expect.any(Array),
+      includeRemoteCpu: false,
+      force: false,
+      flashAttention: true,
+      useMmap: true,
+      useMlock: true,
+      cpuThreads: 8,
+      batchSize: 2048,
+      kvUnified: false,
     });
   });
 
@@ -236,7 +535,11 @@ describe("dashboard pages", () => {
     render(<ModelsPage {...props(snapshot, { startCluster })} />);
 
     await user.type(screen.getByRole("searchbox"), "Colossus");
-    const launchButton = screen.getByRole("button", { name: /launch colossus/i });
+    const colossusRow = within(screen.getByTestId("model-list"))
+      .getByText(/colossus 70b/i)
+      .closest("tr");
+    await user.click(colossusRow as HTMLElement);
+    const launchButton = await screen.findByRole("button", { name: /launch colossus/i });
     expect(launchButton).toBeDisabled();
 
     await user.click(screen.getByRole("checkbox", { name: /force launch/i }));
@@ -246,7 +549,14 @@ describe("dashboard pages", () => {
     expect(startCluster).toHaveBeenCalledWith("too-large", {
       contextSize: 8192,
       gpuLayers: expect.any(Array),
+      includeRemoteCpu: false,
       force: true,
+      flashAttention: false,
+      useMmap: true,
+      useMlock: false,
+      cpuThreads: 0,
+      batchSize: 512,
+      kvUnified: false,
     });
   });
 
@@ -265,6 +575,27 @@ describe("dashboard pages", () => {
     expect(emptyProps.navigate).toHaveBeenCalledWith("models");
   });
 
+  it("benchmarks a running model in place instead of planning a reload", async () => {
+    const user = userEvent.setup();
+    const snapshot = cloneSnapshot();
+    snapshot.cluster = { status: "running", coordinatorNodeId: "node-a", modelId: "model-text" };
+    const runInferenceBenchmark = vi.fn().mockResolvedValue([]);
+    const pageProps = props(snapshot, { runInferenceBenchmark });
+    const view = render(<BenchmarksPage {...pageProps} />);
+
+    expect(screen.getByText(/benchmarks the loaded instance/i)).toBeInTheDocument();
+    expect(screen.queryByText(/automatic gpu split/i)).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /run benchmark/i }));
+    expect(runInferenceBenchmark).toHaveBeenCalledWith("model-text");
+
+    const peerRunning = cloneSnapshot();
+    peerRunning.cluster = { status: "ready" };
+    peerRunning.nodes[1]!.clusterStatus = "running";
+    peerRunning.nodes[1]!.clusterModelId = "model-text";
+    view.rerender(<BenchmarksPage key="peer" {...props(peerRunning, { runInferenceBenchmark })} />);
+    expect(screen.getByText(/benchmarks the loaded instance/i)).toBeInTheDocument();
+  });
+
   it("renders benchmark run times from epoch seconds and tolerates invalid values", () => {
     const snapshot = cloneSnapshot();
     const base = cloneSnapshot().benchmarks[0]!;
@@ -275,6 +606,27 @@ describe("dashboard pages", () => {
     render(<BenchmarksPage {...props(snapshot)} />);
     expect(screen.getAllByRole("row")).toHaveLength(3);
     expect(screen.getAllByText("—")).toHaveLength(1);
+  });
+
+  it("benchmarks a running model in place instead of planning a reload", async () => {
+    const user = userEvent.setup();
+    const snapshot = cloneSnapshot();
+    snapshot.cluster = { status: "running", coordinatorNodeId: "node-a", modelId: "model-text" };
+    const runInferenceBenchmark = vi.fn().mockResolvedValue([]);
+    const pageProps = props(snapshot, { runInferenceBenchmark });
+    const view = render(<BenchmarksPage {...pageProps} />);
+
+    expect(screen.getByText(/benchmarks the loaded instance/i)).toBeInTheDocument();
+    expect(screen.queryByText(/automatic gpu split/i)).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /run benchmark/i }));
+    expect(runInferenceBenchmark).toHaveBeenCalledWith("model-text");
+
+    const peerRunning = cloneSnapshot();
+    peerRunning.cluster = { status: "ready" };
+    peerRunning.nodes[1]!.clusterStatus = "running";
+    peerRunning.nodes[1]!.clusterModelId = "model-text";
+    view.rerender(<BenchmarksPage key="peer" {...props(peerRunning, { runInferenceBenchmark })} />);
+    expect(screen.getByText(/benchmarks the loaded instance/i)).toBeInTheDocument();
   });
 
   it("runs and cancels inference benchmarks through the native service", async () => {

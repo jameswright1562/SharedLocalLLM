@@ -1,6 +1,8 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { defaultChatSettings, loadStoredChat, saveStoredChat } from "../services/chatStorage";
+import { render } from "../test/render";
 import { cloneSnapshot, serviceWith } from "../test/fixtures";
 import type { AppSnapshot, PageProps } from "../types";
 import { ApiPage } from "./ApiPage";
@@ -17,6 +19,10 @@ function props(snapshot: AppSnapshot = cloneSnapshot(), serviceOverrides = {}): 
 }
 
 describe("interactive pages", () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+  });
+
   it("does not return the smooth-scroll result as an effect cleanup", async () => {
     const scrollResult = Promise.resolve();
     const scrollIntoView = vi
@@ -111,6 +117,47 @@ describe("interactive pages", () => {
     expect(await screen.findByText("Recovered")).toBeInTheDocument();
   });
 
+  it("saves the conversation and restores it when the page reopens", async () => {
+    const user = userEvent.setup();
+    const snapshot = cloneSnapshot();
+    snapshot.cluster = { ...snapshot.cluster, status: "running", modelId: "model-text" };
+    const sendChatMessage = vi.fn().mockResolvedValue({ content: "Saved answer" });
+    const { unmount } = render(<ChatPage {...props(snapshot, { sendChatMessage })} />);
+    await user.type(screen.getByLabelText(/^message$/i), "Remember me");
+    await user.click(screen.getByRole("button", { name: /send message/i }));
+    expect(await screen.findByText("Saved answer")).toBeInTheDocument();
+
+    const stored = loadStoredChat();
+    expect(stored.messages.map((message) => message.content)).toEqual([
+      "Remember me",
+      "Saved answer",
+    ]);
+    expect(stored.settings.systemPrompt).toBe(defaultChatSettings().systemPrompt);
+
+    unmount();
+    render(<ChatPage {...props(snapshot)} />);
+    expect(screen.getByText("Remember me")).toBeInTheDocument();
+    expect(screen.getByText("Saved answer")).toBeInTheDocument();
+    expect(screen.queryByText(/send work through the cluster/i)).not.toBeInTheDocument();
+  });
+
+  it("clears a saved conversation on request", async () => {
+    saveStoredChat(
+      [
+        { id: "u1", role: "user", content: "Old question" },
+        { id: "a1", role: "assistant", content: "Old answer" },
+      ],
+      defaultChatSettings(),
+    );
+    const user = userEvent.setup();
+    render(<ChatPage {...props()} />);
+
+    expect(screen.getByText("Old question")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /clear chat/i }));
+    expect(screen.queryByText("Old question")).not.toBeInTheDocument();
+    expect(loadStoredChat().messages).toEqual([]);
+  });
+
   it("routes each unavailable chat state to the corrective page", async () => {
     const user = userEvent.setup();
     const snapshot = cloneSnapshot();
@@ -134,16 +181,37 @@ describe("interactive pages", () => {
     expect(screen.getByRole("button", { name: /send message/i })).toBeDisabled();
   });
 
+  it("chats through the other computer when only that computer runs the model", async () => {
+    const user = userEvent.setup();
+    const snapshot = cloneSnapshot();
+    snapshot.cluster = { status: "ready" };
+    snapshot.nodes[1]!.clusterStatus = "running";
+    snapshot.nodes[1]!.clusterModelId = "model-text";
+    const sendChatMessage = vi.fn().mockResolvedValue({ content: "Remote answer" });
+    const stopCluster = vi.fn().mockResolvedValue({ status: "idle" });
+    render(<ChatPage {...props(snapshot, { sendChatMessage, stopCluster })} />);
+
+    expect(screen.getByText(/proxied through/i)).toBeInTheDocument();
+    await user.type(screen.getByLabelText(/^message$/i), "Hello from the worker");
+    await user.click(screen.getByRole("button", { name: /send message/i }));
+    expect(await screen.findByText("Remote answer")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /stop cluster/i }));
+    expect(stopCluster).toHaveBeenCalled();
+  });
+
   it("reveals, copies, regenerates, and displays an unhealthy API", async () => {
     const user = userEvent.setup();
     const getApiConfig = vi.fn().mockResolvedValue({
       url: "http://127.0.0.1:11435",
       apiKey: "abcd-secret",
+      authRequired: true,
       healthy: false,
     });
     const regenerateApiKey = vi.fn().mockResolvedValue({
       url: "http://127.0.0.1:11435",
       apiKey: "sk-local-newkey",
+      authRequired: true,
       healthy: true,
     });
     render(<ApiPage {...props(cloneSnapshot(), { getApiConfig, regenerateApiKey })} />);
@@ -182,6 +250,54 @@ describe("interactive pages", () => {
     Object.defineProperty(navigator, "clipboard", { configurable: true, value: originalClipboard });
   });
 
+  it("runs the example request and renders the live response", async () => {
+    const user = userEvent.setup();
+    const tryApiRequest = vi.fn().mockResolvedValue({
+      status: 200,
+      durationMs: 640,
+      body: JSON.stringify({
+        choices: [{ message: { role: "assistant", content: "Loopback answer" } }],
+      }),
+    });
+    render(<ApiPage {...props(cloneSnapshot(), { tryApiRequest })} />);
+    await screen.findByText(/listening on loopback/i);
+    await user.click(screen.getByRole("button", { name: /try it/i }));
+    expect(tryApiRequest).toHaveBeenCalledTimes(1);
+    const response = await screen.findByLabelText(/example response/i);
+    expect(response).toHaveTextContent(/HTTP 200/);
+    expect(response).toHaveTextContent(/640 ms/);
+    expect(response).toHaveTextContent(/Loopback answer/);
+  });
+
+  it("shows example request failures as an actionable error", async () => {
+    const user = userEvent.setup();
+    const tryApiRequest = vi.fn().mockRejectedValue({
+      code: "api_unavailable",
+      message: "The local API did not answer on 127.0.0.1:11435.",
+      action: "Start the cluster or check the API port in Settings.",
+    });
+    render(<ApiPage {...props(cloneSnapshot(), { tryApiRequest })} />);
+    await screen.findByText(/listening on loopback/i);
+    await user.click(screen.getByRole("button", { name: /try it/i }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(/start the cluster or check/i);
+  });
+
+  it("marks open access and drops the authorization header when authentication is disabled", async () => {
+    const getApiConfig = vi.fn().mockResolvedValue({
+      url: "http://127.0.0.1:11435",
+      apiKey: "sk-local-key",
+      authRequired: false,
+      healthy: true,
+    });
+    render(<ApiPage {...props(cloneSnapshot(), { getApiConfig })} />);
+    expect(await screen.findByText(/disabled — open access/i)).toBeInTheDocument();
+    expect(screen.getByText(/any local tool can call this api without a key/i)).toBeInTheDocument();
+    const example = screen.getByText(/curl\.exe .*chat\/completions/i);
+    expect(example.textContent).not.toContain("Authorization");
+    const required = screen.queryByText(/bearer key required/i);
+    expect(required).toBeNull();
+  });
+
   it("installs the runtime from settings", async () => {
     const user = userEvent.setup();
     const installRuntime = vi.fn().mockResolvedValue(cloneSnapshot());
@@ -211,7 +327,10 @@ describe("interactive pages", () => {
       openLogsFolder,
     });
     render(<SettingsPage {...pageProps} />);
-    expect(screen.getByRole("switch")).toHaveAttribute("aria-checked", "false");
+    expect(screen.getByRole("switch", { name: /start with windows/i })).toHaveAttribute(
+      "aria-checked",
+      "false",
+    );
     await user.click(screen.getByRole("tab", { name: /model sources/i }));
     await user.click(screen.getByRole("button", { name: /^add folder$/i }));
     await user.click(screen.getByRole("button", { name: /^remove$/i }));
@@ -228,11 +347,13 @@ describe("interactive pages", () => {
     const user = userEvent.setup();
     const snapshot = cloneSnapshot();
     snapshot.apiPort = 12000;
+    snapshot.authRequired = true;
     snapshot.autostart = true;
     const updateSettings = vi.fn().mockResolvedValue({
       ...snapshot,
       deviceName: "Saved node",
       apiPort: 12001,
+      authRequired: false,
       autostart: false,
     });
     const pageProps = props(snapshot, { updateSettings });
@@ -240,17 +361,26 @@ describe("interactive pages", () => {
 
     expect(screen.getByRole("tablist", { name: /settings sections/i })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: /general/i })).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByRole("switch")).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByRole("switch", { name: /start with windows/i })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+    expect(screen.getByRole("switch", { name: /require api key/i })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
     await user.clear(screen.getByLabelText(/device name/i));
     await user.type(screen.getByLabelText(/device name/i), "Saved node");
     await user.clear(screen.getByLabelText(/local api port/i));
     await user.type(screen.getByLabelText(/local api port/i), "12001");
-    await user.click(screen.getByRole("switch"));
+    await user.click(screen.getByRole("switch", { name: /start with windows/i }));
+    await user.click(screen.getByRole("switch", { name: /require api key/i }));
     await user.click(screen.getByRole("button", { name: /save changes/i }));
 
     expect(updateSettings).toHaveBeenCalledWith({
       deviceName: "Saved node",
       apiPort: 12001,
+      authRequired: false,
       autostart: false,
     });
     expect(pageProps.refreshSnapshot).toHaveBeenCalled();

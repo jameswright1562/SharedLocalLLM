@@ -53,6 +53,7 @@ export const demoModels: ModelRecord[] = [
       { nodeId: "local-node", path: "C:\\Models\\meridian-12b-q5.gguf", source: "lm-studio" },
     ],
     fit: "single-node",
+    isLocal: true,
   },
   {
     id: "northstar-27b",
@@ -71,6 +72,7 @@ export const demoModels: ModelRecord[] = [
       { nodeId: "peer-node", path: "D:\\AI\\northstar-00001-of-00002.gguf", source: "custom" },
     ],
     fit: "combined-gpu",
+    isLocal: false,
   },
   {
     id: "spectra-vision",
@@ -89,6 +91,7 @@ export const demoModels: ModelRecord[] = [
       { nodeId: "local-node", path: "C:\\Models\\spectra-vision.gguf", source: "custom" },
     ],
     fit: "single-node",
+    isLocal: true,
   },
 ];
 
@@ -96,6 +99,7 @@ const baseSnapshot: AppSnapshot = {
   setupComplete: true,
   runtime: { status: "ready", version: "llama.cpp b6123" },
   deviceName: "Primary node",
+  deviceId: "local-node",
   nodes: demoNodes,
   models: demoModels,
   modelDirectories: [
@@ -154,6 +158,7 @@ const baseSnapshot: AppSnapshot = {
     "14:22:11  READY Local API listening on 127.0.0.1:11435",
   ],
   apiPort: 11435,
+  authRequired: true,
   autostart: false,
 };
 
@@ -161,5 +166,6 @@ export const demoSnapshot = structuredClone(baseSnapshot);
 export const demoApi: ApiConfig = {
   url: "http://127.0.0.1:11435",
   apiKey: "sk-local-demo-8f3d7a19",
+  authRequired: true,
   healthy: true,
 };

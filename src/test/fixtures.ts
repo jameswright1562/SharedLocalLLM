@@ -7,6 +7,7 @@ export const snapshotFixture: AppSnapshot = {
   setupComplete: true,
   runtime: { status: "ready", version: "b6123" },
   deviceName: "Studio host",
+  deviceId: "node-a",
   nodes: [
     {
       id: "node-a",
@@ -61,6 +62,7 @@ export const snapshotFixture: AppSnapshot = {
         },
       ],
       fit: "single-node",
+      isLocal: true,
     },
     {
       id: "model-vision",
@@ -79,6 +81,7 @@ export const snapshotFixture: AppSnapshot = {
         },
       ],
       fit: "combined-gpu",
+      isLocal: false,
     },
   ],
   modelDirectories: [
@@ -119,6 +122,7 @@ export const snapshotFixture: AppSnapshot = {
   ],
   logs: ["Peer channel ready", "Runtime verified"],
   apiPort: 11435,
+  authRequired: true,
   autostart: false,
 };
 
@@ -136,6 +140,7 @@ export function serviceWith(
     getApiConfig: vi.fn().mockResolvedValue({
       url: "http://127.0.0.1:11435",
       apiKey: "sk-local-1234567890",
+      authRequired: true,
       healthy: true,
     }),
     ...overrides,

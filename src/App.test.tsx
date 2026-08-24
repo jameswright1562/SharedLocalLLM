@@ -1,7 +1,8 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
+import { render } from "./test/render";
 import App from "./App";
 import { demoService } from "./services/appService";
 import type { AppService, AppSnapshot } from "./types";
@@ -46,6 +47,7 @@ const readySnapshot: AppSnapshot = {
       shards: 1,
       locations: [{ nodeId: "node-a", path: "D:\\Models\\orchid.gguf", source: "custom" }],
       fit: "single-node",
+      isLocal: true,
     },
     {
       id: "model-vision",
@@ -58,6 +60,7 @@ const readySnapshot: AppSnapshot = {
       shards: 2,
       locations: [{ nodeId: "node-b", path: "E:\\Models\\atlas-00001.gguf", source: "lm-studio" }],
       fit: "combined-gpu",
+      isLocal: false,
     },
   ],
   modelDirectories: [{ id: "dir-1", nodeId: "node-a", path: "D:\\Models", source: "custom" }],
@@ -79,6 +82,7 @@ const readySnapshot: AppSnapshot = {
   benchmarks: [],
   logs: ["Peer channel ready", "Runtime verified"],
   apiPort: 11435,
+  authRequired: true,
   autostart: false,
 };
 
@@ -89,6 +93,7 @@ function serviceWith(snapshot: AppSnapshot, overrides: Partial<AppService> = {})
     getApiConfig: vi.fn().mockResolvedValue({
       url: "http://127.0.0.1:11435",
       apiKey: "sk-local-1234567890",
+      authRequired: true,
       healthy: true,
     }),
     ...overrides,
@@ -132,11 +137,11 @@ describe("SharedLocalLLM app", () => {
     expect(screen.queryByText(/orchid/i)).not.toBeInTheDocument();
     const row = within(screen.getByTestId("model-list"))
       .getByText(/atlas vision/i)
-      .closest("button");
+      .closest("tr");
     expect(row).not.toBeNull();
-    expect(within(row as HTMLElement).getByText(/combined gpu/i)).toBeInTheDocument();
     await user.click(row as HTMLElement);
-    expect(screen.getByRole("button", { name: /launch atlas vision/i })).toBeEnabled();
+    expect(await screen.findByRole("button", { name: /launch atlas vision/i })).toBeEnabled();
+    expect(screen.getByText(/combined gpu/i)).toBeInTheDocument();
   });
 
   it("renders network classification and reruns the benchmark", async () => {

@@ -1,4 +1,13 @@
-import type { AppService, ChatResponse } from "../types";
+import type {
+  AppliedModelTune,
+  AppService,
+  AppSnapshot,
+  AutotuneStatus,
+  ChatMessage,
+  ChatResponse,
+  ChatSettings,
+  ChatStreamEvent,
+} from "../types";
 import { decodeAppError } from "./errors";
 
 async function invoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {
@@ -10,59 +19,120 @@ async function invoke<T>(command: string, args?: Record<string, unknown>): Promi
   }
 }
 
+async function backend<T>(command: string, args: Record<string, unknown> = {}): Promise<T> {
+  return invoke<T>("backend_request", { command, args });
+}
+
+type StreamPayload =
+  | { type: "reasoning"; content: string }
+  | { type: "token"; content: string }
+  | { type: "stats"; tokensPerSecond: number }
+  | { type: "done" }
+  | { type: "error"; message: string };
+
+async function streamChatCompletion(
+  messages: ChatMessage[],
+  settings: ChatSettings,
+  images: string[],
+  onStream?: (event: ChatStreamEvent) => void,
+): Promise<ChatResponse> {
+  const { invoke: tauriInvoke, Channel } = await import("@tauri-apps/api/core");
+  const channel = new Channel<StreamPayload>();
+  channel.onmessage = (payload) => {
+    switch (payload.type) {
+      case "reasoning":
+        onStream?.({ kind: "reasoning", content: payload.content });
+        break;
+      case "token":
+        onStream?.({ kind: "token", content: payload.content });
+        break;
+      case "stats":
+        onStream?.({ kind: "stats", tokensPerSecond: payload.tokensPerSecond });
+        break;
+      case "done":
+        onStream?.({ kind: "status", status: "idle" });
+        break;
+    }
+  };
+  try {
+    return await tauriInvoke<ChatResponse>("backend_stream", {
+      command: "send_chat_message",
+      args: { messages, settings, images },
+      channel,
+    });
+  } catch (reason) {
+    throw decodeAppError(reason);
+  }
+}
+
 export const nativeService: AppService = {
-  getAppSnapshot: () => invoke("get_app_snapshot"),
-  completeSetup: (deviceName) => invoke("complete_setup", { deviceName }),
-  updateSettings: (settings) => invoke("update_settings", { settings }),
+  getAppSnapshot: () => backend("get_app_snapshot"),
+  completeSetup: (deviceName) => backend("complete_setup", { deviceName }),
+  updateSettings: (settings) => backend("update_settings", { settings }),
   installRuntime: async (onProgress) => {
-    let unlisten: (() => void) | undefined;
-    if (onProgress) {
-      const { listen } = await import("@tauri-apps/api/event");
-      unlisten = await listen<{ percent: number; status: string }>("runtime-progress", (event) =>
-        onProgress(event.payload.percent, event.payload.status),
-      );
-    }
+    onProgress?.(25, "Verifying the Python and llama.cpp backend");
+    const snapshot = await backend<AppSnapshot>("install_runtime");
+    onProgress?.(100, "Python backend verified");
+    return snapshot;
+  },
+  refreshHardware: () => backend("refresh_hardware"),
+  discoverModels: () => backend("discover_models"),
+  addModelDirectory: async () => {
+    const path = await invoke<string | null>("pick_model_directory");
+    return path ? backend("add_model_directory", { path }) : null;
+  },
+  removeModelDirectory: (id) => backend("remove_model_directory", { id }),
+  deleteModelFolder: async (folder) => {
+    const { remove } = await import("@tauri-apps/plugin-fs");
     try {
-      return await invoke("install_runtime");
-    } finally {
-      unlisten?.();
+      await remove(folder, { recursive: true });
+    } catch (reason) {
+      throw decodeAppError(reason);
     }
   },
-  refreshHardware: () => invoke("refresh_hardware"),
-  discoverModels: () => invoke("discover_models"),
-  addModelDirectory: () => invoke("add_model_directory"),
-  removeModelDirectory: (id) => invoke("remove_model_directory", { id }),
-  runNetworkTest: () => invoke("run_network_test"),
-  connectPeer: (manualEndpoint) => invoke("connect_peer", { manualEndpoint }),
-  resetPairing: () => invoke("reset_pairing"),
+  runNetworkTest: () => backend("run_network_test"),
+  connectPeer: (manualEndpoint) => backend("connect_peer", { manualEndpoint }),
+  resetPairing: () => backend("reset_pairing"),
   estimateModelSplit: (modelId, loadConfig) =>
-    invoke("estimate_model_split", { modelId, loadConfig }),
-  startCluster: (modelId, loadConfig) => invoke("start_cluster", { modelId, loadConfig }),
-  stopCluster: () => invoke("stop_cluster"),
-  runInferenceBenchmark: (modelId) => invoke("run_inference_benchmark", { modelId }),
-  cancelInferenceBenchmark: () => invoke("cancel_inference_benchmark"),
+    backend("estimate_model_split", { modelId, loadConfig }),
+  startCluster: (modelId, loadConfig) => backend("start_cluster", { modelId, loadConfig }),
+  stopCluster: () => backend("stop_cluster"),
+  runInferenceBenchmark: (modelId) => backend("run_inference_benchmark", { modelId }),
+  cancelInferenceBenchmark: () => backend("cancel_inference_benchmark"),
+  startModelAutotune: (modelId, depth) =>
+    backend<AutotuneStatus>("start_model_autotune", { modelId, depth }),
+  getAutotuneStatus: () => backend<AutotuneStatus>("get_autotune_status"),
+  cancelModelAutotune: () => backend("cancel_model_autotune"),
+  applyModelTune: (modelId) => backend<AppliedModelTune>("apply_model_tune", { modelId }),
   sendChatMessage: async (messages, settings, images, onStream) => {
-    let unlistenToken: (() => void) | undefined;
-    let unlistenStatus: (() => void) | undefined;
-    if (onStream) {
-      const { listen } = await import("@tauri-apps/api/event");
-      unlistenToken = await listen<{ content: string }>("chat-token", (event) =>
-        onStream({ kind: "token", content: event.payload.content }),
-      );
-      unlistenStatus = await listen<{ status: string }>("chat-status", (event) =>
-        onStream({ kind: "status", status: event.payload.status }),
-      );
-    }
+    onStream?.({ kind: "status", status: "processing" });
+    let receivedContent = false;
     try {
-      return await invoke<ChatResponse>("send_chat_message", { messages, settings, images });
-    } finally {
-      unlistenToken?.();
-      unlistenStatus?.();
+      return await streamChatCompletion(messages, settings, images, (event) => {
+        if (event.kind === "token" || event.kind === "reasoning") receivedContent = true;
+        onStream?.(event);
+      });
+    } catch (reason) {
+      if (receivedContent) throw reason;
+      onStream?.({ kind: "status", status: "generating" });
+      const response = await backend<ChatResponse>("send_chat_message", {
+        messages,
+        settings,
+        images,
+      });
+      if (response.reasoning) onStream?.({ kind: "reasoning", content: response.reasoning });
+      if (response.content) onStream?.({ kind: "token", content: response.content });
+      if (response.tokensPerSecond !== undefined) {
+        onStream?.({ kind: "stats", tokensPerSecond: response.tokensPerSecond });
+      }
+      onStream?.({ kind: "status", status: "idle" });
+      return response;
     }
   },
-  cancelGeneration: () => invoke("cancel_generation"),
-  getApiConfig: () => invoke("get_api_config"),
-  regenerateApiKey: () => invoke("regenerate_api_key"),
+  cancelGeneration: () => backend("cancel_generation"),
+  getApiConfig: () => backend("get_api_config"),
+  regenerateApiKey: () => backend("regenerate_api_key"),
+  tryApiRequest: () => backend("try_api_request"),
   openNetworkSettings: () => invoke("open_network_settings"),
   openLogsFolder: () => invoke("open_logs_folder"),
 };
