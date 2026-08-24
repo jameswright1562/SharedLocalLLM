@@ -75,6 +75,38 @@ def test_build_command_enables_embedded_mtp_and_rpc() -> None:
     assert "--offline" in command
 
 
+def test_build_command_passes_autotuned_knobs_only_when_set() -> None:
+    tuned = build_command(
+        Path("llama-server.exe"), model_path="model.gguf", port=8123,
+        context=8192, api_key=None, mtp=False, speculation_supported=False,
+        rpc_endpoint=None,
+        load_config={
+            "uBatch": 256, "kvCacheK": "q4_0", "kvCacheV": "q8_0",
+            "noOpOffload": 1, "rpcPoll": 50,
+        },
+    )
+
+    assert tuned[tuned.index("--ubatch-size") + 1] == "256"
+    assert tuned[tuned.index("--cache-type-k") + 1] == "q4_0"
+    assert tuned[tuned.index("--cache-type-v") + 1] == "q8_0"
+    assert "--no-op-offload" in tuned
+    assert tuned[tuned.index("--poll") + 1] == "50"
+
+
+def test_build_command_without_tuned_values_keeps_defaults() -> None:
+    plain = build_command(
+        Path("llama-server.exe"), model_path="model.gguf", port=8123,
+        context=8192, api_key=None, mtp=False, speculation_supported=False,
+        rpc_endpoint=None, load_config={},
+    )
+
+    for flag in (
+        "--ubatch-size", "--cache-type-k", "--cache-type-v",
+        "--no-op-offload", "--poll",
+    ):
+        assert flag not in plain
+
+
 def test_server_environment_ignores_all_external_llama_configuration(monkeypatch) -> None:
     monkeypatch.setenv("LLAMA_ARG_TOOLS", "all")
     monkeypatch.setenv("LLAMA_ARG_AGENT", "1")

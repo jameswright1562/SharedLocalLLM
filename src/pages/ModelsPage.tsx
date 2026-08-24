@@ -13,6 +13,7 @@ import {
 import { IconSearch } from "@tabler/icons-react";
 
 import { ModelCatalogue, type CapabilityFilter } from "../components/ModelCatalogue";
+import { AutotunePanel, TunedBadge } from "../components/AutotunePanel";
 import { ModelInspector } from "../components/ModelInspector";
 import { StatusBanner } from "../components/StatusBanner";
 import { describeAppError } from "../services/errors";
@@ -30,7 +31,7 @@ import {
   estimateModelSplitLocally,
   fitLayersByVram,
 } from "../services/splitEstimate";
-import type { PageProps } from "../types";
+import type { ModelLoadConfig, PageProps } from "../types";
 
 const capabilityFilters: Array<{ value: CapabilityFilter; label: string }> = [
   { value: "all", label: "All" },
@@ -53,7 +54,11 @@ export function ModelsPage({ snapshot, service, refreshSnapshot }: PageProps) {
   const [remoteCpuByModel, setRemoteCpuByModel] = useState(() => savedRemoteCpuFlags(savedConfigs));
   const [forceByModel, setForceByModel] = useState(() => savedForceLaunches(savedConfigs));
   const [optionsByModel, setOptionsByModel] = useState(() => savedOptionValues(savedConfigs));
+  const [appliedConfigsByModel, setAppliedConfigsByModel] = useState<
+    Record<string, ModelLoadConfig>
+  >({});
   const [inspectorOpened, setInspectorOpened] = useState(false);
+  const [tuneOpened, setTuneOpened] = useState(false);
   const nodeLookup = new Map(snapshot.nodes.map((node) => [node.id, node.name]));
   const models = discoveredModels ?? snapshot.models;
   const visibleModels = useMemo(
@@ -142,7 +147,9 @@ export function ModelsPage({ snapshot, service, refreshSnapshot }: PageProps) {
     setBusy("launch");
     setMessage("");
     try {
+      const appliedConfig = appliedConfigsByModel[selected.id] ?? savedConfigs[selected.id];
       await service.startCluster(selected.id, {
+        ...appliedConfig,
         contextSize,
         gpuLayers: selected.layerCount ? gpuLayers : [],
         includeRemoteCpu,
@@ -194,6 +201,33 @@ export function ModelsPage({ snapshot, service, refreshSnapshot }: PageProps) {
   function setForce(next: boolean) {
     if (!selected) return;
     setForceByModel({ ...forceByModel, [selected.id]: next });
+  }
+
+  function applyTuneToEditor(config: ModelLoadConfig) {
+    if (!selected) return;
+    const modelId = selected.id;
+    setAppliedConfigsByModel((current) => ({ ...current, [modelId]: config }));
+    setContextByModel((current) => ({ ...current, [modelId]: config.contextSize }));
+    setManualByModel((current) => ({
+      ...current,
+      [modelId]: config.gpuLayers.length > 0,
+    }));
+    setLayersByModel((current) => ({ ...current, [modelId]: config.gpuLayers }));
+    setRemoteCpuByModel((current) => ({
+      ...current,
+      [modelId]: Boolean(config.includeRemoteCpu),
+    }));
+    setForceByModel((current) => ({ ...current, [modelId]: Boolean(config.force) }));
+    setOptionsByModel((current) => ({
+      ...current,
+      [modelId]: {
+        flashAttention: Boolean(config.flashAttention),
+        useMmap: config.useMmap ?? DEFAULT_LOAD_OPTIONS.useMmap,
+        useMlock: Boolean(config.useMlock),
+        cpuThreads: config.cpuThreads ?? DEFAULT_LOAD_OPTIONS.cpuThreads,
+        batchSize: config.batchSize ?? DEFAULT_LOAD_OPTIONS.batchSize,
+      },
+    }));
   }
 
   return (
@@ -292,6 +326,38 @@ export function ModelsPage({ snapshot, service, refreshSnapshot }: PageProps) {
           force={force}
           setForce={setForce}
           launch={() => void launch()}
+          autotuneSection={
+            selected && !selected.remoteOnly ? (
+              <Group gap="sm" align="center">
+                <Button
+                  variant="light"
+                  color="cyan"
+                  onClick={() => setTuneOpened(true)}
+                  aria-label={`Auto-tune ${selected.name}`}
+                >
+                  Auto-tune settings…
+                </Button>
+                <TunedBadge tune={snapshot.modelTunes?.[selected.id]} />
+              </Group>
+            ) : undefined
+          }
+        />
+      </Modal>
+
+      <Modal
+        opened={tuneOpened}
+        onClose={() => setTuneOpened(false)}
+        title={`Auto-tune ${selected?.name ?? ""}`.trim()}
+        size="lg"
+        centered
+      >
+        <AutotunePanel
+          model={selected && !selected.remoteOnly ? selected : undefined}
+          tune={selected ? snapshot.modelTunes?.[selected.id] : undefined}
+          service={service}
+          onMessage={setMessage}
+          onRefresh={refreshSnapshot}
+          onApplied={applyTuneToEditor}
         />
       </Modal>
 

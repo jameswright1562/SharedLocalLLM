@@ -255,6 +255,58 @@ describe("dashboard pages", () => {
     });
   });
 
+  it("launches with every setting from an applied model tune", async () => {
+    const user = userEvent.setup();
+    const snapshot = cloneSnapshot();
+    snapshot.models[0]!.layerCount = 40;
+    const tune = {
+      modelId: "model-text",
+      modelName: "Orchid 9B Q4_K_M",
+      depth: "full" as const,
+      ranAt: "2026-08-20T10:00:00Z",
+      fingerprint: "current",
+      winners: { batchSize: 2048, uBatch: 512, cpuThreads: 8 },
+      promptTokensPerSecond: 120,
+      generationTokensPerSecond: 24,
+    };
+    snapshot.modelTunes = { "model-text": tune };
+    const appliedConfig = {
+      contextSize: 16384,
+      gpuLayers: [{ nodeId: "node-a", layers: 20, kind: "gpu" as const }],
+      includeRemoteCpu: false,
+      force: false,
+      flashAttention: true,
+      useMmap: false,
+      useMlock: true,
+      cpuThreads: 8,
+      batchSize: 2048,
+      uBatch: 512,
+      kvCacheK: "q4_0",
+      kvCacheV: "q8_0",
+      noOpOffload: 1,
+      rpcPoll: 50,
+    };
+    const applyModelTune = vi.fn().mockResolvedValue({
+      loadConfig: appliedConfig,
+      staleTopology: false,
+      tunedAt: tune.ranAt,
+    });
+    const startCluster = vi.fn().mockResolvedValue({ status: "running", modelId: "model-text" });
+    render(<ModelsPage {...props(snapshot, { applyModelTune, startCluster })} />);
+
+    const orchidRow = within(screen.getByTestId("model-list"))
+      .getByText(/orchid 9b/i)
+      .closest("tr");
+    await user.click(orchidRow as HTMLElement);
+    await user.click(await screen.findByRole("button", { name: /auto-tune orchid/i }));
+    await user.click(await screen.findByRole("button", { name: /apply tuned settings/i }));
+    await waitFor(() => expect(applyModelTune).toHaveBeenCalledWith("model-text"));
+    await user.keyboard("{Escape}");
+    await user.click(screen.getByRole("button", { name: /launch orchid/i }));
+
+    expect(startCluster).toHaveBeenCalledWith("model-text", appliedConfig);
+  });
+
   it("configures GPU layers per computer and previews estimated VRAM before launch", async () => {
     const user = userEvent.setup();
     const snapshot = cloneSnapshot();

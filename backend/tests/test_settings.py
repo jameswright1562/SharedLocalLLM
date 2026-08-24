@@ -20,6 +20,9 @@ class SettingsStore:
     def model_load_configs(self) -> dict:
         return {}
 
+    def model_tunes(self) -> dict:
+        return {}
+
     def logs(self) -> list[str]:
         return []
 

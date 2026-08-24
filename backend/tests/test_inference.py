@@ -61,6 +61,26 @@ def test_zero_threads_keeps_automatic_default() -> None:
     assert kwargs["n_threads"] == max(1, cores // 2)
 
 
+def test_autotuned_ubatch_and_kv_cache_flow_through() -> None:
+    kwargs = build_llama_kwargs(
+        {"batchSize": 2048, "uBatch": 512, "kvCacheK": "q4_0", "kvCacheV": "q8_0"},
+        "model.gguf", 4096, 8, None,
+    )
+    assert kwargs["n_ubatch"] == 512
+    assert kwargs["type_k"] == 2
+    assert kwargs["type_v"] == 8
+
+
+def test_ubatch_is_clamped_to_batch_and_unknown_kv_types_are_skipped() -> None:
+    kwargs = build_llama_kwargs(
+        {"batchSize": 512, "uBatch": 4096, "kvCacheK": "iq4_xs"},
+        "model.gguf", 4096, 8, None,
+    )
+    assert kwargs["n_ubatch"] == 512
+    assert "type_k" not in kwargs
+    assert "type_v" not in kwargs
+
+
 def test_batch_size_is_clamped_to_at_least_one() -> None:
     kwargs = build_llama_kwargs({"batchSize": 0}, "model.gguf", 4096, 0, None)
     assert kwargs["n_batch"] == 1

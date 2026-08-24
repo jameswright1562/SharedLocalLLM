@@ -32,6 +32,7 @@ class Store:
             "autostart": False,
             "customModelDirectories": [],
             "modelLoadConfigs": {},
+            "modelTunes": {},
             "peer": None,
             "benchmarks": [],
         }
@@ -106,6 +107,22 @@ class Store:
     def model_load_configs(self) -> dict[str, dict[str, Any]]:
         with self._lock:
             return dict(self._settings.get("modelLoadConfigs") or {})
+
+    def save_model_tune(self, model_id: str, tune: dict[str, Any]) -> None:
+        """Remember the latest autotune result for a model.
+
+        Results carry the topology fingerprint they were measured on; callers
+        must re-check it before applying the winners to a launch.
+        """
+        with self._lock:
+            tunes = dict(self._settings.get("modelTunes") or {})
+            tunes[model_id] = tune
+            self._settings["modelTunes"] = tunes
+            self._write(self._settings)
+
+    def model_tunes(self) -> dict[str, dict[str, Any]]:
+        with self._lock:
+            return dict(self._settings.get("modelTunes") or {})
 
     def log(self, level: str, event: str, detail: str) -> None:
         line = f"{level} {event}: {detail}"

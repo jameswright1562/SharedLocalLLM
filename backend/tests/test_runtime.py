@@ -7,6 +7,7 @@ from typing import cast
 import pytest
 
 from sharedlocalllm_backend.errors import BackendError
+from sharedlocalllm_backend.autotune import Autotuner, topology_fingerprint
 from sharedlocalllm_backend.inference import InferenceEngine
 from sharedlocalllm_backend.peer import PeerManager
 from sharedlocalllm_backend.runtime import BackendRuntime
@@ -39,6 +40,9 @@ class FakeStore:
 
     def model_load_configs(self) -> dict[str, dict]:
         return dict(self.values.get("modelLoadConfigs") or {})
+
+    def model_tunes(self) -> dict[str, dict]:
+        return dict(self.values.get("modelTunes") or {})
 
     def logs(self) -> list[str]:
         return [f"{level} {event} {message}".strip() for level, event, message in self.entries]
@@ -230,6 +234,8 @@ def runtime_with(inference: object) -> BackendRuntime:
     runtime.cluster = {"status": "idle"}
     runtime.inference = cast(InferenceEngine, inference)
     runtime.server_engine = cast(ServerEngine, InactiveServerEngine())
+    runtime.autotuner = Autotuner(runtime.store)
+    runtime._active_compute_operation = None
     runtime._server_forwarder = None
     runtime.peer = cast(PeerManager, FakePeer())
     runtime.peer_active_model_id = None
@@ -257,6 +263,53 @@ def test_failed_load_publishes_error_instead_of_staying_loading() -> None:
         )
     assert runtime.cluster["status"] == "error"
     assert runtime.local_node["clusterStatus"] == "error"
+
+
+def test_cluster_launch_and_benchmark_are_blocked_while_autotuning() -> None:
+    runtime = runtime_with(SuccessfulLoadInference())
+    runtime._active_compute_operation = "model tuning"
+
+    with pytest.raises(BackendError) as launch_error:
+        asyncio.run(runtime.start_cluster("model", {"contextSize": 4096, "gpuLayers": []}))
+    with pytest.raises(BackendError) as benchmark_error:
+        asyncio.run(runtime.run_inference_benchmark("model"))
+
+    assert launch_error.value.code == "compute_busy"
+    assert benchmark_error.value.code == "compute_busy"
+
+
+def test_autotune_is_blocked_while_a_benchmark_is_running() -> None:
+    runtime = runtime_with(SuccessfulLoadInference())
+    runtime._active_compute_operation = "inference benchmark"
+
+    with pytest.raises(BackendError) as caught:
+        asyncio.run(runtime.start_model_autotune("model"))
+
+    assert caught.value.code == "compute_busy"
+
+
+def test_stale_model_tune_is_rejected_without_overwriting_saved_config() -> None:
+    runtime = runtime_with(SuccessfulLoadInference())
+    saved = {"contextSize": 8192, "gpuLayers": []}
+    cast(FakeStore, runtime.store).values["modelLoadConfigs"] = {"model": saved}
+    cast(FakeStore, runtime.store).values["modelTunes"] = {
+        "model": {
+            "fingerprint": "old-topology",
+            "winners": {
+                "batchSize": 2048,
+                "gpuLayersAllocations": [
+                    {"nodeId": "removed-peer", "layers": 1, "kind": "gpu"},
+                ],
+            },
+        },
+    }
+    assert topology_fingerprint(runtime._cluster_nodes()) != "old-topology"
+
+    with pytest.raises(BackendError) as caught:
+        runtime.apply_model_tune("model")
+
+    assert caught.value.code == "tune_topology_changed"
+    assert runtime.store.model_load_configs()["model"] == saved
 
 
 def test_successful_load_saves_the_config_for_the_next_launch() -> None:

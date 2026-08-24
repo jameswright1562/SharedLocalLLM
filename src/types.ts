@@ -76,6 +76,63 @@ export interface ModelLoadConfig {
   cpuThreads?: number;
   batchSize?: number;
   engine?: "builtin" | "llama-server";
+  uBatch?: number;
+  kvCacheK?: string;
+  kvCacheV?: string;
+  noOpOffload?: number;
+  rpcPoll?: number;
+}
+
+export interface ModelTuneWinners {
+  batchSize?: number | null;
+  uBatch?: number | null;
+  cpuThreads?: number | null;
+  kvCacheK?: string;
+  kvCacheV?: string;
+  gpuLayers?: number | null;
+  tensorSplit?: number[] | null;
+  noOpOffload?: number | null;
+  poll?: number | null;
+  gpuLayersAllocations?: GpuLayerAllocation[] | null;
+}
+
+export interface ModelTuneResult {
+  modelId: string;
+  modelName: string;
+  depth: "quick" | "full";
+  ranAt: string;
+  fingerprint: string;
+  winners: ModelTuneWinners;
+  promptTokensPerSecond: number;
+  generationTokensPerSecond: number;
+}
+
+export interface AutotuneEvent {
+  type: string;
+  stage?: string;
+  label?: string;
+  bestTokensPerSecond?: number;
+}
+
+export type AutotuneRunStatus = "idle" | "running" | "complete" | "failed" | "cancelled";
+
+export interface AutotuneStatus {
+  status: AutotuneRunStatus;
+  modelId?: string;
+  modelName?: string;
+  depth?: "quick" | "full";
+  stageIndex?: number;
+  stageCount?: number;
+  currentStage?: string | null;
+  error?: string;
+  result?: ModelTuneResult | null;
+  events?: AutotuneEvent[];
+}
+
+export interface AppliedModelTune {
+  loadConfig: ModelLoadConfig;
+  staleTopology: boolean;
+  tunedAt?: string;
 }
 
 export interface ModelLoadOptions {
@@ -156,6 +213,7 @@ export interface AppSnapshot {
   network?: NetworkBenchmark;
   cluster: ClusterSession;
   modelLoadConfigs?: Record<string, ModelLoadConfig>;
+  modelTunes?: Record<string, ModelTuneResult>;
   benchmarks: InferenceBenchmark[];
   logs: string[];
   apiPort: number;
@@ -230,6 +288,10 @@ export interface AppService {
   stopCluster(): Promise<ClusterSession>;
   runInferenceBenchmark(modelId: string): Promise<InferenceBenchmark[]>;
   cancelInferenceBenchmark(): Promise<void>;
+  startModelAutotune(modelId: string, depth: "quick" | "full"): Promise<AutotuneStatus>;
+  getAutotuneStatus(): Promise<AutotuneStatus>;
+  cancelModelAutotune(): Promise<void>;
+  applyModelTune(modelId: string): Promise<AppliedModelTune>;
   sendChatMessage(
     messages: ChatMessage[],
     settings: ChatSettings,

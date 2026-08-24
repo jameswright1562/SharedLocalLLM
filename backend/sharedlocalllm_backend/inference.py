@@ -19,6 +19,17 @@ from .tool_calls import normalize_tool_message, normalize_tool_stream, template_
 
 LLAMA_SPLIT_MODE_LAYER = 1
 
+# Stable ggml type enum ids (llama-cpp-python's type_k/type_v take ints).
+KV_CACHE_TYPE_IDS = {
+    "f32": 0, "f16": 1, "q4_0": 2, "q4_1": 3, "q5_0": 6, "q5_1": 7, "q8_0": 8,
+}
+
+
+def _kv_cache_type_id(value: Any) -> int | None:
+    if not value:
+        return None
+    return KV_CACHE_TYPE_IDS.get(str(value).strip().lower())
+
 
 def build_llama_kwargs(
     load_config: dict[str, Any], path: str, context: int, gpu_layers: int,
@@ -29,10 +40,13 @@ def build_llama_kwargs(
     Unknown or unset options fall back to the previous hardcoded behaviour:
     automatic CPU threads, a 512-token batch, mmap enabled, and standard (non
     flash) attention. ``cpuThreads=0`` keeps the automatic half-core default.
+    Autotuned extras (``uBatch``, ``kvCacheK``, ``kvCacheV``) are applied only
+    when present; RPC-only knobs like ``--poll`` have no equivalent here.
     """
     cores = os.cpu_count() or 8
     requested_threads = int(load_config.get("cpuThreads", 0))
-    return {
+    batch = max(1, int(load_config.get("batchSize", 512)))
+    kwargs: dict[str, Any] = {
         "model_path": path,
         "n_ctx": context,
         "n_gpu_layers": (
@@ -44,12 +58,22 @@ def build_llama_kwargs(
         "tensor_split": tensor_split,
         "n_threads": max(1, requested_threads) if requested_threads > 0 else max(1, cores // 2),
         "n_threads_batch": max(1, cores),
-        "n_batch": max(1, int(load_config.get("batchSize", 512))),
+        "n_batch": batch,
         "flash_attn": bool(load_config.get("flashAttention", False)),
         "use_mmap": bool(load_config.get("useMmap", True)),
         "use_mlock": bool(load_config.get("useMlock", False)),
         "verbose": True,
     }
+    raw_ubatch = load_config.get("uBatch")
+    if raw_ubatch:
+        kwargs["n_ubatch"] = max(1, min(int(raw_ubatch), batch))
+    k_type = _kv_cache_type_id(load_config.get("kvCacheK"))
+    v_type = _kv_cache_type_id(load_config.get("kvCacheV"))
+    if k_type is not None:
+        kwargs["type_k"] = k_type
+    if v_type is not None:
+        kwargs["type_v"] = v_type
+    return kwargs
 
 
 def layer_totals(

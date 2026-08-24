@@ -10,11 +10,13 @@ import uuid
 from pathlib import Path
 from typing import Any, AsyncIterator, Awaitable, Callable
 
+from .autotune import Autotuner, apply_tune_result, locate_bench, topology_fingerprint
 from .errors import BackendError
 from .hardware import probe_node
 from .inference import InferenceEngine, layer_totals
 from .models import discover_local, lm_studio_roots, merge_remote, refresh_fits
 from .peer import PeerManager, RpcForwarder
+from .llama_server import install_root_candidates
 from .placement import estimate_split, normalize_load_config, validate_fit
 from .rpc_native import runtime_health
 from .server_engine import ServerEngine
@@ -36,6 +38,8 @@ class BackendRuntime:
         self.inference = InferenceEngine(self.store)
         self.peer = PeerManager(self)
         self.server_engine = ServerEngine(self.store)
+        self.autotuner = Autotuner(self.store)
+        self._active_compute_operation: str | None = None
         self._server_forwarder: RpcForwarder | None = None
         self.api_port_changed: Callable[[int], Awaitable[None]] | None = None
         self.api_health: Callable[[], bool] | None = None
@@ -56,6 +60,7 @@ class BackendRuntime:
             except asyncio.CancelledError:
                 pass
             self._peer_refresh_task = None
+        await self.autotuner.cancel()
         await self.inference.unload()
         await self.server_engine.stop()
         await self._stop_server_forwarder()
@@ -117,6 +122,19 @@ class BackendRuntime:
             nodes.append(peer)
         return nodes
 
+    def _begin_compute_operation(self, operation: str) -> None:
+        if self._active_compute_operation:
+            raise BackendError(
+                "compute_busy",
+                f"Cannot start {operation} while {self._active_compute_operation} is in progress.",
+                "Wait for the current model operation to finish or cancel it first.",
+            )
+        self._active_compute_operation = operation
+
+    def _end_compute_operation(self, operation: str) -> None:
+        if self._active_compute_operation == operation:
+            self._active_compute_operation = None
+
     def snapshot(self) -> dict[str, Any]:
         nodes = [self.local_node]
         peer = self._peer_node()
@@ -132,6 +150,7 @@ class BackendRuntime:
             "nodes": nodes,
             "models": self.models,
             "modelLoadConfigs": self.store.model_load_configs(),
+            "modelTunes": self.store.model_tunes(),
             "modelDirectories": self._directories(),
             "network": self.network,
             "cluster": self.cluster,
@@ -157,6 +176,12 @@ class BackendRuntime:
             "stop_cluster": self.stop_cluster,
             "run_inference_benchmark": lambda: self.run_inference_benchmark(args["modelId"]),
             "cancel_inference_benchmark": self.cancel_generation,
+            "start_model_autotune": lambda: self.start_model_autotune(
+                args["modelId"], args.get("depth", "quick")
+            ),
+            "get_autotune_status": self.autotuner.status,
+            "cancel_model_autotune": self.autotuner.cancel,
+            "apply_model_tune": lambda: self.apply_model_tune(args["modelId"]),
             "send_chat_message": lambda: self.chat(args["messages"], args["settings"], args.get("images", [])),
             "cancel_generation": self.cancel_generation,
             "get_api_config": self.get_api_config,
@@ -290,6 +315,17 @@ class BackendRuntime:
         return estimate_split(model, normalized, nodes)
 
     async def start_cluster(
+        self, model_id: str, load_config: dict[str, Any], allow_peer: bool = True,
+        save_config: bool = True,
+    ) -> dict[str, Any]:
+        operation = "cluster startup"
+        self._begin_compute_operation(operation)
+        try:
+            return await self._start_cluster(model_id, load_config, allow_peer, save_config)
+        finally:
+            self._end_compute_operation(operation)
+
+    async def _start_cluster(
         self, model_id: str, load_config: dict[str, Any], allow_peer: bool = True,
         save_config: bool = True,
     ) -> dict[str, Any]:
@@ -509,6 +545,16 @@ class BackendRuntime:
         self.server_engine.cancel()
 
     async def run_inference_benchmark(self, model_id: str, proxy_peer: bool = True) -> list[dict[str, Any]]:
+        operation = "inference benchmark"
+        self._begin_compute_operation(operation)
+        try:
+            return await self._run_inference_benchmark(model_id, proxy_peer)
+        finally:
+            self._end_compute_operation(operation)
+
+    async def _run_inference_benchmark(
+        self, model_id: str, proxy_peer: bool = True,
+    ) -> list[dict[str, Any]]:
         model = self._model(model_id)
         active_model_id = (
             self.server_engine.model_id if self.server_engine.active else self.inference.model_id
@@ -532,7 +578,7 @@ class BackendRuntime:
                     {"nodeId": value["nodeId"], "layers": value["layers"], "kind": value["kind"]}
                     for value in split["devices"]
                 ]
-                await self.start_cluster(
+                await self._start_cluster(
                     model_id,
                     {"contextSize": 4096, "gpuLayers": allocations},
                     allow_peer=proxy_peer,
@@ -560,6 +606,111 @@ class BackendRuntime:
             if temporary:
                 await self.stop_cluster(proxy_peer=False)
         return [result]
+
+    async def start_model_autotune(self, model_id: str, depth: str = "quick") -> dict[str, Any]:
+        """Sweep llama-bench configurations for a local model.
+
+        Requires an idle cluster (VRAM must be free) and the pinned
+        llama-bench runtime; distributed tuning reuses the peer RPC tunnel.
+        """
+        operation = "model tuning"
+        self._begin_compute_operation(operation)
+        forwarder: RpcForwarder | None = None
+        handed_off = False
+        try:
+            if self.cluster.get("status") in ("loading", "running"):
+                raise BackendError(
+                    "cluster_active",
+                    "Stop the running cluster before tuning this model.",
+                    "Benchmarks need the GPU memory that the loaded model is using.",
+                )
+            model = self._model(model_id)
+            if model.get("remoteOnly"):
+                raise BackendError(
+                    "model_not_local",
+                    "This model is stored only on the other computer.",
+                    "Start tuning from the computer that stores the GGUF file.",
+                )
+            path = self.model_paths.get(model_id)
+            if not path:
+                raise BackendError("model_not_found", "The selected local GGUF is unavailable.")
+            exe = locate_bench(install_root_candidates())
+            if exe is None:
+                raise BackendError(
+                    "runtime_unavailable",
+                    "The pinned llama-bench tool is not installed.",
+                    "Run pnpm backend:install in development, or reinstall the desktop application.",
+                )
+            nodes = self._cluster_nodes()
+            peer = self.store.get("peer")
+            rpc_endpoint = None
+            if peer and peer.get("capabilities", {}).get("online", True):
+                forwarder = RpcForwarder(self.peer, model_id=model_id)
+                rpc_endpoint = await forwarder.start()
+            status = await self.autotuner.start(
+                exe=exe, model_path=path, model_id=model_id,
+                model_name=model["name"], depth=depth, nodes=nodes,
+                total_layers=int(model.get("layerCount") or 0),
+                rpc_endpoint=rpc_endpoint,
+                fingerprint=topology_fingerprint(nodes),
+                on_complete=lambda result: self._record_model_tune(model_id, result),
+                on_finish=lambda _status: self._finish_model_autotune(forwarder),
+            )
+            handed_off = True
+            return status
+        finally:
+            if not handed_off and forwarder:
+                await forwarder.stop()
+            if not handed_off:
+                self._end_compute_operation(operation)
+
+    async def _finish_model_autotune(self, forwarder: RpcForwarder | None) -> None:
+        try:
+            if forwarder:
+                await forwarder.stop()
+        finally:
+            self._end_compute_operation("model tuning")
+
+    def _record_model_tune(self, model_id: str, result: dict[str, Any]) -> None:
+        winners = result.get("winners") or {}
+        self.store.save_model_tune(model_id, result)
+        self.store.append_benchmark({
+            "id": str(uuid.uuid4()), "modelName": result.get("modelName", ""),
+            "topology": "distributed" if winners.get("tensorSplit") else "local",
+            "gpuLayers": winners.get("gpuLayersAllocations") or [],
+            "promptTokensPerSecond": result.get("promptTokensPerSecond", 0.0),
+            "generationTokensPerSecond": result.get("generationTokensPerSecond", 0.0),
+            "loadTimeSeconds": 0.0, "memoryPeakGb": 0.0, "recommended": True,
+            "autotune": True, "ranAt": result.get("ranAt", ""),
+        })
+
+    def apply_model_tune(self, model_id: str) -> dict[str, Any]:
+        """Merge a stored tune into this model's load config for launch."""
+        tune = self.store.model_tunes().get(model_id)
+        if not tune:
+            raise BackendError(
+                "tune_missing",
+                "This model has no saved tuning result.",
+                "Run Auto-tune first.",
+            )
+        if tune.get("fingerprint") != topology_fingerprint(self._cluster_nodes()):
+            raise BackendError(
+                "tune_topology_changed",
+                "The saved tune was measured on a different computer or GPU topology.",
+                "Run Auto-tune again before applying these settings.",
+            )
+        base = dict(self.store.model_load_configs().get(model_id) or {})
+        base.setdefault("contextSize", 4096)
+        base.setdefault("gpuLayers", [])
+        config = apply_tune_result(base, tune)
+        # Persist immediately so the next launch prefills with tuned values
+        # even if the user closes the app before starting a cluster.
+        self.store.save_model_load_config(model_id, config)
+        return {
+            "loadConfig": config,
+            "staleTopology": False,
+            "tunedAt": tune.get("ranAt"),
+        }
 
     def get_api_config(self) -> dict[str, Any]:
         port = int(self.store.get("apiPort", 11435))

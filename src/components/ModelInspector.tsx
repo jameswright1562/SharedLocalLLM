@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import {
   Badge,
   Button,
@@ -46,6 +46,7 @@ interface ModelInspectorProps {
   force: boolean;
   setForce: (force: boolean) => void;
   launch: () => void;
+  autotuneSection?: ReactNode;
 }
 
 const fitBadgeColors = {
@@ -76,6 +77,7 @@ export function ModelInspector({
   force,
   setForce,
   launch,
+  autotuneSection,
 }: ModelInspectorProps) {
   if (!selected)
     return (
@@ -155,6 +157,7 @@ export function ModelInspector({
         </Note>
       )}
       <AdvancedLoadOptions options={loadOptions} setOptions={setLoadOptions} />
+      {autotuneSection}
       <Button
         fullWidth
         disabled={busy || ((selected.fit === "does-not-fit" || splitInvalid) && !force)}

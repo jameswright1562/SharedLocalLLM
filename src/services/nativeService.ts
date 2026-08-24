@@ -1,6 +1,8 @@
 import type {
+  AppliedModelTune,
   AppService,
   AppSnapshot,
+  AutotuneStatus,
   ChatMessage,
   ChatResponse,
   ChatSettings,
@@ -89,6 +91,11 @@ export const nativeService: AppService = {
   stopCluster: () => backend("stop_cluster"),
   runInferenceBenchmark: (modelId) => backend("run_inference_benchmark", { modelId }),
   cancelInferenceBenchmark: () => backend("cancel_inference_benchmark"),
+  startModelAutotune: (modelId, depth) =>
+    backend<AutotuneStatus>("start_model_autotune", { modelId, depth }),
+  getAutotuneStatus: () => backend<AutotuneStatus>("get_autotune_status"),
+  cancelModelAutotune: () => backend("cancel_model_autotune"),
+  applyModelTune: (modelId) => backend<AppliedModelTune>("apply_model_tune", { modelId }),
   sendChatMessage: async (messages, settings, images, onStream) => {
     onStream?.({ kind: "status", status: "processing" });
     let receivedContent = false;

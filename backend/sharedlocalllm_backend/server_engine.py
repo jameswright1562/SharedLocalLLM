@@ -197,6 +197,22 @@ def build_command(
         "--flash-attn", "on" if config.get("flashAttention") else "off",
         "--batch-size", str(max(1, int(config.get("batchSize", 512)))),
     ]
+    raw_ubatch = config.get("uBatch")
+    if raw_ubatch:
+        command += ["--ubatch-size", str(max(1, int(raw_ubatch)))]
+    for key, flag in (
+        ("kvCacheK", "--cache-type-k"),
+        ("kvCacheV", "--cache-type-v"),
+    ):
+        value = config.get(key)
+        if value:
+            command += [flag, str(value)]
+    # Autotuned RPC-only knobs; absent unless a tuning run stored them.
+    if int(config.get("noOpOffload") or 0) == 1:
+        command += ["--no-op-offload"]
+    raw_poll = config.get("rpcPoll")
+    if raw_poll is not None:
+        command += ["--poll", str(max(0, min(100, int(raw_poll))))]
     use_mmap = bool(config.get("useMmap", True))
     use_mlock = bool(config.get("useMlock"))
     load_mode = (

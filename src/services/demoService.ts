@@ -1,8 +1,18 @@
-import type { ApiTryResult, AppService, ModelDirectory, NetworkBenchmark } from "../types";
+import type {
+  ApiTryResult,
+  AppService,
+  AutotuneStatus,
+  ModelDirectory,
+  ModelLoadConfig,
+  ModelTuneResult,
+  NetworkBenchmark,
+} from "../types";
 import { demoApi, demoNodes, demoSnapshot } from "./demoData";
 import { estimateModelSplitLocally } from "./splitEstimate";
 
 const delay = (ms = 180) => new Promise((resolve) => window.setTimeout(resolve, ms));
+
+let demoTune: AutotuneStatus = { status: "idle" };
 
 export const demoService: AppService = {
   async getAppSnapshot() {
@@ -127,6 +137,89 @@ export const demoService: AppService = {
   },
   async cancelInferenceBenchmark() {
     await delay(80);
+  },
+  async startModelAutotune(modelId, depth) {
+    await delay(150);
+    const model = demoSnapshot.models.find((item) => item.id === modelId);
+    if (!model) throw new Error("The tuning model is unavailable.");
+    if (demoSnapshot.cluster.status === "running") {
+      throw new Error("Stop the running cluster before tuning this model.");
+    }
+    const stages = [
+      "batch",
+      "gpu-layers",
+      "threads",
+      ...(depth === "full" ? ["tensor-split", "kv-cache", "op-offload", "poll"] : []),
+      "final-verification",
+    ];
+    demoTune = {
+      status: "running",
+      modelId,
+      modelName: model.name,
+      depth,
+      stageIndex: 0,
+      stageCount: stages.length,
+      currentStage: null,
+      events: [],
+      result: null,
+    };
+    stages.forEach((stage, index) => {
+      window.setTimeout(
+        () => {
+          if (demoTune.status !== "running") return;
+          demoTune = {
+            ...demoTune,
+            stageIndex: index + 1,
+            currentStage: stage,
+            events: [
+              ...(demoTune.events ?? []),
+              { type: "stage-result", stage, bestTokensPerSecond: 92 + index * 2.5 },
+            ],
+          };
+          if (index === stages.length - 1) {
+            const result: ModelTuneResult = {
+              modelId,
+              modelName: model.name,
+              depth,
+              ranAt: new Date().toISOString(),
+              fingerprint: "demo-topology",
+              winners: { batchSize: 2048, uBatch: 512, cpuThreads: 8, kvCacheK: "q4_0" },
+              promptTokensPerSecond: 118.6,
+              generationTokensPerSecond: 24.1,
+            };
+            demoTune = { ...demoTune, status: "complete", currentStage: null, result };
+            demoSnapshot.modelTunes = { ...demoSnapshot.modelTunes, [modelId]: result };
+          }
+        },
+        450 * (index + 1),
+      );
+    });
+    return structuredClone(demoTune);
+  },
+  async getAutotuneStatus() {
+    await delay(60);
+    return structuredClone(demoTune);
+  },
+  async cancelModelAutotune() {
+    await delay(60);
+    if (demoTune.status === "running") demoTune = { ...demoTune, status: "cancelled" };
+  },
+  async applyModelTune(modelId) {
+    await delay(160);
+    const tune = demoSnapshot.modelTunes?.[modelId];
+    if (!tune) throw new Error("This model has no saved tuning result. Run Auto-tune first.");
+    const base: ModelLoadConfig = demoSnapshot.modelLoadConfigs?.[modelId] ?? {
+      contextSize: 4096,
+      gpuLayers: [],
+    };
+    const loadConfig = {
+      ...base,
+      batchSize: tune.winners.batchSize ?? base.batchSize ?? 512,
+      uBatch: tune.winners.uBatch ?? base.uBatch,
+      cpuThreads: tune.winners.cpuThreads ?? base.cpuThreads,
+    };
+    demoSnapshot.modelLoadConfigs = { ...demoSnapshot.modelLoadConfigs, [modelId]: loadConfig };
+    return { loadConfig: structuredClone(loadConfig), staleTopology: false, tunedAt: tune.ranAt };
   },
   async sendChatMessage(messages, _settings, _images, onStream) {
     await delay(600);
