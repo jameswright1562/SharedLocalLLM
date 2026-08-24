@@ -23,7 +23,7 @@ from typing import Any, BinaryIO, cast
 
 from .errors import BackendError
 from .llama_server import install_root_candidates, locate_llama_server, probe_health
-from .tool_calls import normalize_tool_message, normalize_tool_stream
+from .tool_calls import ToolStreamNormalizer, normalize_tool_message
 
 START_TIMEOUT_SECONDS = 300
 _CONSOLE_LOCK = threading.Lock()
@@ -533,10 +533,14 @@ class ServerEngine:
         )
         try:
             if needs_tool_fallback and tools:
-                buffered = [event async for event in events]
-                for event in normalize_tool_stream(buffered, tools):
-                    output_parts.append(_openai_event_content(event))
-                    yield event
+                normalizer = ToolStreamNormalizer(tools)
+                async for event in events:
+                    for normalized in normalizer.push(event):
+                        output_parts.append(_openai_event_content(normalized))
+                        yield normalized
+                for normalized in normalizer.finish():
+                    output_parts.append(_openai_event_content(normalized))
+                    yield normalized
                 completed = True
                 return
             async for event in events:

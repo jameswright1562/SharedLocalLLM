@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from sharedlocalllm_backend.rpc_native import (
+    NativeRpcServer,
     classify_devices,
     prepare_model_devices,
     server_start_arguments,
@@ -195,11 +196,9 @@ def test_prepare_rpc_load_reserves_remote_cpu_device(monkeypatch, tmp_path) -> N
     asyncio.run(scenario())
 
 
-def stubbed_worker(monkeypatch) -> tuple[object, list[bool], threading.Event]:
+def stubbed_worker(monkeypatch) -> tuple[NativeRpcServer, list[bool], threading.Event]:
     """A NativeRpcServer whose daemon thread and readiness probe are faked."""
     from sharedlocalllm_backend import rpc_native
-    from sharedlocalllm_backend.rpc_native import NativeRpcServer
-
     class DummySocket:
         def __enter__(self):
             return self

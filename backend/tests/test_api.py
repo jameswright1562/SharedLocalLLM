@@ -5,7 +5,7 @@ import json
 import logging
 import socket
 import time
-from typing import cast
+from typing import Any, cast
 
 import httpx
 import pytest
@@ -44,9 +44,20 @@ class Runtime:
             {"id": "loaded-model", "name": "Orchid 9B", "quantization": "Q4_K_M"},
             {"id": "other-model", "name": "Zephyr 8x7B", "quantization": "Q8_0"},
         ]
+        self.inference: Any = None
 
     async def chat(self, *_args, **_kwargs):
         return {"content": "hello", "reasoning": "", "tokensPerSecond": 1.0}
+
+    async def chat_openai_stream(self, messages, settings, tools, tool_choice):
+        server_engine = getattr(self, "server_engine", None)
+        engine = (
+            server_engine
+            if server_engine is not None and server_engine.active
+            else self.inference
+        )
+        async for event in engine.chat_openai_stream(messages, settings, tools, tool_choice):
+            yield event
 
 
 def tool_spec() -> list[dict]:
@@ -198,6 +209,10 @@ def test_local_stream_relays_native_tool_call_deltas_and_finish_reason() -> None
             "finish_reason": None,
         }]},
         {"choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}]},
+        {
+            "choices": [],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+        },
     ]
 
     class StreamingInference:
@@ -221,6 +236,7 @@ def test_local_stream_relays_native_tool_call_deltas_and_finish_reason() -> None
                 json={
                     "stream": True, "messages": [{"role": "user", "content": "Run it"}],
                     "tools": tool_spec(), "tool_choice": "auto",
+                    "stream_options": {"include_usage": True},
                 },
             )
 
@@ -228,21 +244,36 @@ def test_local_stream_relays_native_tool_call_deltas_and_finish_reason() -> None
     events = [line.removeprefix("data: ") for line in response.text.splitlines() if line]
     assert events[-1] == "[DONE]"
     payloads = [json.loads(line) for line in events[:-1]]
+    assert payloads[0]["usage"] is None
     assert payloads[1]["choices"][0]["delta"]["tool_calls"][0]["function"]["name"] == "Bash"
-    assert payloads[-1]["choices"][0]["finish_reason"] == "tool_calls"
+    assert payloads[-2]["choices"][0]["finish_reason"] == "tool_calls"
+    assert payloads[-1] == {
+        "id": "chatcmpl-sharedlocalllm",
+        "object": "chat.completion.chunk",
+        "model": "loaded-model",
+        "choices": [],
+        "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+    }
 
 
-def test_remote_stream_synthesizes_tool_call_and_terminal_chunks() -> None:
+def test_remote_stream_relays_peer_chunks_and_usage() -> None:
     class RemoteRuntime(Runtime):
         def __init__(self) -> None:
             super().__init__()
             self.cluster["coordinatorNodeId"] = "peer"
 
-        async def chat(self, *_args, **_kwargs):
-            return {
-                "content": "",
-                "message": {"role": "assistant", "content": None, "tool_calls": [tool_call()]},
-                "finishReason": "tool_calls",
+        async def chat_openai_stream(self, messages, settings, tools, tool_choice):
+            yield {
+                "choices": [{
+                    "index": 0,
+                    "delta": {"tool_calls": [{"index": 0, **tool_call()}]},
+                    "finish_reason": None,
+                }],
+            }
+            yield {"choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}]}
+            yield {
+                "choices": [],
+                "usage": {"prompt_tokens": 8, "completion_tokens": 3, "total_tokens": 11},
             }
 
     async def request():
@@ -251,7 +282,10 @@ def test_remote_stream_synthesizes_tool_call_and_terminal_chunks() -> None:
             return await client.post(
                 "/v1/chat/completions",
                 headers={"Authorization": "Bearer secret"},
-                json={"stream": True, "messages": [], "tools": tool_spec()},
+                json={
+                    "stream": True, "messages": [], "tools": tool_spec(),
+                    "stream_options": {"include_usage": True},
+                },
             )
 
     response = asyncio.run(request())
@@ -260,8 +294,91 @@ def test_remote_stream_synthesizes_tool_call_and_terminal_chunks() -> None:
     streamed_call = payloads[0]["choices"][0]["delta"]["tool_calls"][0]
     assert streamed_call["index"] == 0
     assert streamed_call["function"]["name"] == "Bash"
-    assert payloads[-1]["choices"][0]["finish_reason"] == "tool_calls"
+    assert payloads[-2]["choices"][0]["finish_reason"] == "tool_calls"
+    assert payloads[-1]["usage"]["total_tokens"] == 11
     assert events[-1] == "[DONE]"
+
+
+def test_stream_reaches_http_client_before_generation_finishes() -> None:
+    class GatedRuntime(Runtime):
+        def __init__(self) -> None:
+            super().__init__()
+            self.release = asyncio.Event()
+            self.finished = False
+
+        async def chat_openai_stream(self, messages, settings, tools, tool_choice):
+            yield {
+                "choices": [{
+                    "index": 0, "delta": {"content": "first"}, "finish_reason": None,
+                }],
+            }
+            await self.release.wait()
+            self.finished = True
+            yield {"choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]}
+
+    async def scenario() -> None:
+        runtime = GatedRuntime()
+        server = uvicorn.Server(uvicorn.Config(
+            create_openai_app(runtime), host="127.0.0.1", port=0,
+            log_level="warning", lifespan="off",
+        ))
+        task = asyncio.create_task(server.serve())
+        try:
+            for _ in range(100):
+                if server.started:
+                    break
+                await asyncio.sleep(0.05)
+            port = int(server.servers[0].sockets[0].getsockname()[1])
+            async with httpx.AsyncClient(timeout=2) as client:
+                async with client.stream(
+                    "POST",
+                    f"http://127.0.0.1:{port}/v1/chat/completions",
+                    headers={"Authorization": "Bearer secret"},
+                    json={"stream": True, "messages": []},
+                ) as response:
+                    lines = response.aiter_lines()
+                    first_line = await asyncio.wait_for(anext(lines), 1)
+                    first = json.loads(first_line.removeprefix("data: "))
+                    assert first["choices"][0]["delta"]["content"] == "first"
+                    assert runtime.finished is False
+                    runtime.release.set()
+                    remaining = [line async for line in lines if line]
+                    assert remaining[-1] == "data: [DONE]"
+        finally:
+            runtime.release.set()
+            server.should_exit = True
+            await task
+
+    asyncio.run(scenario())
+
+
+def test_stream_omits_usage_unless_the_client_requests_it() -> None:
+    chunks = [
+        {"choices": [{"index": 0, "delta": {"content": "hi"}, "finish_reason": None}]},
+        {"choices": [], "usage": {"prompt_tokens": 2, "completion_tokens": 1, "total_tokens": 3}},
+    ]
+
+    class StreamingInference:
+        async def chat_openai_stream(self, *_args):
+            for chunk in chunks:
+                yield chunk
+
+    class StreamingRuntime(Runtime):
+        def __init__(self) -> None:
+            super().__init__()
+            self.inference = StreamingInference()
+
+    async def request():
+        transport = httpx.ASGITransport(app=create_openai_app(StreamingRuntime()))
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            return await client.post(
+                "/v1/chat/completions",
+                headers={"Authorization": "Bearer secret"},
+                json={"stream": True, "messages": []},
+            )
+
+    response = asyncio.run(request())
+    assert '"usage"' not in response.text
 
 
 def test_chat_accepts_standard_required_tool_choice_for_agent_clients() -> None:

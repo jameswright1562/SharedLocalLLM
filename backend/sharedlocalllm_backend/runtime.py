@@ -527,17 +527,14 @@ class BackendRuntime:
         return await self.inference.chat(messages, settings, images, tools, tool_choice)
 
     async def chat_stream_events(
-        self, messages: list[dict[str, Any]], settings: dict[str, Any], images: list[str]
+        self, messages: list[dict[str, Any]], settings: dict[str, Any], images: list[str],
+        proxy_peer: bool = True,
     ) -> AsyncIterator[dict[str, Any]]:
-        if self._remote_coordinator():
-            result = await self.chat(messages, settings, images)
-            if result.get("reasoning"):
-                yield {"type": "reasoning", "content": result["reasoning"]}
-            if result.get("content"):
-                yield {"type": "token", "content": result["content"]}
-            if result.get("tokensPerSecond"):
-                yield {"type": "stats", "tokensPerSecond": result["tokensPerSecond"]}
-            yield {"type": "done"}
+        if proxy_peer and self._remote_coordinator():
+            async for event in self.peer.stream("chat_stream", {
+                "messages": messages, "settings": settings, "images": images,
+            }):
+                yield event
             return
         if self.server_engine.active:
             if images:
@@ -549,6 +546,27 @@ class BackendRuntime:
                 yield event
             return
         async for event in self.inference.chat_stream(messages, settings, images):
+            yield event
+
+    async def chat_openai_stream(
+        self,
+        messages: list[dict[str, Any]],
+        settings: dict[str, Any],
+        tools: list[dict[str, Any]] | None = None,
+        tool_choice: Any = None,
+        proxy_peer: bool = True,
+    ) -> AsyncIterator[dict[str, Any]]:
+        if proxy_peer and self._remote_coordinator():
+            async for event in self.peer.stream("chat_openai_stream", {
+                "messages": messages, "settings": settings,
+                "tools": tools, "toolChoice": tool_choice,
+            }):
+                yield event
+            return
+        engine = self.server_engine if self.server_engine.active else self.inference
+        async for event in engine.chat_openai_stream(
+            messages, settings, tools, tool_choice
+        ):
             yield event
 
     async def cancel_generation(self) -> None:

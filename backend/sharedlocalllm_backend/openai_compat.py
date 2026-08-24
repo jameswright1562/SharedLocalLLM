@@ -66,34 +66,19 @@ def completion_usage(response: dict[str, Any]) -> dict[str, int]:
     return {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
 
 
-def chunk_payload(choices: list[dict[str, Any]], model: str) -> dict[str, Any]:
-    return {
+def chunk_payload(
+    choices: list[dict[str, Any]], model: str,
+    usage: dict[str, Any] | None = None, include_usage: bool = False,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
         "id": "chatcmpl-sharedlocalllm",
         "object": "chat.completion.chunk",
         "model": model,
         "choices": choices,
     }
-
-
-def buffered_stream_choices(response: dict[str, Any]) -> Iterator[list[dict[str, Any]]]:
-    """Turn a peer's buffered completion into valid OpenAI stream choices."""
-    message = completion_message(response)
-    delta: dict[str, Any] = {"role": "assistant"}
-    if message.get("content") is not None:
-        delta["content"] = message.get("content", "")
-    if message.get("reasoning_content"):
-        delta["reasoning_content"] = message["reasoning_content"]
-    tool_calls = message.get("tool_calls")
-    if isinstance(tool_calls, list):
-        delta["tool_calls"] = [
-            {**call, "index": index} for index, call in enumerate(tool_calls)
-            if isinstance(call, dict)
-        ]
-    yield [{"index": 0, "delta": delta, "finish_reason": None}]
-    yield [{
-        "index": 0, "delta": {},
-        "finish_reason": completion_finish_reason(response),
-    }]
+    if include_usage:
+        payload["usage"] = usage
+    return payload
 
 
 def reasoning_stream_chunks(

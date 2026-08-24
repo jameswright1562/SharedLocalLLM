@@ -380,3 +380,32 @@ def test_openai_stream_converts_text_tool_markup_for_agent_clients() -> None:
     assert all("<tool_call>" not in str(chunk) for chunk in streamed)
     assert streamed[1]["choices"][0]["delta"]["tool_calls"][0]["function"]["name"] == "Bash"
     assert streamed[-1]["choices"][0]["finish_reason"] == "tool_calls"
+
+
+def test_openai_tool_stream_yields_answer_text_before_sse_completion() -> None:
+    engine = ServerEngine(Store())
+    release = asyncio.Event()
+
+    async def sse_events(_payload):
+        yield {
+            "choices": [{
+                "index": 0, "delta": {"content": "early"}, "finish_reason": None,
+            }],
+        }
+        await release.wait()
+        yield {"choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]}
+
+    engine._sse_events = sse_events  # type: ignore[method-assign]
+
+    async def consume() -> dict:
+        stream = engine.chat_openai_stream([], {}, TOOLS, "required")
+        try:
+            first = await asyncio.wait_for(anext(stream), 1)
+            release.set()
+            return first
+        finally:
+            release.set()
+            await stream.aclose()  # type: ignore[attr-defined]
+
+    first = asyncio.run(consume())
+    assert first["choices"][0]["delta"]["content"] == "early"

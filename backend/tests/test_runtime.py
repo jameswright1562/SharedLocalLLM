@@ -145,6 +145,15 @@ class ActiveServerEngine:
         yield {"type": "token", "content": "server"}
         yield {"type": "done"}
 
+    async def chat_openai_stream(self, _messages, _settings, tools=None, tool_choice=None):
+        self.received = {"tools": tools, "tool_choice": tool_choice}
+        yield {
+            "choices": [{
+                "index": 0, "delta": {"content": "server"}, "finish_reason": None,
+            }],
+        }
+        yield {"choices": [], "usage": {"prompt_tokens": 2, "completion_tokens": 1, "total_tokens": 3}}
+
     async def benchmark(self):
         return 100.0, 25.0
 
@@ -204,10 +213,16 @@ class ProxyingPeer:
     def __init__(self, response=None) -> None:
         self.response = response if response is not None else {}
         self.calls: list[tuple[str, dict | None]] = []
+        self.stream_events: list[dict] = []
 
     async def request(self, op: str, data: dict | None = None):
         self.calls.append((op, data))
         return self.response
+
+    async def stream(self, op: str, data: dict | None = None):
+        self.calls.append((op, data))
+        for event in self.stream_events:
+            yield event
 
 
 def runtime_with(inference: object) -> BackendRuntime:
@@ -434,16 +449,50 @@ def test_chat_forwards_tools_to_the_remote_coordinator() -> None:
 
 def test_chat_streams_through_the_peer_when_the_peer_runs_the_model() -> None:
     inference = RecordingInference()
-    peer = ProxyingPeer(response={"content": "remote", "tokensPerSecond": 12.5})
+    peer = ProxyingPeer()
+    peer.stream_events = [
+        {"type": "token", "content": "re"},
+        {"type": "token", "content": "mote"},
+        {"type": "stats", "tokensPerSecond": 12.5},
+        {"type": "done"},
+    ]
     runtime = peer_runtime(inference, peer)
 
     async def collect() -> list[dict]:
         return [event async for event in runtime.chat_stream_events([{"role": "user", "content": "hi"}], {}, [])]
 
     events = asyncio.run(collect())
-    assert [event["type"] for event in events] == ["token", "stats", "done"]
-    assert events[0]["content"] == "remote"
-    assert peer.calls[-1][0] == "chat"
+    assert [event["type"] for event in events] == ["token", "token", "stats", "done"]
+    assert "".join(event.get("content", "") for event in events) == "remote"
+    assert peer.calls[-1][0] == "chat_stream"
+
+
+def test_openai_chat_streams_native_chunks_through_the_peer() -> None:
+    peer = ProxyingPeer()
+    peer.stream_events = [
+        {"choices": [{"index": 0, "delta": {"content": "remote"}, "finish_reason": None}]},
+        {"choices": [], "usage": {"prompt_tokens": 4, "completion_tokens": 1, "total_tokens": 5}},
+    ]
+    runtime = peer_runtime(RecordingInference(), peer)
+    tools = [{"type": "function", "function": {"name": "Bash"}}]
+
+    async def collect() -> list[dict]:
+        return [
+            event async for event in runtime.chat_openai_stream(
+                [{"role": "user", "content": "hi"}], {}, tools, "auto"
+            )
+        ]
+
+    events = asyncio.run(collect())
+
+    assert events == peer.stream_events
+    assert peer.calls[-1] == (
+        "chat_openai_stream",
+        {
+            "messages": [{"role": "user", "content": "hi"}],
+            "settings": {}, "tools": tools, "toolChoice": "auto",
+        },
+    )
 
 
 def test_local_cluster_beats_peer_heartbeat_for_routing() -> None:
@@ -477,7 +526,13 @@ def test_active_server_engine_handles_agent_chat_stream_cancel_and_benchmark() -
     async def collect() -> list[dict]:
         return [event async for event in runtime.chat_stream_events([], {}, [])]
 
+    async def collect_openai() -> list[dict]:
+        return [
+            event async for event in runtime.chat_openai_stream([], {}, tools, "required")
+        ]
+
     events = asyncio.run(collect())
+    openai_events = asyncio.run(collect_openai())
     asyncio.run(runtime.cancel_generation())
     benchmark = asyncio.run(runtime.run_inference_benchmark("model"))
 
@@ -485,6 +540,7 @@ def test_active_server_engine_handles_agent_chat_stream_cancel_and_benchmark() -
     assert server.received["tools"] == tools
     assert server.received["tool_choice"] == "required"
     assert events == [{"type": "token", "content": "server"}, {"type": "done"}]
+    assert openai_events[-1]["usage"]["total_tokens"] == 3
     assert server.cancelled is True
     assert benchmark[0]["generationTokensPerSecond"] == 25.0
     assert inference.chatted is False
@@ -663,5 +719,7 @@ def test_peer_refresh_loop_survives_unexpected_errors(monkeypatch) -> None:
     asyncio.run(run())
 
     assert calls["count"] == 5
-    warnings = [entry for entry in runtime.store.entries if entry[0] == "WARN"]
+    warnings = [
+        entry for entry in cast(FakeStore, runtime.store).entries if entry[0] == "WARN"
+    ]
     assert len(warnings) == 2

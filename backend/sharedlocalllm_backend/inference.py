@@ -25,6 +25,18 @@ KV_CACHE_TYPE_IDS = {
 }
 
 
+def _publish_thread_event(
+    loop: asyncio.AbstractEventLoop, queue: asyncio.Queue[Any], value: Any,
+) -> None:
+    """Publish from llama's daemon thread unless its consumer loop has closed."""
+    if loop.is_closed():
+        return
+    try:
+        loop.call_soon_threadsafe(queue.put_nowait, value)
+    except RuntimeError:
+        pass
+
+
 def _kv_cache_type_id(value: Any) -> int | None:
     if not value:
         return None
@@ -232,6 +244,8 @@ class InferenceEngine:
         tools: list[dict[str, Any]] | None = None, tool_choice: Any = None,
     ) -> AsyncIterator[dict[str, Any]]:
         """Relay llama-cpp-python's OpenAI chunks without losing tool calls."""
+        from llama_cpp import LogitsProcessorList
+
         async with self._async_lock:
             if not self.llm:
                 raise BackendError("model_not_loaded", "Start a model before chatting.")
@@ -240,6 +254,34 @@ class InferenceEngine:
             queue: asyncio.Queue[dict[str, Any] | BaseException | None] = asyncio.Queue()
 
             def run() -> None:
+                prompt_tokens = 0
+                completion_tokens = 0
+                pass_prompt_tokens: int | None = None
+                evaluated_tokens: int | None = None
+                finish_reason: str | None = None
+                usage_seen = False
+                completed = False
+
+                def count_tokens(
+                    tokens: npt.NDArray[np.intc], logits: npt.NDArray[np.single],
+                ) -> npt.NDArray[np.single]:
+                    nonlocal prompt_tokens, completion_tokens
+                    nonlocal pass_prompt_tokens, evaluated_tokens
+                    if self._cancel.is_set():
+                        raise InterruptedError
+                    count = len(tokens)
+                    # A discontinuity starts another internal completion pass,
+                    # as used by some tool-oriented llama-cpp chat handlers.
+                    if evaluated_tokens is None or count != evaluated_tokens + 1:
+                        if pass_prompt_tokens is not None and evaluated_tokens is not None:
+                            completion_tokens += max(
+                                0, evaluated_tokens - pass_prompt_tokens
+                            )
+                        prompt_tokens += count
+                        pass_prompt_tokens = count
+                    evaluated_tokens = count
+                    return logits
+
                 try:
                     with self._sync_lock:
                         chunks = self._create_chat_completion(
@@ -248,6 +290,7 @@ class InferenceEngine:
                             max_tokens=int(settings.get("maxTokens", 512)),
                             tools=tools,
                             tool_choice=tool_choice,
+                            logits_processor=LogitsProcessorList([count_tokens]),
                             stream=True,
                         )
                         needs_tool_fallback = bool(
@@ -255,20 +298,45 @@ class InferenceEngine:
                         )
 
                         def native_values():
+                            nonlocal finish_reason, usage_seen, completed
                             for chunk in chunks:
                                 if self._cancel.is_set():
                                     break
-                                yield dict(chunk)
+                                value = dict(chunk)
+                                usage_seen = usage_seen or isinstance(value.get("usage"), dict)
+                                for choice in value.get("choices", []):
+                                    if isinstance(choice, dict) and choice.get("finish_reason"):
+                                        finish_reason = str(choice["finish_reason"])
+                                yield value
+                            else:
+                                completed = True
 
                         values = native_values()
                         if needs_tool_fallback and tools:
-                            values = iter(normalize_tool_stream(list(values), tools))
+                            values = normalize_tool_stream(values, tools)
                         for value in reasoning_stream_chunks(values, self.reasoning):
-                            loop.call_soon_threadsafe(queue.put_nowait, value)
+                            _publish_thread_event(loop, queue, value)
+                        if (
+                            completed and not usage_seen and pass_prompt_tokens is not None
+                            and evaluated_tokens is not None
+                        ):
+                            completion_tokens += max(
+                                0, evaluated_tokens - pass_prompt_tokens
+                            )
+                            if finish_reason == "length":
+                                completion_tokens += 1
+                            usage = {
+                                "prompt_tokens": prompt_tokens,
+                                "completion_tokens": completion_tokens,
+                                "total_tokens": prompt_tokens + completion_tokens,
+                            }
+                            _publish_thread_event(
+                                loop, queue, {"choices": [], "usage": usage}
+                            )
                 except BaseException as error:
-                    loop.call_soon_threadsafe(queue.put_nowait, error)
+                    _publish_thread_event(loop, queue, error)
                 finally:
-                    loop.call_soon_threadsafe(queue.put_nowait, None)
+                    _publish_thread_event(loop, queue, None)
 
             threading.Thread(target=run, name="llama-openai-stream", daemon=True).start()
             try:
@@ -344,12 +412,12 @@ class InferenceEngine:
                                     started = time.monotonic()
                                 for kind, piece in splitter.push(str(content)):
                                     (reasoning_parts if kind == "reasoning" else answer_parts).append(piece)
-                                    loop.call_soon_threadsafe(
-                                        queue.put_nowait, {"type": kind, "content": piece}
+                                    _publish_thread_event(
+                                        loop, queue, {"type": kind, "content": piece}
                                     )
                     for kind, piece in splitter.finish():
                         (reasoning_parts if kind == "reasoning" else answer_parts).append(piece)
-                        loop.call_soon_threadsafe(queue.put_nowait, {"type": kind, "content": piece})
+                        _publish_thread_event(loop, queue, {"type": kind, "content": piece})
                     full = "".join(reasoning_parts) + "".join(answer_parts)
                     completion_tokens = 1
                     with self._sync_lock:
@@ -357,15 +425,16 @@ class InferenceEngine:
                             1, len(self.llm.tokenize(full.encode("utf-8"), add_bos=False))
                         )
                     elapsed = max((time.monotonic() - started) if started else 0.001, 0.001)
-                    loop.call_soon_threadsafe(
-                        queue.put_nowait,
+                    _publish_thread_event(
+                        loop,
+                        queue,
                         {"type": "stats", "tokensPerSecond": round(completion_tokens / elapsed, 2)},
                     )
-                    loop.call_soon_threadsafe(queue.put_nowait, {"type": "done"})
+                    _publish_thread_event(loop, queue, {"type": "done"})
                 except BaseException as error:
-                    loop.call_soon_threadsafe(queue.put_nowait, error)
+                    _publish_thread_event(loop, queue, error)
                 finally:
-                    loop.call_soon_threadsafe(queue.put_nowait, None)
+                    _publish_thread_event(loop, queue, None)
 
             thread = threading.Thread(target=run, name="llama-chat-stream", daemon=True)
             thread.start()

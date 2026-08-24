@@ -16,7 +16,6 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from .errors import BackendError
 from .models import model_slug
 from .openai_compat import (
-    buffered_stream_choices,
     chunk_payload,
     completion_finish_reason,
     completion_message,
@@ -226,18 +225,26 @@ def create_openai_app(runtime: Any) -> FastAPI:
             "maxTokens": body.get("max_completion_tokens", body.get("max_tokens", 512)),
         }
         tools, tool_choice = request_tool_options(body)
-        if body.get("stream") and runtime.cluster.get("coordinatorNodeId") == runtime.local_node["id"]:
+        if body.get("stream"):
+            stream_options = body.get("stream_options")
+            include_usage = bool(
+                isinstance(stream_options, dict) and stream_options.get("include_usage") is True
+            )
+
             async def events():
-                server_engine = getattr(runtime, "server_engine", None)
-                engine = (
-                    server_engine
-                    if server_engine is not None and server_engine.active
-                    else runtime.inference
-                )
-                async for native in engine.chat_openai_stream(
+                async for native in runtime.chat_openai_stream(
                     body.get("messages", []), settings, tools, tool_choice
                 ):
-                    chunk = chunk_payload(native.get("choices", []), active_model or "active")
+                    choices = native.get("choices", [])
+                    usage = native.get("usage")
+                    if not choices and isinstance(usage, dict) and not include_usage:
+                        continue
+                    chunk = chunk_payload(
+                        choices,
+                        active_model or "active",
+                        usage if isinstance(usage, dict) else None,
+                        include_usage,
+                    )
                     yield f"data: {json.dumps(chunk)}\n\n"
                 yield "data: [DONE]\n\n"
             return StreamingResponse(events(), media_type="text/event-stream")
@@ -245,13 +252,6 @@ def create_openai_app(runtime: Any) -> FastAPI:
             body.get("messages", []), settings, [], proxy_peer=True,
             tools=tools, tool_choice=tool_choice,
         )
-        if body.get("stream"):
-            async def remote_events():
-                for choices in buffered_stream_choices(response):
-                    chunk = chunk_payload(choices, active_model or "active")
-                    yield f"data: {json.dumps(chunk)}\n\n"
-                yield "data: [DONE]\n\n"
-            return StreamingResponse(remote_events(), media_type="text/event-stream")
         return {
             "id": "chatcmpl-sharedlocalllm", "object": "chat.completion",
             "model": active_model or "active",

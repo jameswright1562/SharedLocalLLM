@@ -5,15 +5,16 @@ import ipaddress
 import json
 import socket
 import time
-from typing import Any
+from typing import Any, AsyncIterator
 
 import psutil
 
 from .errors import BackendError
+from .peer_stream import request_stream, serve_events
 
 DISCOVERY_PORT = 49157
 PEER_PORT = 49158
-PROTOCOL_VERSION = 6
+PROTOCOL_VERSION = 7
 # Heartbeat-style ops must stay snappy. Generation ops have no response
 # deadline because llama.cpp may spend an unbounded period ingesting a prompt
 # without sending data; callers can still cancel generation explicitly.
@@ -172,6 +173,13 @@ class PeerManager:
             )
         return response.get("value", {})
 
+    async def stream(
+        self, op: str, data: dict[str, Any] | None = None,
+    ) -> AsyncIterator[dict[str, Any]]:
+        host, port = self.endpoint()
+        async for event in request_stream(host, port, PROTOCOL_VERSION, op, data or {}):
+            yield event
+
     async def heartbeat(self) -> dict[str, Any] | None:
         try:
             value = await self.request("heartbeat")
@@ -272,6 +280,13 @@ class PeerManager:
                         }
                         self.runtime._publish_local_cluster()
                 return
+            if op in ("chat_stream", "chat_openai_stream"):
+                await serve_events(
+                    reader,
+                    writer,
+                    self._dispatch_stream(op, data),
+                )
+                return
             if op == "connect":
                 self._accept_peer(data, writer)
             value = await self._dispatch(op, data)
@@ -322,6 +337,25 @@ class PeerManager:
         if op == "benchmark_inference":
             return await self.runtime.run_inference_benchmark(data["modelId"], proxy_peer=False)
         raise BackendError("peer_request_unknown", f"Unknown peer operation: {op}")
+
+    async def _dispatch_stream(
+        self, op: str, data: dict[str, Any],
+    ) -> AsyncIterator[dict[str, Any]]:
+        if op == "chat_stream":
+            async for event in self.runtime.chat_stream_events(
+                data["messages"], data["settings"], data.get("images", []),
+                proxy_peer=False,
+            ):
+                yield event
+            return
+        if op == "chat_openai_stream":
+            async for event in self.runtime.chat_openai_stream(
+                data["messages"], data["settings"], data.get("tools"),
+                data.get("toolChoice"), proxy_peer=False,
+            ):
+                yield event
+            return
+        raise BackendError("peer_request_unknown", f"Unknown peer stream operation: {op}")
 
     async def _broadcast_loop(self) -> None:
         sockets = _broadcast_sockets()

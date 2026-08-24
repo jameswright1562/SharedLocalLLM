@@ -4,6 +4,7 @@ import copy
 import json
 import re
 import secrets
+from collections.abc import Iterable, Iterator
 from typing import Any
 
 _TOOL_BLOCK = re.compile(r"<tool_call>\s*(.*?)\s*</tool_call>", re.IGNORECASE | re.DOTALL)
@@ -15,6 +16,8 @@ _PARAMETER = re.compile(
     r"<parameter=([^>\r\n]+)>\s*(.*?)\s*</parameter>",
     re.IGNORECASE | re.DOTALL,
 )
+_TOOL_OPEN = "<tool_call>"
+_TOOL_CLOSE = "</tool_call>"
 
 
 def _decoded_mapping(value: Any) -> Any:
@@ -145,42 +148,150 @@ def normalize_tool_message(
     return {**message, "content": content, "tool_calls": calls}, "tool_calls"
 
 
+class ToolStreamNormalizer:
+    """Incrementally convert textual tool markup while native deltas pass through."""
+
+    def __init__(self, tools: list[dict[str, Any]]) -> None:
+        self.tools = tools
+        self.pending: list[dict[str, Any]] = []
+        self.pending_text = ""
+        self.native = False
+        self.converted = False
+        self.role_seen = False
+        self.call_index = 0
+
+    def push(self, chunk: dict[str, Any]) -> list[dict[str, Any]]:
+        choices = chunk.get("choices", [])
+        native = any(
+            isinstance(choice, dict)
+            and isinstance(choice.get("delta"), dict)
+            and choice["delta"].get("tool_calls")
+            for choice in choices
+        )
+        if native:
+            output = self._flush_pending()
+            self.native = True
+            output.append(chunk)
+            self._note_role(chunk)
+            return output
+        if self.native:
+            self._note_role(chunk)
+            return [chunk]
+
+        choice = choices[0] if len(choices) == 1 else None
+        delta = choice.get("delta") if isinstance(choice, dict) else None
+        content = delta.get("content") if isinstance(delta, dict) else None
+        if isinstance(content, str):
+            assert isinstance(choice, dict) and isinstance(delta, dict)
+            self.pending.append(chunk)
+            self.pending_text += content
+            has_tool, complete = self._text_state(self.pending_text.lower())
+            if not complete:
+                return []
+            output = self._convert_pending() if has_tool else self._flush_pending()
+            return [self._tool_finish(item) for item in output] if self.converted else output
+
+        terminal = any(
+            isinstance(item, dict) and item.get("finish_reason") is not None
+            for item in choices
+        ) or "usage" in chunk
+        output = self._flush_pending() if terminal else []
+        if self.converted:
+            chunk = self._tool_finish(chunk)
+        output.append(chunk)
+        self._note_role(chunk)
+        return output
+
+    def finish(self) -> list[dict[str, Any]]:
+        output = self._flush_pending()
+        return [self._tool_finish(item) for item in output] if self.converted else output
+
+    @staticmethod
+    def _text_state(text: str) -> tuple[bool, bool]:
+        position = 0
+        has_tool = False
+        while (start := text.find(_TOOL_OPEN, position)) >= 0:
+            has_tool = True
+            end = text.find(_TOOL_CLOSE, start + len(_TOOL_OPEN))
+            if end < 0:
+                return has_tool, False
+            position = end + len(_TOOL_CLOSE)
+        partial = any(text.endswith(_TOOL_OPEN[:n]) for n in range(1, len(_TOOL_OPEN)))
+        return has_tool, not partial
+
+    def _flush_pending(self) -> list[dict[str, Any]]:
+        output, self.pending = self.pending, []
+        self.pending_text = ""
+        for chunk in output:
+            self._note_role(chunk)
+        return output
+
+    @staticmethod
+    def _tool_finish(chunk: dict[str, Any]) -> dict[str, Any]:
+        return {
+            **chunk,
+            "choices": [
+                {**choice, "finish_reason": "tool_calls"}
+                if isinstance(choice, dict) and choice.get("finish_reason") is not None
+                else choice for choice in chunk.get("choices", [])
+            ],
+        }
+
+    def _convert_pending(self) -> list[dict[str, Any]]:
+        parsed = parse_text_tool_calls(self.pending_text, self.tools)
+        if parsed is None:
+            return self._flush_pending()
+        content, calls = parsed
+        pending, self.pending = self.pending, []
+        self.pending_text = ""
+        output: list[dict[str, Any]] = []
+        terminal: list[dict[str, Any]] = []
+        usage: list[dict[str, Any]] = []
+        for chunk in pending:
+            choice = chunk["choices"][0]
+            delta = choice["delta"]
+            siblings = {key: value for key, value in delta.items() if key != "content"}
+            envelope = {key: value for key, value in chunk.items() if key != "usage"}
+            if siblings or set(choice) - {"index", "delta", "finish_reason"}:
+                auxiliary = {**envelope, "choices": [
+                    {**choice, "delta": siblings, "finish_reason": None},
+                ]}
+                output.append(auxiliary)
+                self._note_role(auxiliary)
+            if choice.get("finish_reason") is not None:
+                terminal.append({
+                    **envelope,
+                    "choices": [{"index": choice.get("index", 0), "delta": {},
+                                 "finish_reason": "tool_calls"}],
+                })
+            if "usage" in chunk:
+                usage.append({**envelope, "choices": [], "usage": chunk["usage"]})
+        if not self.role_seen:
+            output.append({"choices": [{"index": 0, "delta": {"role": "assistant"}, "finish_reason": None}]})
+            self.role_seen = True
+        if content:
+            output.append({"choices": [{"index": 0, "delta": {"content": content}, "finish_reason": None}]})
+        indexed_calls = [
+            {**call, "index": self.call_index + index} for index, call in enumerate(calls)
+        ]
+        self.call_index += len(calls)
+        output.append({"choices": [
+            {"index": 0, "delta": {"tool_calls": indexed_calls}, "finish_reason": None},
+        ]})
+        self.converted = True
+        return [*output, *terminal, *usage]
+
+    def _note_role(self, chunk: dict[str, Any]) -> None:
+        for choice in chunk.get("choices", []):
+            delta = choice.get("delta") if isinstance(choice, dict) else None
+            if isinstance(delta, dict) and delta.get("role") == "assistant":
+                self.role_seen = True
+
+
 def normalize_tool_stream(
-    chunks: list[dict[str, Any]], tools: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    """Convert buffered text markup to OpenAI tool deltas when native parsing did not."""
-    choices = [
-        choice for chunk in chunks for choice in chunk.get("choices", [])
-        if isinstance(choice, dict)
-    ]
-    if any(choice.get("delta", {}).get("tool_calls") for choice in choices):
-        return chunks
-    text = "".join(
-        str(choice.get("delta", {}).get("content") or "") for choice in choices
-    )
-    parsed = parse_text_tool_calls(text, tools)
-    if parsed is None:
-        return chunks
-    content, calls = parsed
-    normalized: list[dict[str, Any]] = [{
-        "choices": [{
-            "index": 0, "delta": {"role": "assistant"}, "finish_reason": None,
-        }],
-    }]
-    if content:
-        normalized.append({
-            "choices": [{
-                "index": 0, "delta": {"content": content}, "finish_reason": None,
-            }],
-        })
-    normalized.append({
-        "choices": [{
-            "index": 0,
-            "delta": {"tool_calls": [{**call, "index": index} for index, call in enumerate(calls)]},
-            "finish_reason": None,
-        }],
-    })
-    normalized.append({
-        "choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}],
-    })
-    return normalized
+    chunks: Iterable[dict[str, Any]], tools: list[dict[str, Any]],
+) -> Iterator[dict[str, Any]]:
+    normalizer = ToolStreamNormalizer(tools)
+    for chunk in chunks:
+        yield from normalizer.push(chunk)
+    yield from normalizer.finish()

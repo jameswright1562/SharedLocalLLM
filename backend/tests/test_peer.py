@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from typing import cast
 
 import pytest
 
@@ -128,3 +129,141 @@ def test_control_peer_operations_keep_a_response_deadline() -> None:
     asyncio.run(peer.request("heartbeat"))
 
     assert captured["heartbeat"] == PEER_REQUEST_TIMEOUT_SECONDS
+
+
+def test_peer_stream_delivers_events_before_generation_finishes() -> None:
+    async def scenario() -> None:
+        release = asyncio.Event()
+
+        class Store:
+            def __init__(self) -> None:
+                self.address = ""
+
+            def get(self, key: str):
+                return {"address": self.address} if key == "peer" else None
+
+            def log(self, *_args) -> None:
+                return None
+
+        class Runtime:
+            local_node = {"id": "coordinator"}
+
+            def __init__(self) -> None:
+                self.store = Store()
+
+            async def chat_openai_stream(self, *_args, **_kwargs):
+                yield {"choices": [{"delta": {"content": "first"}}]}
+                await release.wait()
+                yield {"choices": [{"delta": {"content": "second"}}]}
+
+            async def cancel_generation(self) -> None:
+                return None
+
+        serving_runtime = Runtime()
+        serving_peer = PeerManager(serving_runtime)
+        server = await asyncio.start_server(serving_peer._handle_connection, "127.0.0.1", 0)
+        port = int(server.sockets[0].getsockname()[1])
+        client_runtime = Runtime()
+        client_runtime.store.address = f"127.0.0.1:{port}"
+        client_peer = PeerManager(client_runtime)
+        stream = client_peer.stream("chat_openai_stream", {
+            "messages": [], "settings": {}, "tools": None, "toolChoice": None,
+        })
+        try:
+            first = await asyncio.wait_for(anext(stream), 1)
+            assert first["choices"][0]["delta"]["content"] == "first"
+            release.set()
+            remaining = [event async for event in stream]
+            assert remaining[0]["choices"][0]["delta"]["content"] == "second"
+        finally:
+            await getattr(stream, "aclose")()
+            server.close()
+            await server.wait_closed()
+
+    asyncio.run(scenario())
+
+
+def test_closing_peer_stream_cancels_coordinator_generation() -> None:
+    async def scenario() -> None:
+        cancelled = asyncio.Event()
+        global_cancelled = False
+
+        class Store:
+            def __init__(self) -> None:
+                self.address = ""
+
+            def get(self, key: str):
+                return {"address": self.address} if key == "peer" else None
+
+            def log(self, *_args) -> None:
+                return None
+
+        class Runtime:
+            local_node = {"id": "coordinator"}
+
+            def __init__(self) -> None:
+                self.store = Store()
+
+            async def chat_openai_stream(self, *_args, **_kwargs):
+                try:
+                    yield {"choices": [{"delta": {"content": "first"}}]}
+                    await asyncio.Event().wait()
+                finally:
+                    cancelled.set()
+
+            async def cancel_generation(self) -> None:
+                nonlocal global_cancelled
+                global_cancelled = True
+
+        serving_runtime = Runtime()
+        serving_peer = PeerManager(serving_runtime)
+        server = await asyncio.start_server(serving_peer._handle_connection, "127.0.0.1", 0)
+        port = int(server.sockets[0].getsockname()[1])
+        client_runtime = Runtime()
+        client_runtime.store.address = f"127.0.0.1:{port}"
+        stream = PeerManager(client_runtime).stream("chat_openai_stream", {
+            "messages": [], "settings": {}, "tools": None, "toolChoice": None,
+        })
+        try:
+            await asyncio.wait_for(anext(stream), 1)
+            await getattr(stream, "aclose")()
+            await asyncio.wait_for(cancelled.wait(), 1)
+            assert global_cancelled is False
+        finally:
+            server.close()
+            await server.wait_closed()
+
+    asyncio.run(scenario())
+
+
+def test_cancelling_stream_relay_closes_the_active_generator() -> None:
+    async def scenario() -> None:
+        from sharedlocalllm_backend.peer_stream import serve_events
+
+        closed = asyncio.Event()
+        reader = asyncio.StreamReader()
+
+        class Writer:
+            def write(self, _data: bytes) -> None:
+                return None
+
+            async def drain(self) -> None:
+                return None
+
+        async def events():
+            try:
+                await asyncio.Event().wait()
+                yield {}
+            finally:
+                closed.set()
+
+        task = asyncio.create_task(
+            serve_events(reader, cast(asyncio.StreamWriter, Writer()), events())
+        )
+        await asyncio.sleep(0)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        await asyncio.wait_for(closed.wait(), 1)
+
+    asyncio.run(scenario())

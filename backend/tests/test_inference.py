@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import threading
 
 import pytest
 
@@ -220,6 +221,58 @@ def test_openai_stream_preserves_native_tool_call_chunks() -> None:
     assert engine.llm.kwargs["tool_choice"] == "auto"
 
 
+def test_openai_stream_adds_usage_from_builtin_engine_token_counts() -> None:
+    class FakeLlama:
+        def create_chat_completion(self, **kwargs):
+            counter = kwargs["logits_processor"][0]
+            counter([0] * 12, None)
+            yield {
+                "choices": [{
+                    "index": 0, "delta": {"content": "hello"}, "finish_reason": None,
+                }],
+            }
+            for count in range(13, 17):
+                counter([0] * count, None)
+            yield {"choices": [{"index": 0, "delta": {}, "finish_reason": "length"}]}
+
+    engine = InferenceEngine(None)
+    engine.llm = FakeLlama()
+
+    async def collect() -> list[dict]:
+        return [chunk async for chunk in engine.chat_openai_stream([], {})]
+
+    chunks = asyncio.run(collect())
+
+    assert chunks[-1] == {
+        "choices": [],
+        "usage": {"prompt_tokens": 12, "completion_tokens": 5, "total_tokens": 17},
+    }
+
+
+def test_openai_stream_usage_aggregates_multiple_internal_completion_passes() -> None:
+    class FakeLlama:
+        def create_chat_completion(self, **kwargs):
+            counter = kwargs["logits_processor"][0]
+            counter([0] * 10, None)
+            counter([0] * 11, None)
+            counter([0] * 20, None)
+            counter([0] * 21, None)
+            counter([0] * 22, None)
+            yield {"choices": [{"index": 0, "delta": {}, "finish_reason": "length"}]}
+
+    engine = InferenceEngine(None)
+    engine.llm = FakeLlama()
+
+    async def collect() -> list[dict]:
+        return [chunk async for chunk in engine.chat_openai_stream([], {})]
+
+    chunks = asyncio.run(collect())
+
+    assert chunks[-1]["usage"] == {
+        "prompt_tokens": 30, "completion_tokens": 4, "total_tokens": 34,
+    }
+
+
 def test_chat_sync_converts_qwen_text_tool_markup() -> None:
     tools = [{"type": "function", "function": {"name": "Bash", "parameters": {}}}]
 
@@ -276,6 +329,38 @@ def test_openai_stream_converts_qwen_text_tool_markup() -> None:
     assert all("<tool_call>" not in str(chunk) for chunk in chunks)
     assert chunks[1]["choices"][0]["delta"]["tool_calls"][0]["function"]["name"] == "Bash"
     assert chunks[-1]["choices"][0]["finish_reason"] == "tool_calls"
+
+
+def test_openai_tool_stream_yields_answer_text_before_source_completion() -> None:
+    tools = [{"type": "function", "function": {"name": "Bash", "parameters": {}}}]
+    release = threading.Event()
+
+    class FakeLlama:
+        def create_chat_completion(self, **_kwargs):
+            yield {
+                "choices": [{
+                    "index": 0, "delta": {"content": "early"}, "finish_reason": None,
+                }],
+            }
+            release.wait(2)
+            yield {"choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]}
+
+    engine = InferenceEngine(None)
+    engine.llm = FakeLlama()
+
+    async def consume() -> dict:
+        stream = engine.chat_openai_stream([], {}, tools, "auto")
+        try:
+            first = await asyncio.wait_for(anext(stream), 1)
+            release.set()
+            return first
+        finally:
+            release.set()
+            await stream.aclose()  # type: ignore[attr-defined]
+
+    first = asyncio.run(consume())
+    assert first["choices"][0]["delta"]["content"] == "early"
+    assert engine._cancel.is_set()
 
 
 def test_tool_choice_none_keeps_tool_markup_as_plain_content() -> None:
@@ -399,7 +484,7 @@ def test_chat_stream_sets_cancel_when_the_consumer_disconnects() -> None:
         stream = engine.chat_stream([{"role": "user", "content": "hi"}], {})
         async for _chunk in stream:
             break
-        await stream.aclose()
+        await getattr(stream, "aclose")()
 
     asyncio.run(consume())
     assert engine._cancel.is_set()
