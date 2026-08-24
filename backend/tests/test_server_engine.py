@@ -409,3 +409,16 @@ def test_openai_tool_stream_yields_answer_text_before_sse_completion() -> None:
 
     first = asyncio.run(consume())
     assert first["choices"][0]["delta"]["content"] == "early"
+
+
+def test_build_command_requests_a_unified_kv_buffer_only_when_configured() -> None:
+    def command(load_config: dict[str, object]) -> list[str]:
+        return build_command(
+            Path("llama-server.exe"), model_path="model.gguf", port=8123,
+            context=8192, api_key=None, mtp=False, speculation_supported=False,
+            rpc_endpoint=None, gpu_layers=None, tensor_split=None,
+            reasoning_preserve=False, load_config=load_config,
+        )
+
+    assert "--kv-unified" in command({"kvUnified": True})
+    assert "--kv-unified" not in command({})

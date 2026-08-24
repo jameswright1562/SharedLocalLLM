@@ -532,3 +532,51 @@ def test_forced_combined_gpu_launch_without_split_offloads_automatically(monkeyp
         captured["load_config"], "model.gguf", 4096, captured["gpu_layers"], None
     )
     assert kwargs["n_gpu_layers"] == -1
+
+
+def test_unified_kv_defaults_patch_is_scoped(monkeypatch: pytest.MonkeyPatch) -> None:
+    import llama_cpp.llama_cpp as lowlevel
+
+    from sharedlocalllm_backend.inference import unified_kv_defaults
+
+    original = lowlevel.llama_context_default_params
+    sentinel_calls = []
+
+    def counting_default() -> object:
+        sentinel_calls.append(True)
+        return original()
+
+    monkeypatch.setattr(lowlevel, "llama_context_default_params", counting_default)
+
+    with unified_kv_defaults():
+        assert lowlevel.llama_context_default_params().kv_unified is True
+
+    # The wrapper must restore the exact attribute llama-cpp-python reads.
+    assert lowlevel.llama_context_default_params is counting_default
+    assert sentinel_calls
+
+
+def test_load_sync_applies_unified_kv_only_when_requested(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    import llama_cpp
+    import llama_cpp.llama_cpp as lowlevel
+
+    from sharedlocalllm_backend.inference import InferenceEngine
+
+    observed: dict[str, bool] = {}
+
+    class RecordingLlama:
+        def __init__(self, **_kwargs: object) -> None:
+            observed["kv_unified"] = bool(lowlevel.llama_context_default_params().kv_unified)
+
+    monkeypatch.setattr(llama_cpp, "Llama", RecordingLlama)
+    engine = InferenceEngine(store=None)
+    model_file = tmp_path / "model.gguf"
+    model_file.write_bytes(b"")
+
+    engine._load_sync(str(model_file), 4096, 0, None, {"kvUnified": True})
+    assert observed["kv_unified"] is True
+
+    engine._load_sync(str(model_file), 4096, 0, None, {})
+    assert observed["kv_unified"] is False

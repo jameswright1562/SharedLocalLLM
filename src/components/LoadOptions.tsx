@@ -1,6 +1,17 @@
-import { Checkbox, Group, Paper, Stack, Text, TextInput, Title } from "@mantine/core";
+import { Checkbox, Group, Paper, Select, Stack, Text, TextInput, Title } from "@mantine/core";
 
 import type { ModelLoadOptions } from "../types";
+
+const KV_CACHE_TYPES = [
+  { value: "", label: "Auto (model default)" },
+  { value: "f32", label: "f32" },
+  { value: "f16", label: "f16" },
+  { value: "q8_0", label: "q8_0 — half the VRAM, near-lossless" },
+  { value: "q5_1", label: "q5_1" },
+  { value: "q5_0", label: "q5_0" },
+  { value: "q4_1", label: "q4_1" },
+  { value: "q4_0", label: "q4_0 — quarter of the VRAM, lower quality" },
+];
 
 export function AdvancedLoadOptions({
   options,
@@ -23,6 +34,27 @@ export function AdvancedLoadOptions({
           warning={
             options.flashAttention
               ? "Unsupported GPUs fall back to standard attention, so compare speed after enabling."
+              : undefined
+          }
+        />
+        <KvCacheTypeOption
+          label="KV cache type (keys)"
+          value={options.kvCacheK ?? ""}
+          onChange={(value) => setOptions({ ...options, kvCacheK: value || undefined })}
+        />
+        <KvCacheTypeOption
+          label="KV cache type (values)"
+          value={options.kvCacheV ?? ""}
+          onChange={(value) => setOptions({ ...options, kvCacheV: value || undefined })}
+        />
+        <ToggleOption
+          label="Unified KV buffer"
+          checked={options.kvUnified ?? false}
+          onChange={(checked) => setOptions({ ...options, kvUnified: checked })}
+          description="Shares one KV cache buffer across parallel sequences. Single-chat sessions and RPC device placement are unaffected either way."
+          warning={
+            options.kvUnified
+              ? "Only relevant when serving several sequences at once; otherwise this changes nothing measurable."
               : undefined
           }
         />
@@ -76,6 +108,35 @@ export function AdvancedLoadOptions({
         />
       </Stack>
     </Paper>
+  );
+}
+
+function KvCacheTypeOption({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <Stack gap={4}>
+      <Text component="label" size="sm">
+        {label}
+      </Text>
+      <Select
+        aria-label={label}
+        data={KV_CACHE_TYPES}
+        value={value}
+        onChange={(next) => onChange(next ?? "")}
+        allowDeselect={false}
+      />
+      <Text size="xs" c="dimmed">
+        Quantizing the cache trades a little quality for large VRAM savings at long context, which
+        can keep more layers on the GPUs.
+      </Text>
+    </Stack>
   );
 }
 

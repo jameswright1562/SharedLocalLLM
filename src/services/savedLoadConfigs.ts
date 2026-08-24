@@ -32,6 +32,9 @@ export function savedOptionValues(configs: SavedLoadConfigs): Record<string, Mod
     useMlock: Boolean(config.useMlock),
     cpuThreads: config.cpuThreads ?? DEFAULT_LOAD_OPTIONS.cpuThreads,
     batchSize: config.batchSize ?? DEFAULT_LOAD_OPTIONS.batchSize,
+    kvCacheK: config.kvCacheK ?? "",
+    kvCacheV: config.kvCacheV ?? "",
+    kvUnified: Boolean(config.kvUnified),
   }));
 }
 
