@@ -192,6 +192,9 @@ export function ModelsPage({ snapshot, service, refreshSnapshot }: PageProps) {
         useMlock: loadOptions.useMlock,
         cpuThreads: loadOptions.cpuThreads,
         batchSize: loadOptions.batchSize,
+        kvCacheK: loadOptions.kvCacheK || undefined,
+        kvCacheV: loadOptions.kvCacheV || undefined,
+        kvUnified: loadOptions.kvUnified ?? false,
       });
       setMessage(
         `${selected.name} is loading with ${manualSplit ? "the selected GPU layer split" : "automatic allocation"}${forceLaunch ? " (forced)" : ""}.`,
@@ -259,6 +262,9 @@ export function ModelsPage({ snapshot, service, refreshSnapshot }: PageProps) {
         useMlock: Boolean(config.useMlock),
         cpuThreads: config.cpuThreads ?? DEFAULT_LOAD_OPTIONS.cpuThreads,
         batchSize: config.batchSize ?? DEFAULT_LOAD_OPTIONS.batchSize,
+        kvCacheK: config.kvCacheK ?? "",
+        kvCacheV: config.kvCacheV ?? "",
+        kvUnified: Boolean(config.kvUnified),
       },
     }));
   }

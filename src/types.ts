@@ -81,6 +81,7 @@ export interface ModelLoadConfig {
   uBatch?: number;
   kvCacheK?: string;
   kvCacheV?: string;
+  kvUnified?: boolean;
   noOpOffload?: number;
   rpcPoll?: number;
 }
@@ -143,6 +144,9 @@ export interface ModelLoadOptions {
   useMlock: boolean;
   cpuThreads: number;
   batchSize: number;
+  kvCacheK?: string;
+  kvCacheV?: string;
+  kvUnified?: boolean;
 }
 
 export interface DeviceVramEstimate {

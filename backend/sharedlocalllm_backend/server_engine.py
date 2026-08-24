@@ -214,6 +214,10 @@ def build_command(
         value = config.get(key)
         if value:
             command += [flag, str(value)]
+    if bool(config.get("kvUnified")):
+        # Single KV buffer shared across sequences; llama-server only enables
+        # it by default when the slot count is auto, and this launch pins one.
+        command += ["--kv-unified"]
     # Autotuned RPC-only knobs; absent unless a tuning run stored them.
     if int(config.get("noOpOffload") or 0) == 1:
         command += ["--no-op-offload"]

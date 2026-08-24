@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import gc
 import os
 import threading
@@ -41,6 +42,33 @@ def _kv_cache_type_id(value: Any) -> int | None:
     if not value:
         return None
     return KV_CACHE_TYPE_IDS.get(str(value).strip().lower())
+
+
+@contextlib.contextmanager
+def unified_kv_defaults() -> Any:
+    """Force ``kv_unified=True`` while llama-cpp-python builds its context.
+
+    llama-cpp-python 0.3.x constructs ``llama_context_params`` from the native
+    default, which ships with the unified KV buffer disabled, and exposes no
+    constructor override. The low-level module attribute it reads at call time
+    is therefore wrapped for the duration of one ``Llama(...)`` construction.
+    Only relevant when serving several parallel sequences; a single-sequence
+    context behaves identically either way.
+    """
+    import llama_cpp.llama_cpp as lowlevel
+
+    original = lowlevel.llama_context_default_params
+
+    def unified() -> Any:
+        params = original()
+        params.kv_unified = True
+        return params
+
+    lowlevel.llama_context_default_params = unified  # type: ignore[assignment]
+    try:
+        yield
+    finally:
+        lowlevel.llama_context_default_params = original  # type: ignore[assignment]
 
 
 def build_llama_kwargs(
@@ -190,7 +218,11 @@ class InferenceEngine:
 
         kwargs = build_llama_kwargs(load_config, path, context, gpu_layers, tensor_split)
         with self._sync_lock:
-            self.llm = Llama(**kwargs)
+            if load_config.get("kvUnified"):
+                with unified_kv_defaults():
+                    self.llm = Llama(**kwargs)
+            else:
+                self.llm = Llama(**kwargs)
 
     async def unload(self) -> None:
         async with self._async_lock:

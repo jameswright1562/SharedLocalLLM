@@ -253,6 +253,7 @@ describe("dashboard pages", () => {
       useMlock: false,
       cpuThreads: 0,
       batchSize: 512,
+      kvUnified: false,
     });
 
     await user.click(screen.getByRole("button", { name: /^add folder$/i }));
@@ -300,6 +301,7 @@ describe("dashboard pages", () => {
       useMlock: true,
       cpuThreads: 6,
       batchSize: 1024,
+      kvUnified: false,
     });
   });
 
@@ -331,6 +333,7 @@ describe("dashboard pages", () => {
       uBatch: 512,
       kvCacheK: "q4_0",
       kvCacheV: "q8_0",
+      kvUnified: false,
       noOpOffload: 1,
       rpcPoll: 50,
     };
@@ -394,6 +397,7 @@ describe("dashboard pages", () => {
       useMlock: false,
       cpuThreads: 0,
       batchSize: 512,
+      kvUnified: false,
     });
   });
 
@@ -514,6 +518,7 @@ describe("dashboard pages", () => {
       useMlock: true,
       cpuThreads: 8,
       batchSize: 2048,
+      kvUnified: false,
     });
   });
 
@@ -551,6 +556,7 @@ describe("dashboard pages", () => {
       useMlock: false,
       cpuThreads: 0,
       batchSize: 512,
+      kvUnified: false,
     });
   });
 

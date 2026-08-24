@@ -100,3 +100,20 @@ def test_batch_size_stays_positive_and_rejects_non_numeric_input() -> None:
         normalize_load_config(
             MODEL, {"contextSize": 4096, "batchSize": "huge"}, [node("local", 8)]
         )
+
+
+def test_normalize_load_config_preserves_kv_cache_options() -> None:
+    config = normalize_load_config(
+        MODEL,
+        {
+            "contextSize": 8192,
+            "gpuLayers": [],
+            "kvCacheK": "q8_0",
+            "kvCacheV": "q4_0",
+            "kvUnified": True,
+        },
+        [node("local", 8)],
+    )
+    assert config["kvCacheK"] == "q8_0"
+    assert config["kvCacheV"] == "q4_0"
+    assert config["kvUnified"] is True

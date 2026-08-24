@@ -152,7 +152,9 @@ def test_server_start_arguments_allow_a_disabled_cache() -> None:
 def test_prepare_rpc_load_distributed_builds_remote_first_split(monkeypatch, tmp_path) -> None:
     import asyncio
 
-    pytest.importorskip("llama_cpp")
+    llama_cpp = pytest.importorskip("llama_cpp")
+    if getattr(llama_cpp, "__llama_stub__", False):
+        pytest.skip("prepare_rpc_load needs the real llama.cpp native registry")
 
     from sharedlocalllm_backend.rpc_native import NativeRpcServer, prepare_rpc_load
 
@@ -174,7 +176,9 @@ def test_prepare_rpc_load_distributed_builds_remote_first_split(monkeypatch, tmp
 def test_prepare_rpc_load_reserves_remote_cpu_device(monkeypatch, tmp_path) -> None:
     import asyncio
 
-    pytest.importorskip("llama_cpp")
+    llama_cpp = pytest.importorskip("llama_cpp")
+    if getattr(llama_cpp, "__llama_stub__", False):
+        pytest.skip("prepare_rpc_load needs the real llama.cpp native registry")
 
     from sharedlocalllm_backend.rpc_native import NativeRpcServer, prepare_rpc_load
 
