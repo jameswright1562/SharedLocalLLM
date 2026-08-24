@@ -57,6 +57,7 @@ export interface ModelRecord {
   fit: ModelFit;
   remoteOnly?: boolean;
   mtp?: boolean;
+  reasoningPreserve?: boolean;
 }
 
 export interface GpuLayerAllocation {

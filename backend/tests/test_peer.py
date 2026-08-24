@@ -5,7 +5,12 @@ import asyncio
 import pytest
 
 from sharedlocalllm_backend.errors import BackendError
-from sharedlocalllm_backend.peer import PEER_PORT, PeerManager, _parse_endpoint
+from sharedlocalllm_backend.peer import (
+    PEER_PORT,
+    PEER_REQUEST_TIMEOUT_SECONDS,
+    PeerManager,
+    _parse_endpoint,
+)
 
 
 def test_manual_peer_endpoint_defaults_to_peer_port() -> None:
@@ -78,3 +83,48 @@ def test_chat_dispatch_preserves_tool_options() -> None:
     assert runtime.received["tools"] == tools
     assert runtime.received["tool_choice"] == "auto"
     assert runtime.received["proxy_peer"] is False
+
+
+@pytest.mark.parametrize("op", ["chat", "benchmark_inference", "start_cluster"])
+def test_slow_peer_operations_have_no_response_deadline(op: str) -> None:
+    class Store:
+        def get(self, key: str):
+            assert key == "peer"
+            return {"address": "10.10.10.2:49158"}
+
+    class Runtime:
+        store = Store()
+
+    peer = PeerManager(Runtime())
+    captured: dict[str, int | None] = {}
+
+    async def request_to(host, port, requested_op, data=None, timeout=PEER_REQUEST_TIMEOUT_SECONDS):
+        captured[requested_op] = timeout
+        return {}
+
+    peer.request_to = request_to  # type: ignore[method-assign]
+    asyncio.run(peer.request(op))
+
+    assert captured[op] is None
+
+
+def test_control_peer_operations_keep_a_response_deadline() -> None:
+    class Store:
+        def get(self, key: str):
+            assert key == "peer"
+            return {"address": "10.10.10.2:49158"}
+
+    class Runtime:
+        store = Store()
+
+    peer = PeerManager(Runtime())
+    captured: dict[str, int | None] = {}
+
+    async def request_to(host, port, op, data=None, timeout=PEER_REQUEST_TIMEOUT_SECONDS):
+        captured[op] = timeout
+        return {}
+
+    peer.request_to = request_to  # type: ignore[method-assign]
+    asyncio.run(peer.request("heartbeat"))
+
+    assert captured["heartbeat"] == PEER_REQUEST_TIMEOUT_SECONDS

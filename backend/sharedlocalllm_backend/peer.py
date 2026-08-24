@@ -14,11 +14,10 @@ from .errors import BackendError
 DISCOVERY_PORT = 49157
 PEER_PORT = 49158
 PROTOCOL_VERSION = 6
-# Heartbeat-style ops must stay snappy; generation ops legitimately run long
-# because llama.cpp may re-evaluate the entire prompt when its KV prefix
-# cannot be partially reused ("partial kv removal not supported").
+# Heartbeat-style ops must stay snappy. Generation ops have no response
+# deadline because llama.cpp may spend an unbounded period ingesting a prompt
+# without sending data; callers can still cancel generation explicitly.
 PEER_REQUEST_TIMEOUT_SECONDS = 120
-PEER_GENERATION_TIMEOUT_SECONDS = 900
 SLOW_PEER_OPS = {"chat", "benchmark_inference", "start_cluster"}
 
 
@@ -139,15 +138,13 @@ class PeerManager:
         host, port = self.endpoint()
         if timeout is None:
             timeout = (
-                PEER_GENERATION_TIMEOUT_SECONDS
-                if op in SLOW_PEER_OPS
-                else PEER_REQUEST_TIMEOUT_SECONDS
+                None if op in SLOW_PEER_OPS else PEER_REQUEST_TIMEOUT_SECONDS
             )
         return await self.request_to(host, port, op, data, timeout)
 
     async def request_to(
         self, host: str, port: int, op: str, data: dict[str, Any] | None = None,
-        timeout: int = PEER_REQUEST_TIMEOUT_SECONDS,
+        timeout: int | None = PEER_REQUEST_TIMEOUT_SECONDS,
     ) -> Any:
         writer: asyncio.StreamWriter | None = None
         try:
@@ -155,7 +152,11 @@ class PeerManager:
                 asyncio.open_connection(host, port, limit=2 * 1024 * 1024), 5
             )
             await _write_json(writer, {"version": PROTOCOL_VERSION, "op": op, "data": data or {}})
-            response = await asyncio.wait_for(_read_json(reader), timeout)
+            response = (
+                await _read_json(reader)
+                if timeout is None
+                else await asyncio.wait_for(_read_json(reader), timeout)
+            )
         except (OSError, asyncio.TimeoutError, ValueError) as error:
             raise BackendError("peer_unavailable", f"The other computer did not answer: {error}") from error
         finally:

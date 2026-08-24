@@ -173,6 +173,9 @@ def build_command(
     mtp: bool,
     speculation_supported: bool,
     rpc_endpoint: str | None,
+    gpu_layers: int | None,
+    tensor_split: list[int] | None,
+    reasoning_preserve: bool,
     load_config: dict[str, Any] | None = None,
 ) -> list[str]:
     """Assemble the pinned llama-server invocation for this launch."""
@@ -189,14 +192,18 @@ def build_command(
         "--offline",
     ]
     config = load_config or {}
-    # Full offload: placement across local GPU + RPC devices happens inside
-    # llama.cpp (layer split); RPC endpoints arrive via --rpc.
     command += [
-        "-ngl", "all",
         "--split-mode", "layer",
         "--flash-attn", "on" if config.get("flashAttention") else "off",
         "--batch-size", str(max(1, int(config.get("batchSize", 512)))),
     ]
+    if gpu_layers is not None:
+        command += ["-ngl", str(max(0, int(gpu_layers))), "--fit", "off"]
+        if tensor_split and len(tensor_split) > 1:
+            command += [
+                "--tensor-split",
+                ",".join(str(max(0, int(value))) for value in tensor_split),
+            ]
     raw_ubatch = config.get("uBatch")
     if raw_ubatch:
         command += ["--ubatch-size", str(max(1, int(raw_ubatch)))]
@@ -227,6 +234,8 @@ def build_command(
         command += ["--threads", str(cpu_threads)]
     if mtp and speculation_supported:
         command += ["--spec-type", "draft-mtp"]
+    if reasoning_preserve:
+        command += ["--reasoning-preserve"]
     if rpc_endpoint:
         command += ["--rpc", rpc_endpoint]
     if api_key:
@@ -285,6 +294,9 @@ class ServerEngine:
         api_key: str | None,
         mtp: bool,
         rpc_endpoint: str | None = None,
+        gpu_layers: int | None = None,
+        tensor_split: list[int] | None = None,
+        reasoning_preserve: bool = False,
         load_config: dict[str, Any] | None = None,
     ) -> None:
         await self.stop()
@@ -298,6 +310,9 @@ class ServerEngine:
             mtp=mtp,
             speculation_supported=self.supports_speculation(exe),
             rpc_endpoint=rpc_endpoint,
+            gpu_layers=gpu_layers,
+            tensor_split=tensor_split,
+            reasoning_preserve=reasoning_preserve,
             load_config=load_config,
         )
 
@@ -347,7 +362,9 @@ class ServerEngine:
             if probe_health(port, api_key):
                 self.store.log(
                     "INFO", "llama_server_ready",
-                    f"127.0.0.1:{port} ctx={context} mtp={mtp} rpc={rpc_endpoint}",
+                    f"127.0.0.1:{port} ctx={context} mtp={mtp} rpc={rpc_endpoint} "
+                    f"gpu_layers={gpu_layers} split={tensor_split} "
+                    f"reasoning_preserve={reasoning_preserve}",
                 )
                 return
             await asyncio.sleep(0.5)
@@ -417,7 +434,7 @@ class ServerEngine:
         return payload
 
     async def _open_request(
-        self, payload: dict[str, Any], timeout: float
+        self, payload: dict[str, Any], timeout: float | None
     ) -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
         if not self.port:
             raise BackendError("model_not_loaded", "The llama-server engine is not running.")
@@ -443,15 +460,14 @@ class ServerEngine:
         return reader, writer
 
     async def _read_response(
-        self, payload: dict[str, Any], timeout: float = 600
+        self, payload: dict[str, Any], timeout: float | None = None
     ) -> tuple[int, str]:
         reader, writer = await self._open_request(payload, timeout)
         try:
             chunks: list[bytes] = []
             while True:
-                chunk = cast(
-                    bytes,
-                    await asyncio.wait_for(reader.read(64 * 1024), timeout),
+                chunk = await reader.read(64 * 1024) if timeout is None else cast(
+                    bytes, await asyncio.wait_for(reader.read(64 * 1024), timeout)
                 )
                 if not chunk:
                     break
@@ -532,16 +548,15 @@ class ServerEngine:
                 self._write_model_output("".join(output_parts), completed)
 
     async def _sse_events(
-        self, payload: dict[str, Any], timeout: float = 600,
+        self, payload: dict[str, Any], timeout: float | None = None,
     ) -> AsyncIterator[dict[str, Any]]:
         reader, writer = await self._open_request(payload, timeout)
         try:
             status = 0
             buffer = b""
             while True:
-                chunk = cast(
-                    bytes,
-                    await asyncio.wait_for(reader.read(64 * 1024), timeout),
+                chunk = await reader.read(64 * 1024) if timeout is None else cast(
+                    bytes, await asyncio.wait_for(reader.read(64 * 1024), timeout)
                 )
                 if not chunk:
                     break

@@ -369,8 +369,9 @@ class BackendRuntime:
                 await self.inference.unload()
                 await self._stop_server_forwarder()
                 include_remote_cpu = bool(normalized_config.get("includeRemoteCpu"))
-                remote_gpu, remote_cpu, _local_layers = layer_totals(
-                    normalized_config.get("gpuLayers") or [], peer_id,
+                allocations = normalized_config.get("gpuLayers") or []
+                remote_gpu, remote_cpu, local_layers = layer_totals(
+                    allocations, peer_id,
                     self.local_node["id"], include_remote_cpu,
                 )
                 forwarder: RpcForwarder | None = None
@@ -380,6 +381,18 @@ class BackendRuntime:
                     # the worker's RPC daemon through loopback only.
                     forwarder = RpcForwarder(self.peer, model_id=model_id, include_cpu=remote_cpu > 0)
                     rpc_endpoint = await forwarder.start()
+                tensor_split: list[int] | None = None
+                gpu_layers: int | None = None
+                if allocations:
+                    gpu_layers = remote_gpu + remote_cpu + local_layers
+                    tensor_split = []
+                    peer_node = self._peer_node() or {}
+                    if rpc_endpoint and (remote_gpu > 0 or _node_has_gpu(peer_node)):
+                        tensor_split.append(remote_gpu)
+                    if rpc_endpoint and remote_cpu > 0:
+                        tensor_split.append(remote_cpu)
+                    if local_layers > 0 or _node_has_gpu(self.local_node):
+                        tensor_split.append(local_layers)
                 self.cluster = {
                     "status": "loading", "coordinatorNodeId": self.local_node["id"],
                     "modelId": model_id,
@@ -391,6 +404,9 @@ class BackendRuntime:
                         context=int(normalized_config.get("contextSize", 4096)),
                         api_key=self.store.get("apiKey"), mtp=bool(model.get("mtp")),
                         rpc_endpoint=rpc_endpoint,
+                        gpu_layers=gpu_layers,
+                        tensor_split=tensor_split,
+                        reasoning_preserve=bool(model.get("reasoningPreserve")),
                         load_config=normalized_config,
                     )
                 except Exception:
@@ -759,6 +775,14 @@ def _port_available(port: int) -> bool:
         return True
     except OSError:
         return False
+
+
+def _node_has_gpu(node: dict[str, Any]) -> bool:
+    gpu = node.get("gpu") or {}
+    return max(
+        float(gpu.get("vramTotalGb") or 0),
+        float(gpu.get("vramAvailableGb") or 0),
+    ) > 0
 
 
 _TRY_TIMEOUT_SECONDS = 120

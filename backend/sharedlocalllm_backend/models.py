@@ -151,6 +151,7 @@ def discover_local(
             "fit": _fit(total_size, node, peer, metadata),
             "remoteOnly": False,
             "mtp": any(has_nextn_tensors(shard) for shard in shards),
+            "reasoningPreserve": bool(metadata.get("reasoningPreserve")),
         }
         for key in ("layerCount", "embeddingLength", "attentionHeadCount", "attentionHeadCountKv"):
             if key in metadata:

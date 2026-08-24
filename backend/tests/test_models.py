@@ -3,7 +3,10 @@ from __future__ import annotations
 import struct
 from pathlib import Path
 
-from sharedlocalllm_backend.gguf import has_nextn_tensors
+from sharedlocalllm_backend.gguf import (
+    chat_template_supports_reasoning_preserve,
+    has_nextn_tensors,
+)
 from sharedlocalllm_backend.models import _fit, discover_local, merge_remote
 
 
@@ -81,3 +84,26 @@ def test_detects_embedded_nextn_tensors_without_reading_tensor_data(tmp_path: Pa
     assert has_nextn_tensors(path) is True
     models, _ = discover_local([tmp_path], "node-a", node("node-a"))
     assert models[0]["mtp"] is True
+
+
+def test_detects_reasoning_preservation_from_the_gguf_chat_template(tmp_path: Path) -> None:
+    key = b"tokenizer.chat_template"
+    template = (
+        b"{% if preserve_reasoning %}"
+        b"{{ message.reasoning_content }}"
+        b"{% endif %}"
+    )
+    gguf = (
+        b"GGUF"
+        + struct.pack("<IQQ", 3, 0, 1)
+        + struct.pack("<Q", len(key)) + key
+        + struct.pack("<I", 8)
+        + struct.pack("<Q", len(template)) + template
+    )
+    path = tmp_path / "reasoning.gguf"
+    path.write_bytes(gguf)
+
+    models, _ = discover_local([tmp_path], "node-a", node("node-a"))
+
+    assert models[0]["reasoningPreserve"] is True
+    assert chat_template_supports_reasoning_preserve("{{ message.content }}") is False

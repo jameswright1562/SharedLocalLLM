@@ -6,6 +6,13 @@ from typing import BinaryIO, Any
 
 MAX_STRING = 16 * 1024 * 1024
 MAX_ARRAY = 10_000_000
+_REASONING_PRESERVE_CONTROLS = (
+    "preserve_reasoning",
+    "preserve_thinking",
+    "clear_thinking",
+    "truncate_history_thinking",
+    "drop_thinking",
+)
 
 
 def _read(fmt: str, handle: BinaryIO) -> Any:
@@ -74,6 +81,14 @@ def _integer(handle: BinaryIO, value_type: int) -> int | None:
     return max(0, int(_read(fmt, handle)))
 
 
+def chat_template_supports_reasoning_preserve(template: str) -> bool:
+    """Conservative approximation of llama.cpp's preserve-reasoning capability check."""
+    lower = template.lower()
+    return "reasoning_content" in lower and any(
+        control in lower for control in _REASONING_PRESERVE_CONTROLS
+    )
+
+
 def read_metadata(path: Path) -> dict[str, Any]:
     result: dict[str, Any] = {}
     try:
@@ -90,7 +105,7 @@ def read_metadata(path: Path) -> dict[str, Any]:
             for _ in range(metadata_count):
                 key = _string(handle)
                 value_type = _read("I", handle)
-                wanted = key == "general.architecture" or key.endswith((
+                wanted = key in ("general.architecture", "tokenizer.chat_template") or key.endswith((
                     ".block_count", ".context_length", ".embedding_length",
                     ".attention.head_count", ".attention.head_count_kv",
                 ))
@@ -100,6 +115,14 @@ def read_metadata(path: Path) -> dict[str, Any]:
                 if key == "general.architecture":
                     if value_type == 8:
                         result["architecture"] = _string(handle)
+                    else:
+                        _skip(handle, value_type)
+                    continue
+                if key == "tokenizer.chat_template":
+                    if value_type == 8:
+                        result["reasoningPreserve"] = (
+                            chat_template_supports_reasoning_preserve(_string(handle))
+                        )
                     else:
                         _skip(handle, value_type)
                     continue

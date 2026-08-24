@@ -50,6 +50,7 @@ def test_build_command_enables_embedded_mtp_and_rpc() -> None:
         Path("llama-server.exe"), model_path="model.gguf", port=8123,
         context=8192, api_key="secret", mtp=True,
         speculation_supported=True, rpc_endpoint="127.0.0.1:5000",
+        gpu_layers=48, tensor_split=[20, 28], reasoning_preserve=True,
         load_config={
             "flashAttention": True, "useMmap": False, "useMlock": True,
             "cpuThreads": 6, "batchSize": 256,
@@ -61,7 +62,10 @@ def test_build_command_enables_embedded_mtp_and_rpc() -> None:
     assert command[command.index("--spec-type") + 1] == "draft-mtp"
     assert command[command.index("--rpc") + 1] == "127.0.0.1:5000"
     assert command[command.index("--api-key") + 1] == "secret"
-    assert command[command.index("-ngl") + 1] == "all"
+    assert command[command.index("-ngl") + 1] == "48"
+    assert command[command.index("--tensor-split") + 1] == "20,28"
+    assert command[command.index("--fit") + 1] == "off"
+    assert "--reasoning-preserve" in command
     assert command[command.index("--split-mode") + 1] == "layer"
     assert command[command.index("--flash-attn") + 1] == "on"
     assert command[command.index("--load-mode") + 1] == "mlock"
@@ -79,7 +83,8 @@ def test_build_command_passes_autotuned_knobs_only_when_set() -> None:
     tuned = build_command(
         Path("llama-server.exe"), model_path="model.gguf", port=8123,
         context=8192, api_key=None, mtp=False, speculation_supported=False,
-        rpc_endpoint=None,
+        rpc_endpoint=None, gpu_layers=None, tensor_split=None,
+        reasoning_preserve=False,
         load_config={
             "uBatch": 256, "kvCacheK": "q4_0", "kvCacheV": "q8_0",
             "noOpOffload": 1, "rpcPoll": 50,
@@ -97,12 +102,14 @@ def test_build_command_without_tuned_values_keeps_defaults() -> None:
     plain = build_command(
         Path("llama-server.exe"), model_path="model.gguf", port=8123,
         context=8192, api_key=None, mtp=False, speculation_supported=False,
-        rpc_endpoint=None, load_config={},
+        rpc_endpoint=None, gpu_layers=None, tensor_split=None,
+        reasoning_preserve=False, load_config={},
     )
 
     for flag in (
         "--ubatch-size", "--cache-type-k", "--cache-type-v",
-        "--no-op-offload", "--poll",
+        "--no-op-offload", "--poll", "-ngl", "--tensor-split",
+        "--fit", "--reasoning-preserve",
     ):
         assert flag not in plain
 
@@ -230,6 +237,27 @@ def test_chat_forwards_tools_and_returns_the_native_tool_message(capsys) -> None
     console = capsys.readouterr().err
     assert "<no text output>" in console
     assert '"command":"pwd"' not in console
+
+
+def test_buffered_generation_read_has_no_response_deadline() -> None:
+    engine = ServerEngine(Store())
+
+    async def request():
+        reader = asyncio.StreamReader()
+        reader.feed_data(b"HTTP/1.1 200 OK\r\n\r\n{\"choices\": []}")
+        reader.feed_eof()
+        writer = Writer()
+
+        async def open_request(_payload, timeout):
+            assert timeout is None
+            return reader, writer
+
+        engine._open_request = open_request  # type: ignore[method-assign]
+        response = await engine._read_response({})
+        assert writer.closed is True
+        return response
+
+    assert asyncio.run(request()) == (200, '{"choices": []}')
 
 
 def test_openai_stream_preserves_native_tool_call_argument_fragments() -> None:

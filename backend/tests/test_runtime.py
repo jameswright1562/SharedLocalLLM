@@ -509,6 +509,9 @@ def test_mtp_model_launches_llama_server_instead_of_builtin_engine() -> None:
     assert server.started["model_path"] == "model.gguf"
     assert server.started["mtp"] is True
     assert server.started["rpc_endpoint"] is None
+    assert server.started["gpu_layers"] == 1
+    assert server.started["tensor_split"] == [1]
+    assert server.started["reasoning_preserve"] is False
 
 
 def test_server_engine_uses_and_stops_the_peer_rpc_forwarder(monkeypatch) -> None:
@@ -531,6 +534,7 @@ def test_server_engine_uses_and_stops_the_peer_rpc_forwarder(monkeypatch) -> Non
     monkeypatch.setattr("sharedlocalllm_backend.runtime.RpcForwarder", Forwarder)
     runtime = runtime_with(SuccessfulLoadInference())
     runtime.models[0]["mtp"] = True
+    runtime.models[0]["reasoningPreserve"] = True
     runtime.models[0]["layerCount"] = 2
     server = LaunchServerEngine()
     runtime.server_engine = cast(ServerEngine, server)
@@ -555,6 +559,9 @@ def test_server_engine_uses_and_stops_the_peer_rpc_forwarder(monkeypatch) -> Non
 
     assert cluster["engine"] == "llama-server"
     assert server.started["rpc_endpoint"] == "127.0.0.1:5000"
+    assert server.started["gpu_layers"] == 2
+    assert server.started["tensor_split"] == [1, 1]
+    assert server.started["reasoning_preserve"] is True
     assert len(Forwarder.instances) == 1
     asyncio.run(runtime.stop_cluster())
     assert Forwarder.instances[0].stopped is True
