@@ -80,7 +80,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - name: Install stable Rust
-        uses: dtolnay/rust-toolchain@1.97.1
+        uses: dtolnay/rust-toolchain@1.100.0
         with:
           targets: x86_64-pc-windows-msvc
           components: rustfmt, clippy
@@ -154,7 +154,7 @@ jobs:
         with:
           cuda: "13.2.0"
       - name: Install stable Rust
-        uses: dtolnay/rust-toolchain@1.97.1
+        uses: dtolnay/rust-toolchain@1.100.0
         with:
           targets: x86_64-pc-windows-msvc
       - uses: Swatinem/rust-cache@v2
