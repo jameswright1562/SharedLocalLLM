@@ -47,6 +47,7 @@ const readySnapshot: AppSnapshot = {
       shards: 1,
       locations: [{ nodeId: "node-a", path: "D:\\Models\\orchid.gguf", source: "custom" }],
       fit: "single-node",
+      isLocal: true,
     },
     {
       id: "model-vision",
@@ -59,6 +60,7 @@ const readySnapshot: AppSnapshot = {
       shards: 2,
       locations: [{ nodeId: "node-b", path: "E:\\Models\\atlas-00001.gguf", source: "lm-studio" }],
       fit: "combined-gpu",
+      isLocal: false,
     },
   ],
   modelDirectories: [{ id: "dir-1", nodeId: "node-a", path: "D:\\Models", source: "custom" }],

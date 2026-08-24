@@ -40,6 +40,27 @@ The shell does not link `llama-cpp-4` or `llama-cpp-sys-4`.
 The backend's internal control server binds `127.0.0.1:11436`. It is an implementation detail and is
 only called by the local Tauri shell.
 
+## Model catalogue: locality and deletion
+
+Discovery records every local GGUF with `isLocal: true`. When peer catalogues merge, the backend
+recomputes `isLocal` per model from location node IDs against the snapshot's `deviceId`: a model is
+local when at least one copy exists on this computer, even if the paired computer also holds a copy.
+Remote-only entries keep `remoteOnly: true` with `isLocal: false`.
+
+Deletion is renderer-initiated and deliberately narrow:
+
+- Right-clicking a catalogue row offers Copy ID, Open folder (native opener), and **Delete folder…**;
+  the delete entry only appears for `isLocal` models.
+- A confirmation modal shows the model name, containing folder, and size before anything happens.
+  The request is refused while the cluster is loading, running, or stopping, because llama.cpp may
+  hold the files open.
+- On confirm, the renderer calls Tauri's fs plugin `remove(folder, { recursive: true })` on exactly
+  the parent folder of the first local shard path. The capability file grants `fs:allow-remove`
+  scoped to `$HOME/**`; folders outside that scope surface a permission error instead of deleting.
+- After deletion the app refreshes discovery, so the entry disappears without any backend command
+  touching model paths. Nothing else in the application moves, renames, overwrites, or deletes model
+  files.
+
 ## Distributed model load
 
 ```text

@@ -8,6 +8,7 @@ import type {
   NetworkBenchmark,
 } from "../types";
 import { demoApi, demoNodes, demoSnapshot } from "./demoData";
+import { modelFolder } from "../helpers/helpers";
 import { estimateModelSplitLocally } from "./splitEstimate";
 
 const delay = (ms = 180) => new Promise((resolve) => window.setTimeout(resolve, ms));
@@ -72,6 +73,12 @@ export const demoService: AppService = {
     await delay();
     demoSnapshot.modelDirectories = demoSnapshot.modelDirectories.filter(
       (directory) => directory.id !== id,
+    );
+  },
+  async deleteModelFolder(folder) {
+    await delay();
+    demoSnapshot.models = demoSnapshot.models.filter(
+      (model) => modelFolder(model.locations[0]?.path) !== folder,
     );
   },
   async runNetworkTest() {

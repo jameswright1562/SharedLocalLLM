@@ -13,6 +13,8 @@ use tauri::{
 pub fn run() {
     crate::firewall::ensure_firewall_elevation();
     tauri::Builder::default()
+        .plugin(tauri_plugin_fs::init())
+        .plugin(tauri_plugin_opener::init())
         .manage(BackendProcess::default())
         .setup(|app| {
             app.state::<BackendProcess>().start(app.handle())?;

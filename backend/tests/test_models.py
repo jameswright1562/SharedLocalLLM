@@ -53,6 +53,41 @@ def test_merge_marks_remote_only_models() -> None:
     assert next(model for model in merged if model["id"] == "b")["remoteOnly"] is True
 
 
+def test_discovery_marks_locally_stored_models_as_local(tmp_path: Path) -> None:
+    (tmp_path / "Qwen-Test-Q6_K.gguf").write_bytes(b"GGUF" + b"\0" * 4096)
+    models, _ = discover_local([tmp_path], "node-a", node("node-a"))
+    assert models[0]["isLocal"] is True
+
+
+def test_merge_reports_which_models_live_on_this_computer() -> None:
+    local = [
+        {
+            "id": "a",
+            "name": "A",
+            "locations": [{"nodeId": "node-a", "path": "a.gguf", "source": "custom"}],
+            "remoteOnly": False,
+        }
+    ]
+    remote = [
+        {
+            "id": "b",
+            "name": "B",
+            "locations": [{"nodeId": "node-b", "path": "b.gguf", "source": "custom"}],
+        },
+        {
+            "id": "a",
+            "name": "A",
+            "locations": [{"nodeId": "node-b", "path": "a-copy.gguf", "source": "custom"}],
+        },
+    ]
+    merged = merge_remote(local, remote, local_node_id="node-a")
+    by_id = {model["id"]: model for model in merged}
+    assert by_id["a"]["isLocal"] is True
+    assert [loc["nodeId"] for loc in by_id["a"]["locations"]] == ["node-a", "node-b"]
+    assert by_id["b"]["isLocal"] is False
+    assert by_id["b"]["remoteOnly"] is True
+
+
 def test_discovery_rejects_invalid_incomplete_and_projector_files(tmp_path: Path) -> None:
     (tmp_path / "broken.gguf").write_bytes(b"not a GGUF")
     (tmp_path / "model-00001-of-00003.gguf").write_bytes(b"GGUF")

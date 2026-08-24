@@ -113,12 +113,21 @@ specific products into application logic.
 - Run a distributed benchmark and record the displayed per-computer GPU layer counts. Confirm both
   GPUs allocate memory while `llama-bench` runs and the result is labelled `distributed`; a browser
   demo or command-construction test is not physical acceptance.
+- Right-click a local model row and choose **Delete folder…**; confirm the modal. Verify exactly the
+  containing folder disappears from disk (for example
+  `…\hub\lmstudio-community\Muse-Glimmer-30B-GGUF`), sibling folders and unrelated files survive,
+  the entry leaves the catalogue after the automatic refresh, and a folder outside `%USERPROFILE%`
+  fails with a visible permission error while its files remain intact.
+- With a cluster loading or running, verify **Delete folder…** is refused with an actionable message
+  and no files change. Verify models stored only on the paired computer (`isLocal: false`) offer no
+  delete action at all.
 - Exercise Ethernet, Wi-Fi, manual IP, static direct Ethernet (`10.10.10.x`), automatic link-local
   (`169.254.x.x`), operation while Windows reports the network as Public (which must now work without
   any profile change), multiple simultaneous adapters (Wi-Fi + Ethernet) with a stable
   manually-selected peer route, and Windows network-category changing while connected (the session
   must not terminate).
-- Confirm model directories are unchanged after indexing, benchmarking, chat, and uninstall.
+- Confirm model directories are unchanged after indexing, benchmarking, chat, and uninstall. The
+  only operation that removes model files is the explicit catalogue deletion covered above.
 
 Windows network-category enforcement has been removed: the Public/Private category is informational
 only, and the app pairs and launches identically on every category. The automated suite covers

@@ -1,5 +1,6 @@
 import { render as rtlRender } from "@testing-library/react";
 import { MantineProvider } from "@mantine/core";
+import { ContextMenuProvider } from "mantine-contextmenu";
 import type { ReactElement } from "react";
 
 import { theme } from "../theme";
@@ -7,7 +8,7 @@ import { theme } from "../theme";
 function wrap(element: ReactElement) {
   return (
     <MantineProvider theme={theme} forceColorScheme="dark">
-      {element}
+      <ContextMenuProvider>{element}</ContextMenuProvider>
     </MantineProvider>
   );
 }

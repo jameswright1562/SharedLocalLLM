@@ -7,6 +7,7 @@ export const snapshotFixture: AppSnapshot = {
   setupComplete: true,
   runtime: { status: "ready", version: "b6123" },
   deviceName: "Studio host",
+  deviceId: "node-a",
   nodes: [
     {
       id: "node-a",
@@ -61,6 +62,7 @@ export const snapshotFixture: AppSnapshot = {
         },
       ],
       fit: "single-node",
+      isLocal: true,
     },
     {
       id: "model-vision",
@@ -79,6 +81,7 @@ export const snapshotFixture: AppSnapshot = {
         },
       ],
       fit: "combined-gpu",
+      isLocal: false,
     },
   ],
   modelDirectories: [

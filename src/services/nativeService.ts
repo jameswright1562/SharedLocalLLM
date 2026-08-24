@@ -82,6 +82,14 @@ export const nativeService: AppService = {
     return path ? backend("add_model_directory", { path }) : null;
   },
   removeModelDirectory: (id) => backend("remove_model_directory", { id }),
+  deleteModelFolder: async (folder) => {
+    const { remove } = await import("@tauri-apps/plugin-fs");
+    try {
+      await remove(folder, { recursive: true });
+    } catch (reason) {
+      throw decodeAppError(reason);
+    }
+  },
   runNetworkTest: () => backend("run_network_test"),
   connectPeer: (manualEndpoint) => backend("connect_peer", { manualEndpoint }),
   resetPairing: () => backend("reset_pairing"),

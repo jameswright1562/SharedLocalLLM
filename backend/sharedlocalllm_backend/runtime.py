@@ -14,9 +14,9 @@ from .autotune import Autotuner, apply_tune_result, locate_bench, topology_finge
 from .errors import BackendError
 from .hardware import probe_node
 from .inference import InferenceEngine, layer_totals
+from .llama_server import install_root_candidates
 from .models import discover_local, lm_studio_roots, merge_remote, refresh_fits
 from .peer import PeerManager, RpcForwarder
-from .llama_server import install_root_candidates
 from .placement import estimate_split, normalize_load_config, validate_fit
 from .rpc_native import runtime_health
 from .server_engine import ServerEngine
@@ -109,7 +109,9 @@ class BackendRuntime:
         return self.models
 
     def _merge_models(self) -> None:
-        self.models = merge_remote(self.local_models, self.peer.remote_models)
+        self.models = merge_remote(
+            self.local_models, self.peer.remote_models, self.local_node["id"]
+        )
 
     def _peer_node(self) -> dict[str, Any] | None:
         peer = self.store.get("peer")
@@ -144,6 +146,7 @@ class BackendRuntime:
             "setupComplete": bool(self.store.get("setupComplete")),
             "runtime": dict(self._runtime),
             "deviceName": self.local_node["name"],
+            "deviceId": self.local_node["id"],
             "apiPort": int(self.store.get("apiPort", 11435)),
             "authRequired": bool(self.store.get("authRequired", True)),
             "autostart": bool(self.store.get("autostart")),

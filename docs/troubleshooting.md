@@ -206,7 +206,21 @@ lms ls --json --detailed
 lms ls --json --detailed
 ```
 
-SharedLocalLLM never moves, renames, deletes, or downloads into a configured model folder.
+SharedLocalLLM never moves, renames, or downloads into a configured model folder. The only
+operation that deletes files is the explicit **Delete folder…** action in the Models catalogue,
+which requires your confirmation and removes exactly that model's containing folder.
+
+## Deleting a model folder fails or does nothing
+
+1. **"Stop the running cluster before deleting model files."** A loaded model keeps its GGUF files
+   open. Stop the cluster from the Models page header, then delete again.
+2. **No Delete folder… entry on right-click.** The model is stored only on the other computer
+   (`isLocal: false`). Deletion must be done from the computer that holds the files.
+3. **Permission error and the folder remains.** Deletion is restricted to paths under your user
+   profile (`%USERPROFILE%`). Move the folder inside your profile, add its parent through
+   **Add folder**, and retry.
+4. After a successful deletion the catalogue refreshes automatically; if the entry lingers, click
+   **Refresh** to re-index.
 
 ## LM Studio is already using VRAM
 

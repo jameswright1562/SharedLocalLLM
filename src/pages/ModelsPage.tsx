@@ -6,6 +6,7 @@ import {
   Group,
   Modal,
   SegmentedControl,
+  Stack,
   TextInput,
   Title,
   Text,
@@ -16,6 +17,8 @@ import { ModelCatalogue, type CapabilityFilter } from "../components/ModelCatalo
 import { AutotunePanel, TunedBadge } from "../components/AutotunePanel";
 import { ModelInspector } from "../components/ModelInspector";
 import { StatusBanner } from "../components/StatusBanner";
+import { modelFolder } from "../helpers/helpers";
+import { formatBytes } from "./pageFormat";
 import { describeAppError } from "../services/errors";
 import { DEFAULT_LOAD_OPTIONS } from "../services/loadOptions";
 import {
@@ -31,7 +34,7 @@ import {
   estimateModelSplitLocally,
   fitLayersByVram,
 } from "../services/splitEstimate";
-import type { ModelLoadConfig, PageProps } from "../types";
+import type { ModelLoadConfig, ModelRecord, PageProps } from "../types";
 
 const capabilityFilters: Array<{ value: CapabilityFilter; label: string }> = [
   { value: "all", label: "All" },
@@ -40,13 +43,16 @@ const capabilityFilters: Array<{ value: CapabilityFilter; label: string }> = [
   { value: "split", label: "Split" },
 ];
 
+const busyClusterStates = ["loading", "running", "stopping"];
+
 export function ModelsPage({ snapshot, service, refreshSnapshot }: PageProps) {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<CapabilityFilter>("all");
   const [selectedId, setSelectedId] = useState(snapshot.models[0]?.id ?? "");
   const [discoveredModels, setDiscoveredModels] = useState<typeof snapshot.models | null>(null);
-  const [busy, setBusy] = useState<"refresh" | "add" | "launch" | "">("");
+  const [busy, setBusy] = useState<"refresh" | "add" | "launch" | "delete" | "">("");
   const [message, setMessage] = useState("");
+  const [deleteTarget, setDeleteTarget] = useState<ModelRecord | null>(null);
   const savedConfigs = snapshot.modelLoadConfigs ?? {};
   const [contextByModel, setContextByModel] = useState(() => savedContextSizes(savedConfigs));
   const [manualByModel, setManualByModel] = useState(() => savedManualSplits(savedConfigs));
@@ -135,6 +141,33 @@ export function ModelsPage({ snapshot, service, refreshSnapshot }: PageProps) {
       setMessage("Model folder added.");
     } catch (reason) {
       setMessage(describeAppError(reason, "The folder could not be added."));
+    } finally {
+      setBusy("");
+    }
+  }
+
+  function requestDelete(model: ModelRecord) {
+    if (busyClusterStates.includes(snapshot.cluster.status)) {
+      setMessage("Stop the running cluster before deleting model files.");
+      return;
+    }
+    setDeleteTarget(model);
+  }
+
+  async function confirmDelete() {
+    if (!deleteTarget) return;
+    const folder = modelFolder(deleteTarget.locations[0]?.path);
+    if (!folder) return;
+    setBusy("delete");
+    setMessage("");
+    try {
+      await service.deleteModelFolder(folder);
+      setDiscoveredModels(null);
+      setDeleteTarget(null);
+      await refreshSnapshot();
+      setMessage(`Deleted ${deleteTarget.name} from disk.`);
+    } catch (reason) {
+      setMessage(describeAppError(reason, "The model folder could not be deleted."));
     } finally {
       setBusy("");
     }
@@ -240,7 +273,7 @@ export function ModelsPage({ snapshot, service, refreshSnapshot }: PageProps) {
           <Title order={1}>Model library</Title>
           <Text c="dimmed" maw={560}>
             GGUF models on this computer, plus names reported by a paired peer. Launch requires a
-            local file. Source files stay where they are.
+            local file. Right-click a local model to open its folder or delete it from disk.
           </Text>
         </Box>
         <Group gap="sm">
@@ -290,7 +323,38 @@ export function ModelsPage({ snapshot, service, refreshSnapshot }: PageProps) {
           setInspectorOpened(true);
         }}
         addFolder={() => void addFolder()}
+        onDelete={requestDelete}
       />
+
+      <Modal
+        opened={!!deleteTarget}
+        onClose={() => setDeleteTarget(null)}
+        title="Delete model folder"
+        centered
+      >
+        <Stack gap="sm">
+          <Text>
+            Permanently delete <strong>{deleteTarget?.name}</strong> and its folder from this
+            computer? This removes {formatBytes(deleteTarget?.sizeBytes ?? 0)} of model files and
+            cannot be undone.
+          </Text>
+          <Text size="sm" c="dimmed" ff="monospace">
+            {modelFolder(deleteTarget?.locations[0]?.path)}
+          </Text>
+          <Group justify="flex-end" gap="sm">
+            <Button
+              variant="default"
+              disabled={busy === "delete"}
+              onClick={() => setDeleteTarget(null)}
+            >
+              Cancel
+            </Button>
+            <Button color="red" loading={busy === "delete"} onClick={() => void confirmDelete()}>
+              Delete folder
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
 
       <Modal
         opened={inspectorOpened}

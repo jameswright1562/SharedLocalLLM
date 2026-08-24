@@ -150,6 +150,7 @@ def discover_local(
             "locations": [{"nodeId": node_id, "path": str(first), "source": _source(first)}],
             "fit": _fit(total_size, node, peer, metadata),
             "remoteOnly": False,
+            "isLocal": True,
             "mtp": any(has_nextn_tensors(shard) for shard in shards),
             "reasoningPreserve": bool(metadata.get("reasoningPreserve")),
         }
@@ -194,7 +195,11 @@ def _complete_shard_set(shards: list[Path]) -> bool:
     return len(totals) == 1 and indices == list(range(1, next(iter(totals)) + 1))
 
 
-def merge_remote(local: list[dict[str, Any]], remote: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def merge_remote(
+    local: list[dict[str, Any]],
+    remote: list[dict[str, Any]],
+    local_node_id: str | None = None,
+) -> list[dict[str, Any]]:
     merged = {model["id"]: dict(model) for model in local}
     for incoming in remote:
         model = dict(incoming)
@@ -208,4 +213,13 @@ def merge_remote(local: list[dict[str, Any]], remote: list[dict[str, Any]]) -> l
             continue
         model["remoteOnly"] = True
         merged[model["id"]] = model
-    return sorted(merged.values(), key=lambda value: value["name"].lower())
+    result = sorted(merged.values(), key=lambda value: value["name"].lower())
+    if local_node_id is not None:
+        # Authoritative per-model locality: a model is local when at least one
+        # copy lives on this computer, regardless of any peer copies.
+        for model in result:
+            model["isLocal"] = any(
+                location.get("nodeId") == local_node_id
+                for location in model.get("locations", [])
+            )
+    return result

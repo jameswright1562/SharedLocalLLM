@@ -14,7 +14,8 @@ bundles, or personal paths.
    shapes change.
 
 Use accessible names and semantic controls in the UI. Keep Tauri commands narrowly typed; renderer
-input is untrusted. Preserve model directories as read-only. Never expose raw RPC or the inference
+input is untrusted. Preserve model directories as read-only; the sole exception is the explicit,
+confirmed **Delete folder…** action on local catalogue entries. Never expose raw RPC or the inference
 API to the LAN, weaken the Private-network check, log prompts/secrets, or enable upstream filesystem,
 shell, MCP, or agent tools.
 

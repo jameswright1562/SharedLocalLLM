@@ -56,6 +56,7 @@ export interface ModelRecord {
   locations: ModelLocation[];
   fit: ModelFit;
   remoteOnly?: boolean;
+  isLocal: boolean;
   mtp?: boolean;
   reasoningPreserve?: boolean;
 }
@@ -208,6 +209,7 @@ export interface AppSnapshot {
   setupComplete: boolean;
   runtime: { status: RuntimeStatus; version?: string; error?: string };
   deviceName: string;
+  deviceId?: string;
   nodes: NodeCapabilities[];
   models: ModelRecord[];
   modelDirectories: ModelDirectory[];
@@ -281,6 +283,7 @@ export interface AppService {
   discoverModels(): Promise<ModelRecord[]>;
   addModelDirectory(): Promise<ModelDirectory | null>;
   removeModelDirectory(id: string): Promise<void>;
+  deleteModelFolder(folder: string): Promise<void>;
   runNetworkTest(): Promise<NetworkBenchmark>;
   connectPeer(manualEndpoint?: string): Promise<NodeCapabilities>;
   resetPairing(): Promise<AppSnapshot>;

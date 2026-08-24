@@ -1,16 +1,19 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const invokeMock = vi.fn();
+const fsRemoveMock = vi.fn();
 class ChannelMock<T> {
   onmessage: (value: T) => void = () => undefined;
 }
 vi.mock("@tauri-apps/api/core", () => ({ invoke: invokeMock, Channel: ChannelMock }));
+vi.mock("@tauri-apps/plugin-fs", () => ({ remove: fsRemoveMock }));
 
 import { appService, demoService, nativeService } from "./appService";
 
 describe("app services", () => {
   beforeEach(() => {
     vi.useFakeTimers();
+    fsRemoveMock.mockReset().mockResolvedValue(undefined);
     invokeMock
       .mockReset()
       .mockImplementation((command: string, payload?: Record<string, unknown>) => {
@@ -81,6 +84,12 @@ describe("app services", () => {
     expect((await settle(demoService.getAppSnapshot())).modelDirectories).not.toContainEqual(
       directory,
     );
+    await settle(demoService.deleteModelFolder("D:\\AI"));
+    expect(
+      (await settle(demoService.getAppSnapshot())).models.some(
+        (model) => model.id === "northstar-27b",
+      ),
+    ).toBe(false);
 
     expect((await settle(demoService.runNetworkTest())).classification).toBe("good");
     expect((await settle(demoService.connectPeer())).role).toBe("worker");
@@ -113,6 +122,8 @@ describe("app services", () => {
     await nativeService.discoverModels();
     await nativeService.addModelDirectory();
     await nativeService.removeModelDirectory("dir-7");
+    await nativeService.deleteModelFolder("C:\\Models\\hub\\muse-30b");
+    expect(fsRemoveMock).toHaveBeenCalledWith("C:\\Models\\hub\\muse-30b", { recursive: true });
     await nativeService.runNetworkTest();
     await nativeService.connectPeer("192.168.50.2");
     await nativeService.resetPairing();
@@ -184,6 +195,13 @@ describe("app services", () => {
       code: "api_port_in_use",
       message: "127.0.0.1:11435 is already in use.",
       action: "Choose another local API port.",
+    });
+  });
+
+  it("surfaces folder deletion failures through the shared adapter", async () => {
+    fsRemoveMock.mockRejectedValueOnce({ message: "permission denied" });
+    await expect(nativeService.deleteModelFolder("D:\\Locked")).rejects.toMatchObject({
+      message: "permission denied",
     });
   });
 

@@ -1,4 +1,4 @@
-import { screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { render } from "../test/render";
@@ -177,6 +177,54 @@ describe("dashboard pages", () => {
     expect(await screen.findByRole("status")).toHaveTextContent("runtime busy");
     await user.click(screen.getByRole("button", { name: /launch orchid/i }));
     await waitFor(() => expect(startCluster).toHaveBeenCalledTimes(2));
+  });
+
+  it("deletes a local model folder only after confirmation", async () => {
+    const user = userEvent.setup();
+    const snapshot = cloneSnapshot();
+    const deleteModelFolder = vi
+      .fn()
+      .mockRejectedValueOnce("file locked")
+      .mockResolvedValue(undefined);
+    const pageProps = props(snapshot, { deleteModelFolder });
+    render(<ModelsPage {...pageProps} />);
+
+    const orchidRow = within(screen.getByTestId("model-list"))
+      .getByText(/orchid 9b/i)
+      .closest("tr") as HTMLElement;
+    fireEvent.contextMenu(orchidRow);
+    await user.click(await screen.findByText("Delete folder…"));
+    expect(await screen.findByText(/cannot be undone/i)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /^delete folder$/i }));
+    expect(deleteModelFolder).toHaveBeenCalledWith("D:\\Models");
+    expect(await screen.findByRole("status")).toHaveTextContent("file locked");
+    expect(pageProps.refreshSnapshot).not.toHaveBeenCalled();
+
+    fireEvent.contextMenu(orchidRow);
+    await user.click(await screen.findByText("Delete folder…"));
+    await user.click(screen.getByRole("button", { name: /^delete folder$/i }));
+    expect(await screen.findByRole("status")).toHaveTextContent(/deleted orchid 9b/i);
+    expect(pageProps.refreshSnapshot).toHaveBeenCalled();
+  });
+
+  it("blocks folder deletion while a cluster is running", async () => {
+    const user = userEvent.setup();
+    const snapshot = cloneSnapshot();
+    snapshot.cluster = { ...snapshot.cluster, status: "running", modelId: "model-text" };
+    const deleteModelFolder = vi.fn();
+    const pageProps = props(snapshot, { deleteModelFolder });
+    render(<ModelsPage {...pageProps} />);
+
+    const orchidRow = within(screen.getByTestId("model-list"))
+      .getByText(/orchid 9b/i)
+      .closest("tr") as HTMLElement;
+    fireEvent.contextMenu(orchidRow);
+    await user.click(await screen.findByText("Delete folder…"));
+
+    expect(await screen.findByRole("status")).toHaveTextContent(/stop the running cluster/i);
+    expect(deleteModelFolder).not.toHaveBeenCalled();
+    expect(screen.queryByText(/cannot be undone/i)).not.toBeInTheDocument();
   });
 
   it("uses the selected context and treats a cancelled folder dialog as no change", async () => {

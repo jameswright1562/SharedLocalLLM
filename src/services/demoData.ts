@@ -53,6 +53,7 @@ export const demoModels: ModelRecord[] = [
       { nodeId: "local-node", path: "C:\\Models\\meridian-12b-q5.gguf", source: "lm-studio" },
     ],
     fit: "single-node",
+    isLocal: true,
   },
   {
     id: "northstar-27b",
@@ -71,6 +72,7 @@ export const demoModels: ModelRecord[] = [
       { nodeId: "peer-node", path: "D:\\AI\\northstar-00001-of-00002.gguf", source: "custom" },
     ],
     fit: "combined-gpu",
+    isLocal: false,
   },
   {
     id: "spectra-vision",
@@ -89,6 +91,7 @@ export const demoModels: ModelRecord[] = [
       { nodeId: "local-node", path: "C:\\Models\\spectra-vision.gguf", source: "custom" },
     ],
     fit: "single-node",
+    isLocal: true,
   },
 ];
 
@@ -96,6 +99,7 @@ const baseSnapshot: AppSnapshot = {
   setupComplete: true,
   runtime: { status: "ready", version: "llama.cpp b6123" },
   deviceName: "Primary node",
+  deviceId: "local-node",
   nodes: demoNodes,
   models: demoModels,
   modelDirectories: [

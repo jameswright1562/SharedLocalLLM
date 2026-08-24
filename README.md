@@ -112,7 +112,10 @@ The Tauri build first packages the Python backend with PyInstaller and then bund
 ## Model discovery and placement
 
 SharedLocalLLM scans the default LM Studio locations plus folders added through the UI. GGUF files
-remain read-only and are never copied between machines. Model metadata is used to estimate context
+remain in place and are never copied between machines; the catalogue marks each entry `isLocal`
+when a copy exists on this computer. The only way SharedLocalLLM removes model files is the
+explicit right-click **Delete folder…** action on a local catalogue entry, which requires
+confirmation and deletes exactly that model's folder. Model metadata is used to estimate context
 and GPU placement. Remote catalogue entries can be launched from either UI: the computer that owns
 the GGUF becomes coordinator, while a distributed local model can offload layers through the peer's
 embedded RPC worker.

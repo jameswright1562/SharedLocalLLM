@@ -28,6 +28,7 @@ const model: ModelRecord = {
   shards: 1,
   locations: [],
   fit: "single-node",
+  isLocal: true,
 };
 
 describe("split estimates", () => {

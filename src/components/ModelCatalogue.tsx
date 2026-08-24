@@ -11,7 +11,16 @@ import {
   Title,
 } from "@mantine/core";
 import { useMemo, useState } from "react";
-import { IconChevronDown, IconChevronUp } from "@tabler/icons-react";
+import {
+  IconChevronDown,
+  IconChevronUp,
+  IconCopy,
+  IconFolderOpen,
+  IconTrash,
+} from "@tabler/icons-react";
+import { useContextMenu } from "mantine-contextmenu";
+import { formatBytes } from "../pages/pageFormat";
+import { copyToClipboard, modelFolder, openFolderInExplorer } from "../helpers/helpers";
 
 export type CapabilityFilter = "all" | "text" | "vision" | "split";
 
@@ -21,6 +30,7 @@ interface ModelCatalogueProps {
   selectedId: string;
   select: (id: string) => void;
   addFolder: () => void;
+  onDelete: (model: ModelRecord) => void;
 }
 
 export function ModelCatalogue({
@@ -29,9 +39,11 @@ export function ModelCatalogue({
   selectedId,
   select,
   addFolder,
+  onDelete,
 }: ModelCatalogueProps) {
   const [sortBy, setSortBy] = useState<keyof ModelRecord | null>(null);
   const [reverseSortDirection, setReverseSortDirection] = useState(false);
+  const { showContextMenu } = useContextMenu();
 
   const handleSort = (field: keyof ModelRecord) => {
     const reversed = field === sortBy ? !reverseSortDirection : false;
@@ -51,6 +63,9 @@ export function ModelCatalogue({
           break;
         case "architecture":
           comparison = a.architecture.localeCompare(b.architecture);
+          break;
+        case "sizeBytes":
+          comparison = a.sizeBytes - b.sizeBytes;
           break;
         case "capability":
           comparison = a.capability.localeCompare(b.capability);
@@ -127,6 +142,13 @@ export function ModelCatalogue({
                 onSort={handleSort}
               />
               <SortableTh
+                label="Model Size (GB)"
+                field="sizeBytes"
+                sortBy={sortBy}
+                reverseSortDirection={reverseSortDirection}
+                onSort={handleSort}
+              />
+              <SortableTh
                 label="Location"
                 field="locations"
                 sortBy={sortBy}
@@ -141,6 +163,31 @@ export function ModelCatalogue({
                 key={model.id}
                 className={selectedId === model.id ? "model-row-selected" : undefined}
                 onClick={() => select(model.id)}
+                onContextMenu={showContextMenu([
+                  {
+                    key: "copy-id",
+                    icon: <IconCopy size={16} />,
+                    title: "Copy ID",
+                    onClick: () => void copyToClipboard(model.id),
+                  },
+                  {
+                    key: "open-folder",
+                    icon: <IconFolderOpen size={16} />,
+                    title: "Open folder",
+                    onClick: () => void openFolderInExplorer(modelFolder(model.locations[0]?.path)),
+                  },
+                  ...(model.isLocal
+                    ? [
+                        {
+                          key: "delete-folder",
+                          icon: <IconTrash size={16} />,
+                          title: "Delete folder…",
+                          color: "red",
+                          onClick: () => onDelete(model),
+                        },
+                      ]
+                    : []),
+                ])}
                 aria-pressed={selectedId === model.id}
                 style={{ cursor: "pointer" }}
               >
@@ -154,6 +201,7 @@ export function ModelCatalogue({
                 <Table.Td>
                   <NumberFormatter value={model.contextLength} thousandSeparator />
                 </Table.Td>
+                <Table.Td>{formatBytes(model.sizeBytes)}</Table.Td>
                 <Table.Td>{model.locations.map((location) => location.path).join(", ")}</Table.Td>
               </Table.Tr>
             ))}
