@@ -575,15 +575,18 @@ fn bridge_error(message: impl Into<String>) -> ErrorPayload {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::AtomicU64;
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
     struct TempDir(PathBuf);
 
     impl TempDir {
         fn new() -> Self {
+            static COUNTER: AtomicU64 = AtomicU64::new(0);
             let unique = format!(
-                "SharedLocalLLM-watcher-{}-{}",
+                "SharedLocalLLM-watcher-{}-{}-{}",
                 std::process::id(),
+                COUNTER.fetch_add(1, Ordering::Relaxed),
                 SystemTime::now()
                     .duration_since(UNIX_EPOCH)
                     .map(|elapsed| elapsed.as_nanos())
