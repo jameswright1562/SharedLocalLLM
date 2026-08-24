@@ -64,7 +64,7 @@ jobs:
           python-version: "3.12"
           cache: pip
       - name: Install lightweight test dependencies
-        run: python -m pip install pytest psutil fastapi uvicorn httpx
+        run: python -m pip install pytest psutil fastapi uvicorn httpx numpy
       - name: Compile Python sources
         run: python -m compileall -q backend/sharedlocalllm_backend
       - name: Unit tests
@@ -88,6 +88,15 @@ jobs:
         with:
           workspaces: src-tauri
           cache-on-failure: true
+      # tauri.conf.json bundles ../backend/dist/sharedlocalllm-backend.exe and
+      # tauri-build refuses to run when that path is missing. Real builds get
+      # it from `pnpm backend:package`; the check job only needs the file to
+      # exist, so a stub keeps fmt/test/clippy runnable without PyInstaller.
+      - name: Stub the packaged backend resource
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path backend/dist | Out-Null
+          New-Item -ItemType File -Force -Path backend/dist/sharedlocalllm-backend.exe | Out-Null
       - name: Rust formatting
         run: cargo fmt --manifest-path src-tauri/Cargo.toml --all --check
       - name: Rust tests
