@@ -49,17 +49,17 @@ core types are re-exported at the crate root.
 
 ## API mapping (old call -> llama-cpp-4)
 
-| Old call (pre-refactor)             | llama-cpp-4 0.5.1 replacement                                                                                |
-| ----------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| `model.chat_template()`             | `model.apply_chat_template(None, &[LlamaChatMessage], true)` -> `Result<String, ApplyChatTemplateError>`      |
-| `model.tokenize(&prompt, false)`    | `model.str_to_token(&prompt, AddBos::Always)` -> `Result<Vec<LlamaToken>, StringToTokenError>`               |
-| `model.sampler_default().temperature(t)` | `LlamaSampler::chain_simple([LlamaSampler::temp(t as f32), LlamaSampler::dist(0)])`                     |
-| `context.clear()`                   | removed; fresh context per model load. If a KV reset is ever needed, `LlamaContext::clear_kv_cache_seq(...)` |
-| `context.decode(backend, batch)`    | `context.decode(&mut batch)` -> `Result<(), DecodeError>` (backend no longer required)                        |
-| `context.sample(&sampler)`          | `sampler.sample(&ctx, idx)` -> `LlamaToken` (sampler is owned separately, no error result)                    |
-| `model.token_to_piece(token)`       | `model.token_to_bytes(token, Special::Plaintext)` -> `Result<Vec<u8>>`, render with `String::from_utf8_lossy` |
-| `model.token_eos()`                 | unchanged (`model.token_eos() -> LlamaToken`)                                                                 |
-| `batch.add(token, pos, &[0], logits)` | same signature, but returns `Result<(), BatchAddError>`; `LlamaToken` derives `PartialEq`/`Eq`/`Copy`       |
+| Old call (pre-refactor)                  | llama-cpp-4 0.5.1 replacement                                                                                 |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `model.chat_template()`                  | `model.apply_chat_template(None, &[LlamaChatMessage], true)` -> `Result<String, ApplyChatTemplateError>`      |
+| `model.tokenize(&prompt, false)`         | `model.str_to_token(&prompt, AddBos::Always)` -> `Result<Vec<LlamaToken>, StringToTokenError>`                |
+| `model.sampler_default().temperature(t)` | `LlamaSampler::chain_simple([LlamaSampler::temp(t as f32), LlamaSampler::dist(0)])`                           |
+| `context.clear()`                        | removed; fresh context per model load. If a KV reset is ever needed, `LlamaContext::clear_kv_cache_seq(...)`  |
+| `context.decode(backend, batch)`         | `context.decode(&mut batch)` -> `Result<(), DecodeError>` (backend no longer required)                        |
+| `context.sample(&sampler)`               | `sampler.sample(&ctx, idx)` -> `LlamaToken` (sampler is owned separately, no error result)                    |
+| `model.token_to_piece(token)`            | `model.token_to_bytes(token, Special::Plaintext)` -> `Result<Vec<u8>>`, render with `String::from_utf8_lossy` |
+| `model.token_eos()`                      | unchanged (`model.token_eos() -> LlamaToken`)                                                                 |
+| `batch.add(token, pos, &[0], logits)`    | same signature, but returns `Result<(), BatchAddError>`; `LlamaToken` derives `PartialEq`/`Eq`/`Copy`         |
 
 Prompt construction:
 
@@ -79,7 +79,7 @@ match the new RPC API:
 
 - `ggml_backend_rpc_add_server(endpoint: *const c_char) -> ggml_backend_reg_t`
 - `ggml_backend_rpc_start_server(endpoint: *const i8, cache_dir: *const i8, n_threads: usize,
-  n_devices: usize, devices: *mut *mut ggml_backend_device)`
+n_devices: usize, devices: *mut *mut ggml_backend_device)`
 
 ## Peer/RPC refactor residue fixed
 
