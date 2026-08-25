@@ -23,6 +23,7 @@ from typing import Any, BinaryIO, cast
 
 from .errors import BackendError
 from .llama_server import install_root_candidates, locate_llama_server, probe_health
+from .openai_compat import sampling_kwargs
 from .tool_calls import ToolStreamNormalizer, normalize_tool_message
 
 START_TIMEOUT_SECONDS = 300
@@ -430,6 +431,7 @@ class ServerEngine:
             "messages": wire_messages(messages, settings),
             "temperature": float(settings.get("temperature", 0.7)),
             "max_tokens": int(settings.get("maxTokens", 512)),
+            **sampling_kwargs(settings),
         }
         if tools:
             payload["tools"] = tools

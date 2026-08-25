@@ -422,3 +422,35 @@ def test_build_command_requests_a_unified_kv_buffer_only_when_configured() -> No
 
     assert "--kv-unified" in command({"kvUnified": True})
     assert "--kv-unified" not in command({})
+
+
+def test_payload_forwards_sampling_options_to_llama_server() -> None:
+    engine = ServerEngine(Store())
+    payload = engine._payload(
+        [{"role": "user", "content": "hi"}],
+        {
+            "temperature": 0.6, "maxTokens": 256, "topP": 0.95, "topK": 20,
+            "minP": 0.0, "repeatPenalty": 1.05,
+            "presencePenalty": 0.4, "frequencyPenalty": -0.3,
+        },
+    )
+
+    assert payload["temperature"] == 0.6
+    assert payload["max_tokens"] == 256
+    assert payload["top_p"] == 0.95
+    assert payload["top_k"] == 20
+    assert payload["min_p"] == 0.0
+    assert payload["repeat_penalty"] == 1.05
+    assert payload["presence_penalty"] == 0.4
+    assert payload["frequency_penalty"] == -0.3
+
+
+def test_payload_omits_unset_sampling_options() -> None:
+    engine = ServerEngine(Store())
+    payload = engine._payload([], {"temperature": 0.7, "maxTokens": 512})
+
+    for key in (
+        "top_p", "top_k", "min_p", "repeat_penalty",
+        "presence_penalty", "frequency_penalty",
+    ):
+        assert key not in payload

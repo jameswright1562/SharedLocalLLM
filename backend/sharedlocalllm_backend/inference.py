@@ -12,7 +12,7 @@ import numpy as np
 import numpy.typing as npt
 
 from .errors import BackendError
-from .openai_compat import reasoning_stream_chunks
+from .openai_compat import reasoning_stream_chunks, sampling_kwargs
 from .peer import RpcForwarder
 from .reasoning import ReasoningStreamSplitter, is_reasoning_model, split_reasoning
 from .rpc_native import NativeRpcServer, prepare_rpc_load
@@ -320,6 +320,7 @@ class InferenceEngine:
                             messages=self._wire_messages(messages, settings),
                             temperature=float(settings.get("temperature", 0.7)),
                             max_tokens=int(settings.get("maxTokens", 512)),
+                            **sampling_kwargs(settings),
                             tools=tools,
                             tool_choice=tool_choice,
                             logits_processor=LogitsProcessorList([count_tokens]),
@@ -433,6 +434,7 @@ class InferenceEngine:
                             messages=wire,
                             temperature=float(settings.get("temperature", 0.7)),
                             max_tokens=int(settings.get("maxTokens", 512)),
+                            **sampling_kwargs(settings),
                             stream=True,
                         )
                         for chunk in chunks:
@@ -522,6 +524,7 @@ class InferenceEngine:
                     messages=wire,
                     temperature=float(settings.get("temperature", 0.7)),
                     max_tokens=int(settings.get("maxTokens", 512)),
+                    **sampling_kwargs(settings),
                     logits_processor=LogitsProcessorList([abort_on_cancel]),
                     tools=tools,
                     tool_choice=tool_choice,

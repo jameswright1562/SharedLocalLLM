@@ -5,6 +5,49 @@ from typing import Any, Iterable, Iterator
 from .errors import BackendError
 from .reasoning import ReasoningStreamSplitter
 
+# (request field, internal setting, llama argument) for every sampler the
+# engines accept. Request names follow OpenAI plus the llama.cpp extensions
+# (top_k, min_p, repeat_penalty); argument names work for both llama-cpp-python
+# and the llama-server JSON API.
+SAMPLING_FIELDS: tuple[tuple[str, str, str, type], ...] = (
+    ("top_p", "topP", "top_p", float),
+    ("top_k", "topK", "top_k", int),
+    ("min_p", "minP", "min_p", float),
+    ("repeat_penalty", "repeatPenalty", "repeat_penalty", float),
+    ("presence_penalty", "presencePenalty", "presence_penalty", float),
+    ("frequency_penalty", "frequencyPenalty", "frequency_penalty", float),
+)
+
+
+def sampling_settings(body: dict[str, Any], base: dict[str, Any]) -> dict[str, Any]:
+    """Merge request sampler fields into an internal chat settings dict.
+
+    Unset fields keep their absence so engine defaults stay in effect; a
+    non-numeric value is rejected before it can reach an engine.
+    """
+    settings = dict(base)
+    for source_key, setting_key, _argument_key, cast in SAMPLING_FIELDS:
+        value = body.get(source_key)
+        if value is None:
+            continue
+        try:
+            settings[setting_key] = cast(value)
+        except (TypeError, ValueError):
+            raise BackendError(
+                "api_sampling_invalid", f"{source_key} must be a number."
+            ) from None
+    return settings
+
+
+def sampling_kwargs(settings: dict[str, Any]) -> dict[str, Any]:
+    """Map internal sampler settings onto engine request arguments."""
+    kwargs: dict[str, Any] = {}
+    for _source_key, setting_key, argument_key, cast in SAMPLING_FIELDS:
+        value = settings.get(setting_key)
+        if value is not None:
+            kwargs[argument_key] = cast(value)
+    return kwargs
+
 
 def request_tool_options(
     body: dict[str, Any],

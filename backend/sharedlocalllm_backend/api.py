@@ -21,6 +21,7 @@ from .openai_compat import (
     completion_message,
     completion_usage,
     request_tool_options,
+    sampling_settings,
 )
 
 CONTROL_PORT = 11436
@@ -220,10 +221,10 @@ def create_openai_app(runtime: Any) -> FastAPI:
         # A requested model that is not the loaded one falls back to the loaded
         # model instead of failing; the response reports the id that served it.
         active_model = active_model_id()
-        settings = {
+        settings = sampling_settings(body, {
             "systemPrompt": "", "temperature": body.get("temperature", 0.7),
             "maxTokens": body.get("max_completion_tokens", body.get("max_tokens", 512)),
-        }
+        })
         tools, tool_choice = request_tool_options(body)
         if body.get("stream"):
             stream_options = body.get("stream_options")
@@ -269,7 +270,11 @@ def create_openai_app(runtime: Any) -> FastAPI:
         active_model = active_model_id()
         response = await runtime.chat(
             [{"role": "user", "content": str(body.get("prompt", ""))}],
-            {"systemPrompt": "", "temperature": body.get("temperature", 0.7), "maxTokens": body.get("max_tokens", 512)},
+            sampling_settings(body, {
+                "systemPrompt": "",
+                "temperature": body.get("temperature", 0.7),
+                "maxTokens": body.get("max_tokens", 512),
+            }),
             [],
         )
         return {

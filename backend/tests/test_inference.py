@@ -7,7 +7,12 @@ import threading
 import pytest
 
 from sharedlocalllm_backend.errors import BackendError
-from sharedlocalllm_backend.inference import InferenceEngine, build_llama_kwargs, layer_totals
+from sharedlocalllm_backend.inference import (
+    InferenceEngine,
+    build_llama_kwargs,
+    layer_totals,
+    sampling_kwargs,
+)
 
 
 def test_defaults_match_previous_behaviour() -> None:
@@ -117,6 +122,70 @@ def test_layer_totals_ignore_unknown_nodes_and_missing_peer() -> None:
         {"nodeId": "stranger", "layers": 99},
     ]
     assert layer_totals(allocations, None, "local", True) == (0, 0, 0)
+
+
+def test_sampling_kwargs_maps_settings_onto_llama_arguments() -> None:
+    assert sampling_kwargs({
+        "topP": 0.95, "topK": 20, "minP": 0.01, "repeatPenalty": 1.05,
+        "presencePenalty": 0.5, "frequencyPenalty": -0.2,
+    }) == {
+        "top_p": 0.95, "top_k": 20, "min_p": 0.01, "repeat_penalty": 1.05,
+        "presence_penalty": 0.5, "frequency_penalty": -0.2,
+    }
+
+
+def test_sampling_kwargs_skip_unset_values_and_coerce_strings() -> None:
+    assert sampling_kwargs({"topP": "0.9", "topK": "40"}) == {"top_p": 0.9, "top_k": 40}
+    assert sampling_kwargs({"temperature": 0.6}) == {}
+
+
+def test_chat_sync_passes_sampling_options_to_llama() -> None:
+    class FakeLlama:
+        def __init__(self) -> None:
+            self.kwargs: dict = {}
+
+        def create_chat_completion(self, **kwargs):
+            self.kwargs = kwargs
+            return {
+                "choices": [{"message": {"role": "assistant", "content": "ok"}, "finish_reason": "stop"}],
+                "usage": {},
+            }
+
+    engine = InferenceEngine(None)
+    engine.llm = FakeLlama()
+    engine._chat_sync(
+        [{"role": "user", "content": "hi"}],
+        {"temperature": 0.6, "maxTokens": 64, "topK": 20, "repeatPenalty": 1.05},
+    )
+    assert engine.llm.kwargs["top_k"] == 20
+    assert engine.llm.kwargs["repeat_penalty"] == 1.05
+    assert "top_p" not in engine.llm.kwargs
+
+
+def test_openai_stream_passes_sampling_options_to_llama() -> None:
+    class FakeLlama:
+        def __init__(self) -> None:
+            self.kwargs: dict = {}
+
+        def create_chat_completion(self, **kwargs):
+            self.kwargs = kwargs
+            return iter([
+                {"choices": [{"index": 0, "delta": {"content": "ok"}, "finish_reason": None}]},
+                {"choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]},
+            ])
+
+    engine = InferenceEngine(None)
+    engine.llm = FakeLlama()
+
+    async def collect() -> list[dict]:
+        return [
+            chunk async for chunk in engine.chat_openai_stream(
+                [], {"temperature": 0.6, "minP": 0.02}
+            )
+        ]
+
+    asyncio.run(collect())
+    assert engine.llm.kwargs["min_p"] == 0.02
 
 
 def test_wire_messages_preserves_tool_calls_and_tool_results() -> None:

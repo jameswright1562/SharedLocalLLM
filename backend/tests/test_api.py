@@ -200,6 +200,100 @@ def test_chat_forwards_tools_and_returns_openai_tool_calls() -> None:
     assert runtime.received["tool_choice"] == "auto"
 
 
+def test_chat_forwards_sampling_options_to_the_engine() -> None:
+    class SamplingRuntime(Runtime):
+        def __init__(self) -> None:
+            super().__init__()
+            self.received: dict = {}
+
+        async def chat(self, _messages, settings, _images, **_kwargs):
+            self.received["settings"] = settings
+            return {"content": "ok", "reasoning": "", "tokensPerSecond": 1.0}
+
+    runtime = SamplingRuntime()
+
+    async def request():
+        transport = httpx.ASGITransport(app=create_openai_app(runtime))
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            return await client.post(
+                "/v1/chat/completions",
+                headers={"Authorization": "Bearer secret"},
+                json={
+                    "messages": [{"role": "user", "content": "hi"}],
+                    "temperature": 0.6, "max_tokens": 1024,
+                    "top_p": 0.95, "top_k": 20, "min_p": 0.0,
+                    "repeat_penalty": 1.05,
+                    "presence_penalty": 0.1, "frequency_penalty": 0.2,
+                },
+            )
+
+    response = asyncio.run(request())
+    assert response.status_code == 200
+    assert runtime.received["settings"] == {
+        "systemPrompt": "",
+        "temperature": 0.6,
+        "maxTokens": 1024,
+        "topP": 0.95,
+        "topK": 20,
+        "minP": 0.0,
+        "repeatPenalty": 1.05,
+        "presencePenalty": 0.1,
+        "frequencyPenalty": 0.2,
+    }
+
+
+def test_completions_forward_sampling_options_and_defaults_stay_stable() -> None:
+    class SamplingRuntime(Runtime):
+        def __init__(self) -> None:
+            super().__init__()
+            self.received: dict = {}
+
+        async def chat(self, _messages, settings, *_args, **_kwargs):
+            self.received["settings"] = settings
+            return {"content": "done", "reasoning": "", "tokensPerSecond": 1.0}
+
+    plain = SamplingRuntime()
+    tuned = SamplingRuntime()
+
+    async def request(runtime: SamplingRuntime, body: dict):
+        transport = httpx.ASGITransport(app=create_openai_app(runtime))
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            return await client.post(
+                "/v1/completions",
+                headers={"Authorization": "Bearer secret"},
+                json=body,
+            )
+
+    assert asyncio.run(request(plain, {"prompt": "hi"})).status_code == 200
+    assert asyncio.run(request(tuned, {
+        "prompt": "hi", "temperature": 0.6, "max_tokens": 128,
+        "top_k": 20, "repeat_penalty": 1.1,
+    })).status_code == 200
+
+    assert plain.received["settings"] == {
+        "systemPrompt": "", "temperature": 0.7, "maxTokens": 512,
+    }
+    assert tuned.received["settings"] == {
+        "systemPrompt": "", "temperature": 0.6, "maxTokens": 128,
+        "topK": 20, "repeatPenalty": 1.1,
+    }
+
+
+def test_chat_rejects_non_numeric_sampling_values() -> None:
+    async def request():
+        transport = httpx.ASGITransport(app=create_openai_app(Runtime()))
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            return await client.post(
+                "/v1/chat/completions",
+                headers={"Authorization": "Bearer secret"},
+                json={"messages": [], "top_k": "twenty"},
+            )
+
+    response = asyncio.run(request())
+    assert response.status_code == 400
+    assert response.json()["error"]["type"] == "api_sampling_invalid"
+
+
 def test_local_stream_relays_native_tool_call_deltas_and_finish_reason() -> None:
     chunks = [
         {"choices": [{"index": 0, "delta": {"role": "assistant"}, "finish_reason": None}]},
