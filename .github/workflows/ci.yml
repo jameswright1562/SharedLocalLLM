@@ -150,7 +150,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install CUDA toolkit for llama-cpp-python packaging
-        uses: Jimver/cuda-toolkit@v0.2.35
+        uses: Jimver/cuda-toolkit@v0.2.36
         with:
           cuda: "13.2.0"
       - name: Install stable Rust
