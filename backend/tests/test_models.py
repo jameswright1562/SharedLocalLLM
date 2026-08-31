@@ -7,7 +7,7 @@ from sharedlocalllm_backend.gguf import (
     chat_template_supports_reasoning_preserve,
     has_nextn_tensors,
 )
-from sharedlocalllm_backend.models import _fit, discover_local, merge_remote
+from sharedlocalllm_backend.models import _fit, discover_local, hf_cache_roots, merge_remote
 
 
 def node(node_id: str, vram: float = 12.0) -> dict:
@@ -51,6 +51,25 @@ def test_merge_marks_remote_only_models() -> None:
     merged = merge_remote(local, remote)
     assert {model["id"] for model in merged} == {"a", "b"}
     assert next(model for model in merged if model["id"] == "b")["remoteOnly"] is True
+
+
+def test_hf_cache_roots_returns_snapshots_containing_gguf(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    snapshot = tmp_path / ".cache" / "huggingface" / "hub" / "models--a--b" / "snapshots" / "abc123"
+    (snapshot / "Q6_K").mkdir(parents=True)
+    (snapshot / "Q6_K" / "model-00001-of-00002.gguf").write_bytes(b"GGUF")
+    (snapshot / "Q6_K" / "model-00002-of-00002.gguf").write_bytes(b"GGUF")
+    (tmp_path / ".cache" / "huggingface" / "hub" / "models--c--d" / "snapshots" / "def456").mkdir(parents=True)
+
+    roots = hf_cache_roots()
+    assert roots == [snapshot]
+
+
+def test_hf_cache_roots_ignores_cache_without_gguf(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    (tmp_path / ".cache" / "huggingface" / "hub" / "models--x--y" / "snapshots" / "aaa").mkdir(parents=True)
+    assert hf_cache_roots() == []
+
 
 
 def test_discovery_marks_locally_stored_models_as_local(tmp_path: Path) -> None:

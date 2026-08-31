@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import atexit
 import ctypes
 import os
 import socket
+import subprocess
 import sys
 import threading
 import time
@@ -10,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from .errors import BackendError
+from .llama_server import install_root_candidates
 
 # llama.cpp device types (ggml-backend.h)
 GGML_DEVICE_CPU = 0
@@ -28,44 +31,87 @@ _rpc_devices_by_endpoint: dict[str, list[dict[str, Any]]] = {}
 _pending_devices: list[list[int] | None] = []
 
 
+RPC_SERVER_EXECUTABLE = "ggml-rpc-server.exe"
+
+
+def _experimental_rpc_server_exe() -> Path | None:
+    """Find the experimental ggml-rpc-server.exe via the opt-in install roots.
+
+    Mirrors how llama-server is located: the same ``SHAREDLOCALLLM_LLAMA_SERVER_DIR``
+    override directory is searched first, so the RPC worker comes from the very
+    same ggml build (and therefore the same RPC protocol version) as the
+    experimental engine used to run GLM-5.3-Flash.
+    """
+    for directory in install_root_candidates():
+        candidate = Path(directory) / RPC_SERVER_EXECUTABLE
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def _probe_rpc_devices(exe: Path) -> list[str]:
+    """Return the device names the experimental rpc-server will expose.
+
+    Spawns the binary with an unknown ``-d`` name, which makes it print its
+    available devices to stderr as ``  <NAME>: <description>`` lines. The names
+    are returned in registration order (accelerators first, CPU last).
+    """
+    try:
+        result = subprocess.run(
+            [str(exe), "-p", str(_free_port()), "-d", "__probe__"],
+            capture_output=True, text=True, timeout=10,
+        )
+    except OSError:
+        return []
+    output = f"{result.stderr}\n{result.stdout}"
+    names: list[str] = []
+    for line in output.splitlines():
+        if not line[:1].isspace():
+            continue
+        stripped = line.strip()
+        if not stripped.endswith(":") and ":" in stripped:
+            candidate = stripped.split(":", 1)[0].strip()
+            if candidate and candidate.isidentifier():
+                names.append(candidate)
+    return names
+
+
 class NativeRpcServer:
-    """Hosts llama.cpp's RPC backend directly from llama-cpp-python native libraries."""
+    """Hosts llama.cpp's RPC backend on a loopback endpoint.
+
+    By default the embedded ``ggml_backend_rpc_start_server`` from the pinned
+    llama-cpp-python native libraries is used. When the experimental build (for
+    example the Unsloth ``glm5next`` fork, which carries a newer ggml RPC
+    protocol) has been selected via ``SHAREDLOCALLLM_LLAMA_SERVER_DIR``, its
+    ``ggml-rpc-server.exe`` is spawned instead. RPC requires both ends of a link
+    to speak the identical ggml RPC protocol version, so the worker must match
+    the experimental engine the coordinator is running.
+    """
 
     def __init__(self) -> None:
         self.endpoint: str | None = None
         self._thread: threading.Thread | None = None
         self._error: Exception | None = None
         self._dll_directory: Any = None
+        self._process: subprocess.Popen[Any] | None = None
         self.include_cpu = False
         self.cache_dir: str | None = None
 
     def start(self, include_cpu: bool = False) -> str:
-        if (
-            self.endpoint
-            and self._thread
-            and self._thread.is_alive()
-            and self.include_cpu == include_cpu
-        ):
+        if self.endpoint and (self._process is not None or (self._thread and self._thread.is_alive())) and self.include_cpu == include_cpu:
             return self.endpoint
-        # Expose the devices the load actually needs. The coordinator omits the
-        # final CPU device unless remote CPU offload is explicitly selected, so
-        # a daemon that advertises it unconditionally would let llama-server
-        # place layers on the worker's RAM even when the option is off. The
-        # embedded RPC server has no shutdown API, so honouring a changed flag
-        # abandons the previous daemon's thread and port until process exit;
-        # toggles are rare and correctness of placement wins.
+        if self._process is not None:
+            self._terminate_process()
         self.include_cpu = include_cpu
         self.endpoint = None
         self._error = None
-        # Same file cache as rpc-server's -c/--cache flag: tensors persist in a
-        # local directory to cut repeated transfers over the peer link.
-        self.cache_dir = _rpc_cache_dir()
         port = _free_port()
         self.endpoint = f"127.0.0.1:{port}"
-        self._thread = threading.Thread(
-            target=self._run, args=(include_cpu, self.cache_dir), name="llama-rpc-worker", daemon=True
-        )
-        self._thread.start()
+        experimental = _experimental_rpc_server_exe()
+        if experimental is not None:
+            self._start_experimental(experimental, port, include_cpu)
+        else:
+            self._start_embedded(port, include_cpu)
         deadline = time.monotonic() + 15
         while time.monotonic() < deadline:
             if self._error:
@@ -76,6 +122,51 @@ class NativeRpcServer:
             except OSError:
                 time.sleep(0.1)
         raise BackendError("rpc_worker_timeout", "Embedded llama.cpp RPC worker did not start.")
+
+    def _start_experimental(self, exe: Path, port: int, include_cpu: bool) -> None:
+        self.cache_dir = _rpc_cache_dir()
+        devices = _probe_rpc_devices(exe)
+        gpu_devices = [name for name in devices if name.lower() != "cpu"]
+        if not gpu_devices:
+            gpu_devices = ["CPU"]
+        selected = list(gpu_devices)
+        if include_cpu and any(name.lower() == "cpu" for name in devices):
+            selected.append("CPU")
+        command = [str(exe), "-H", "127.0.0.1", "-p", str(port), "-d", ",".join(selected)]
+        if self.cache_dir:
+            command.append("-c")
+        try:
+            self._process = subprocess.Popen(
+                command,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+        except OSError as error:
+            self._error = error
+            return
+        atexit.register(self._terminate_process)
+
+    def _terminate_process(self) -> None:
+        process = self._process
+        if process is None:
+            return
+        self._process = None
+        try:
+            process.terminate()
+            process.wait(timeout=5)
+        except (OSError, subprocess.TimeoutExpired):
+            try:
+                process.kill()
+            except OSError:
+                pass
+
+    def _start_embedded(self, port: int, include_cpu: bool) -> None:
+        self.cache_dir = _rpc_cache_dir()
+        self._thread = threading.Thread(
+            target=self._run, args=(include_cpu, self.cache_dir), name="llama-rpc-worker", daemon=True
+        )
+        self._thread.start()
 
     def _run(self, include_cpu: bool, cache_dir: str | None) -> None:
         try:

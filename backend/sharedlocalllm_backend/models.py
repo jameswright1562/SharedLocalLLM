@@ -42,6 +42,24 @@ def lm_studio_roots() -> list[Path]:
     return [path for path in roots if path.is_dir()]
 
 
+def hf_cache_roots() -> list[Path]:
+    """Return snapshot directories from the Hugging Face cache that contain .gguf files."""
+    hub = Path.home() / ".cache" / "huggingface" / "hub"
+    roots: list[Path] = []
+    if not hub.is_dir():
+        return roots
+    for model_dir in hub.glob("models--*"):
+        snapshots = model_dir / "snapshots"
+        if not snapshots.is_dir():
+            continue
+        for snapshot in snapshots.iterdir():
+            if not snapshot.is_dir():
+                continue
+            if any(snapshot.rglob("*.gguf")):
+                roots.append(snapshot)
+    return roots
+
+
 def _model_id(shards: list[Path], size: int) -> str:
     digest = hashlib.sha256()
     digest.update(str(size).encode())

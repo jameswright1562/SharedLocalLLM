@@ -156,9 +156,11 @@ def test_prepare_rpc_load_distributed_builds_remote_first_split(monkeypatch, tmp
     if getattr(llama_cpp, "__llama_stub__", False):
         pytest.skip("prepare_rpc_load needs the real llama.cpp native registry")
 
+    from sharedlocalllm_backend import rpc_native
     from sharedlocalllm_backend.rpc_native import NativeRpcServer, prepare_rpc_load
 
     monkeypatch.setenv("LLAMA_CACHE", str(tmp_path))
+    monkeypatch.setattr(rpc_native, "_experimental_rpc_server_exe", lambda: None)
 
     async def scenario() -> None:
         server = NativeRpcServer()
@@ -180,9 +182,11 @@ def test_prepare_rpc_load_reserves_remote_cpu_device(monkeypatch, tmp_path) -> N
     if getattr(llama_cpp, "__llama_stub__", False):
         pytest.skip("prepare_rpc_load needs the real llama.cpp native registry")
 
+    from sharedlocalllm_backend import rpc_native
     from sharedlocalllm_backend.rpc_native import NativeRpcServer, prepare_rpc_load
 
     monkeypatch.setenv("LLAMA_CACHE", str(tmp_path))
+    monkeypatch.setattr(rpc_native, "_experimental_rpc_server_exe", lambda: None)
 
     async def scenario() -> None:
         server = NativeRpcServer()
@@ -215,6 +219,7 @@ def stubbed_worker(monkeypatch) -> tuple[NativeRpcServer, list[bool], threading.
     monkeypatch.setattr(
         rpc_native.socket, "create_connection", lambda *_args, **_kwargs: DummySocket()
     )
+    monkeypatch.setattr(rpc_native, "_experimental_rpc_server_exe", lambda: None)
 
     worker = NativeRpcServer()
     runs: list[bool] = []
@@ -248,3 +253,106 @@ def test_rpc_worker_restarts_when_the_cpu_opt_in_changes(monkeypatch) -> None:
     assert runs == [False, True]
     assert worker.include_cpu is True
     release.set()
+
+
+def test_experimental_rpc_server_exe_finds_the_override_install(monkeypatch) -> None:
+    from sharedlocalllm_backend import rpc_native
+
+    override = rpc_native.Path("C:/exp/runtime")
+    monkeypatch.setattr(rpc_native, "install_root_candidates", lambda: [override])
+    monkeypatch.setattr(rpc_native.Path, "is_file", lambda self: self.name == "ggml-rpc-server.exe")
+
+    assert rpc_native._experimental_rpc_server_exe() == override / "ggml-rpc-server.exe"
+
+
+def test_experimental_rpc_server_exe_returns_none_without_the_binary(monkeypatch, tmp_path) -> None:
+    from sharedlocalllm_backend import rpc_native
+
+    monkeypatch.setattr(rpc_native, "install_root_candidates", lambda: [tmp_path])
+    assert rpc_native._experimental_rpc_server_exe() is None
+
+
+def test_probe_rpc_devices_parses_gpu_then_cpu_from_stderr(monkeypatch) -> None:
+    from sharedlocalllm_backend import rpc_native
+
+    class Result:
+        stderr = (
+            "  CUDA0: NVIDIA RTX (12281 MiB)\n"
+            "  CPU: 13th Gen Intel (32487 MiB, 15156 MiB free)\n"
+        )
+        stdout = ""
+
+    monkeypatch.setattr(rpc_native, "_free_port", lambda: 50003)
+    monkeypatch.setattr(
+        rpc_native.subprocess,
+        "run",
+        lambda command, capture_output, text, timeout: Result() if "__probe__" in command else None,
+    )
+    assert rpc_native._probe_rpc_devices(rpc_native.Path("x")) == ["CUDA0", "CPU"]
+
+
+def test_probe_rpc_devices_ignores_error_lines(monkeypatch) -> None:
+    from sharedlocalllm_backend import rpc_native
+
+    class Result:
+        stderr = "error: unknown device: __probe__\n  CPU: only-cpu\n"
+        stdout = ""
+
+    monkeypatch.setattr(rpc_native, "_free_port", lambda: 50004)
+    monkeypatch.setattr(
+        rpc_native.subprocess,
+        "run",
+        lambda command, capture_output, text, timeout: Result(),
+    )
+    assert rpc_native._probe_rpc_devices(rpc_native.Path("x")) == ["CPU"]
+
+
+def test_rpc_worker_experimental_appends_cpu_and_restarts_on_new_request(monkeypatch) -> None:
+    """CPU is appended to the device list when requested, and a new start
+    terminates the previously spawned worker process."""
+    from sharedlocalllm_backend import rpc_native
+
+    class DummySocket:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+    spawned: list[list[str]] = []
+    terminated = threading.Event()
+
+    class DummyProcess:
+        def terminate(self) -> None:
+            terminated.set()
+
+        def wait(self, timeout: float) -> None:
+            terminated.wait(timeout=5)
+
+        def kill(self) -> None:
+            terminated.set()
+
+    def fake_popen(command, **_kwargs) -> DummyProcess:
+        spawned.append(command)
+        return DummyProcess()
+
+    exe = rpc_native.Path("C:/exp/runtime/ggml-rpc-server.exe")
+    ports = iter((50011, 50012))
+    monkeypatch.setattr(rpc_native, "_experimental_rpc_server_exe", lambda: exe)
+    monkeypatch.setattr(rpc_native, "_free_port", lambda: next(ports))
+    monkeypatch.setattr(rpc_native, "_probe_rpc_devices", lambda exp: ["CUDA0", "CPU"])
+    monkeypatch.setattr(rpc_native, "_rpc_cache_dir", lambda: None)
+    monkeypatch.setattr(rpc_native.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(
+        rpc_native.socket, "create_connection", lambda *_args, **_kwargs: DummySocket()
+    )
+
+    worker = NativeRpcServer()
+    assert worker.start(True) == "127.0.0.1:50011"
+    assert worker.endpoint == "127.0.0.1:50011"
+    assert worker.start(False) == "127.0.0.1:50012"
+    assert terminated.is_set()
+    assert spawned == [
+        [str(exe), "-H", "127.0.0.1", "-p", "50011", "-d", "CUDA0,CPU"],
+        [str(exe), "-H", "127.0.0.1", "-p", "50012", "-d", "CUDA0"],
+    ]

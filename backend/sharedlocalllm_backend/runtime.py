@@ -15,7 +15,7 @@ from .errors import BackendError
 from .hardware import probe_node
 from .inference import InferenceEngine, layer_totals
 from .llama_server import install_root_candidates
-from .models import discover_local, lm_studio_roots, merge_remote, refresh_fits
+from .models import discover_local, hf_cache_roots, lm_studio_roots, merge_remote, refresh_fits
 from .peer import PeerManager, RpcForwarder
 from .placement import estimate_split, normalize_load_config, validate_fit
 from .rpc_native import runtime_health
@@ -100,7 +100,7 @@ class BackendRuntime:
         self._merge_models()
 
     def discover_models(self) -> list[dict[str, Any]]:
-        roots = lm_studio_roots() + [Path(value) for value in self.store.get("customModelDirectories", [])]
+        roots = lm_studio_roots() + hf_cache_roots() + [Path(value) for value in self.store.get("customModelDirectories", [])]
         peer = self._peer_node()
         self.local_models, self.model_paths = discover_local(
             roots, self.local_node["id"], self.local_node, peer
