@@ -173,17 +173,62 @@ def probe_health(
         connection.close()
 
 
+def _load_dotenv(path: Path) -> None:
+    """Load ``KEY=VALUE`` lines from a .env file into the process environment.
+
+    Deliberately dependency-free (no ``python-dotenv``): only plain assignments
+    are honoured, values may be double- or single-quoted, and existing variables
+    always win so a real environment never gets clobbered by a .env file.
+    """
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return
+    for raw in lines:
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key = key.strip()
+        if not key:
+            continue
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+            value = value[1:-1]
+        os.environ.setdefault(key, value)
+
+
+def dotenv_candidates() -> list[Path]:
+    """.env locations checked beside the repo and the running Python sidecar."""
+    repo_dir = Path(__file__).resolve().parents[2]
+    executable_dir = Path(sys.executable).resolve().parent
+    return [
+        repo_dir / ".env",
+        repo_dir / "backend" / ".env",
+        executable_dir / ".env",
+    ]
+
+
+def load_dotenv_files() -> None:
+    """Load the project .env (repo root, backend, and sidecar) if present."""
+    for path in dotenv_candidates():
+        _load_dotenv(path)
+
+
 def install_root_candidates() -> list[Path]:
     """Where the verified installer drops the binary, checked beside the app.
 
     By default only directories populated by the SHA-256-verified installer are
-    searched. An explicit, opt-in override (``SHAREDLOCALLLM_LLAMA_SERVER_DIR``)
-    prepends a user-supplied directory so an experimental build (for example the
-    Unsloth ``glm5next`` fork that mainline llama.cpp has not yet merged) can be
+    searched. An explicit, opt-in override (``SHAREDLOCALLLM_LLAMA_SERVER_DIR``,
+    either as a real environment variable or a line in a ``.env`` file such as
+    ``SHAREDLOCALLLM_LLAMA_SERVER_DIR=C:\\path\\to\\experimental``) prepends a
+    user-supplied directory so an experimental build (for example the Unsloth
+    ``glm5next`` fork that mainline llama.cpp has not yet merged) can be
     exercised without touching the pinned manifest. Setting this variable is an
     explicit escape hatch: the binary there is NOT digest-verified against the
     official release, so it must only be used for throwaway experiments.
     """
+    load_dotenv_files()
     override = os.environ.get(EXPERIMENTAL_DIR_ENV)
     candidates: list[Path] = []
     if override:

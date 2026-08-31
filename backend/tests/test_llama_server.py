@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import subprocess
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -12,9 +13,12 @@ import pytest
 from sharedlocalllm_backend.errors import BackendError
 from sharedlocalllm_backend.llama_server import (
     EXPERIMENTAL_DIR_ENV,
+    _load_dotenv,
     binary_version,
+    dotenv_candidates,
     find_manifest,
     install_root_candidates,
+    load_dotenv_files,
     load_manifest,
     locate_llama_server,
     probe_health,
@@ -124,6 +128,9 @@ def test_locate_llama_server_returns_the_first_directory_that_has_it(tmp_path: P
 
 def test_install_root_candidates_includes_the_repo_llama_bin(monkeypatch) -> None:
     monkeypatch.delenv(EXPERIMENTAL_DIR_ENV, raising=False)
+    monkeypatch.setattr(
+        "sharedlocalllm_backend.llama_server.dotenv_candidates", lambda: []
+    )
     candidates = install_root_candidates()
     repo_llama_bin = (
         Path(__file__).resolve().parents[2] / "backend" / "runtime" / "llama-bin"
@@ -137,6 +144,9 @@ def test_install_root_candidates_optin_override_prepends_experimental_dir(monkey
     experimental.mkdir()
     (experimental / "llama-server.exe").write_bytes(b"MZ")
     monkeypatch.setenv(EXPERIMENTAL_DIR_ENV, str(experimental))
+    monkeypatch.setattr(
+        "sharedlocalllm_backend.llama_server.dotenv_candidates", lambda: []
+    )
 
     candidates = install_root_candidates()
     assert candidates[0] == experimental
@@ -154,8 +164,52 @@ def test_locate_llama_server_prefers_the_optin_experimental_binary(monkeypatch, 
     monkeypatch.setenv(EXPERIMENTAL_DIR_ENV, str(experimental))
 
     found = locate_llama_server(install_root_candidates())
+    assert found is not None
     assert found == experimental / "llama-server.exe"
     assert found.read_bytes() == b"MZ-experimental"
+
+
+def test_load_dotenv_reads_plain_assignments_and_quotes(monkeypatch, tmp_path) -> None:
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "# comment\n"
+        f"{EXPERIMENTAL_DIR_ENV}='{tmp_path.as_posix()}'\n"
+        'UNRELATED="value with spaces"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.delenv(EXPERIMENTAL_DIR_ENV, raising=False)
+
+    _load_dotenv(env_file)
+
+    assert os.environ[EXPERIMENTAL_DIR_ENV] == tmp_path.as_posix()
+    assert os.environ["UNRELATED"] == "value with spaces"
+
+
+def test_load_dotenv_never_overrides_an_existing_environment_variable(monkeypatch, tmp_path) -> None:
+    env_file = tmp_path / ".env"
+    env_file.write_text(f"{EXPERIMENTAL_DIR_ENV}='{tmp_path.as_posix()}'\n", encoding="utf-8")
+    monkeypatch.setenv(EXPERIMENTAL_DIR_ENV, "C:\\already\\set")
+
+    _load_dotenv(env_file)
+
+    assert os.environ[EXPERIMENTAL_DIR_ENV] == "C:\\already\\set"
+
+
+def test_install_root_candidates_reads_the_override_from_a_dotenv_file(monkeypatch, tmp_path) -> None:
+    experimental = tmp_path / "experimental"
+    experimental.mkdir()
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        f"{EXPERIMENTAL_DIR_ENV}={experimental}\n", encoding="utf-8"
+    )
+    monkeypatch.delenv(EXPERIMENTAL_DIR_ENV, raising=False)
+    monkeypatch.setattr(
+        "sharedlocalllm_backend.llama_server.dotenv_candidates",
+        lambda: [env_file],
+    )
+
+    candidates = install_root_candidates()
+    assert candidates[0] == experimental
 
 
 def test_binary_version_runs_version_flag_and_parses_first_line() -> None:

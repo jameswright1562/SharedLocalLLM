@@ -5,10 +5,12 @@ import asyncio
 import uvicorn
 
 from .api import CONTROL_PORT, ApiServerManager, create_control_app
+from .llama_server import load_dotenv_files
 from .runtime import BackendRuntime
 
 
 async def run_backend() -> None:
+    load_dotenv_files()
     runtime = BackendRuntime()
     api = ApiServerManager(runtime)
     runtime.api_port_changed = api.restart
