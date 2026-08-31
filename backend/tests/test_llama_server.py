@@ -11,8 +11,10 @@ import pytest
 
 from sharedlocalllm_backend.errors import BackendError
 from sharedlocalllm_backend.llama_server import (
+    EXPERIMENTAL_DIR_ENV,
     binary_version,
     find_manifest,
+    install_root_candidates,
     load_manifest,
     locate_llama_server,
     probe_health,
@@ -118,6 +120,42 @@ def test_locate_llama_server_returns_the_first_directory_that_has_it(tmp_path: P
 
     assert locate_llama_server((empty, filled)) == filled / "llama-server.exe"
     assert locate_llama_server((empty,)) is None
+
+
+def test_install_root_candidates_includes_the_repo_llama_bin(monkeypatch) -> None:
+    monkeypatch.delenv(EXPERIMENTAL_DIR_ENV, raising=False)
+    candidates = install_root_candidates()
+    repo_llama_bin = (
+        Path(__file__).resolve().parents[2] / "backend" / "runtime" / "llama-bin"
+    )
+    assert repo_llama_bin in candidates
+    assert candidates[0] == repo_llama_bin
+
+
+def test_install_root_candidates_optin_override_prepends_experimental_dir(monkeypatch, tmp_path) -> None:
+    experimental = tmp_path / "experimental"
+    experimental.mkdir()
+    (experimental / "llama-server.exe").write_bytes(b"MZ")
+    monkeypatch.setenv(EXPERIMENTAL_DIR_ENV, str(experimental))
+
+    candidates = install_root_candidates()
+    assert candidates[0] == experimental
+    # The pinned binary remains a fallback when the experimental build is absent.
+    assert any(name.endswith("llama-bin") for name in (str(p) for p in candidates))
+
+
+def test_locate_llama_server_prefers_the_optin_experimental_binary(monkeypatch, tmp_path) -> None:
+    experimental = tmp_path / "experimental"
+    repo_bin = tmp_path / "backend" / "runtime" / "llama-bin"
+    experimental.mkdir()
+    repo_bin.mkdir(parents=True)
+    (experimental / "llama-server.exe").write_bytes(b"MZ-experimental")
+    (repo_bin / "llama-server.exe").write_bytes(b"MZ-pinned")
+    monkeypatch.setenv(EXPERIMENTAL_DIR_ENV, str(experimental))
+
+    found = locate_llama_server(install_root_candidates())
+    assert found == experimental / "llama-server.exe"
+    assert found.read_bytes() == b"MZ-experimental"
 
 
 def test_binary_version_runs_version_flag_and_parses_first_line() -> None:

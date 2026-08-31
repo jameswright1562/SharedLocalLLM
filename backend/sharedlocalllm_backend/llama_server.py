@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import http.client
 import json
+import os
 import re
 import subprocess
 import sys
@@ -19,6 +20,7 @@ from .errors import BackendError
 MANIFEST_FILENAME = "llama-cpp-manifest.json"
 SERVER_EXECUTABLE = "llama-server.exe"
 ALLOWED_ASSET_PREFIX = "https://github.com/ggml-org/llama.cpp/releases/download/"
+EXPERIMENTAL_DIR_ENV = "SHAREDLOCALLLM_LLAMA_SERVER_DIR"
 _DIGEST_PATTERN = re.compile(r"[0-9a-f]{64}")
 
 
@@ -172,11 +174,25 @@ def probe_health(
 
 
 def install_root_candidates() -> list[Path]:
-    """Where the verified installer drops the binary, checked beside the app."""
+    """Where the verified installer drops the binary, checked beside the app.
+
+    By default only directories populated by the SHA-256-verified installer are
+    searched. An explicit, opt-in override (``SHAREDLOCALLLM_LLAMA_SERVER_DIR``)
+    prepends a user-supplied directory so an experimental build (for example the
+    Unsloth ``glm5next`` fork that mainline llama.cpp has not yet merged) can be
+    exercised without touching the pinned manifest. Setting this variable is an
+    explicit escape hatch: the binary there is NOT digest-verified against the
+    official release, so it must only be used for throwaway experiments.
+    """
+    override = os.environ.get(EXPERIMENTAL_DIR_ENV)
+    candidates: list[Path] = []
+    if override:
+        candidates.append(Path(override))
     executable_dir = Path(sys.executable).resolve().parent
     repo_dir = Path(__file__).resolve().parents[2]
-    return [
+    candidates += [
         repo_dir / "backend" / "runtime" / "llama-bin",
         executable_dir / "runtime" / "llama-bin",
         executable_dir / "llama-bin",
     ]
+    return candidates
