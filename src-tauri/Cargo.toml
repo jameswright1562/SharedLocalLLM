@@ -18,7 +18,7 @@ ico = "0.5"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-dirs = "6"
+dirs = "7"
 futures-util = "0.3"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
 rfd = "0.15"
