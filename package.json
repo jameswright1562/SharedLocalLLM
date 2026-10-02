@@ -3,7 +3,7 @@
   "version": "0.2.0",
   "private": true,
   "type": "module",
-  "packageManager": "pnpm@11.21.0",
+  "packageManager": "bun@1.3.14",
   "engines": {
     "node": ">=22.12"
   },
@@ -12,6 +12,7 @@
     "build": "tsc -b && vite build",
     "typecheck": "tsc -b --pretty false",
     "lint": "eslint . --max-warnings 0",
+    "peers": "check-peer-dependencies",
     "format:check": "prettier --check \"*.{json,js,cjs,ts,md,html}\" \".github/**/*.{yml,yaml,md}\" \"docs/**/*.md\" \"public/**/*.{json,md}\" \"src/**/*.{ts,tsx,css}\" \"tests/**/*.{ts,tsx}\"",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
@@ -23,7 +24,7 @@
     "backend:test": "backend\\.venv\\Scripts\\python.exe -m pytest backend\\tests -p no:cacheprovider --basetemp backend\\.pytest-tmp",
     "backend:package": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-python-backend.ps1",
     "tauri": "tauri",
-    "check": "pnpm format:check && pnpm typecheck && pnpm lint && pnpm test:coverage && pnpm build && pnpm e2e && pnpm backend:typecheck && pnpm backend:test"
+    "check": "bun run format:check && bun run typecheck && bun run lint && bun run peers && bun run test:coverage && bun run build && bun run e2e && bun run backend:typecheck && bun run backend:test"
   },
   "dependencies": {
     "@mantine/charts": "^9.5.1",
@@ -54,6 +55,7 @@
     "@types/react-dom": "19.2.4",
     "@vitejs/plugin-react": "6.0.5",
     "@vitest/coverage-v8": "4.1.10",
+    "check-peer-dependencies": "5.0.0",
     "eslint": "10.8.1",
     "eslint-plugin-react-hooks": "7.1.1",
     "eslint-plugin-react-refresh": "0.5.4",
@@ -67,8 +69,5 @@
     "typescript-eslint": "8.67.0",
     "vite": "8.2.1",
     "vitest": "4.1.10"
-  },
-  "workspaces": [
-    "."
-  ]
+  }
 }

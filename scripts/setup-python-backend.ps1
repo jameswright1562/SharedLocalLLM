@@ -11,7 +11,7 @@ function Import-MsvcEnvironment {
 Visual Studio Build Tools were not found.
 
 Install Visual Studio 2022 Build Tools with the 'Desktop development with C++' workload, then rerun:
-  pnpm backend:install
+  bun backend:install
 "@
     }
 
@@ -25,7 +25,7 @@ Install Visual Studio 2022 Build Tools with the 'Desktop development with C++' w
 No Visual Studio installation with C++ tools was found.
 
 Install Visual Studio 2022 Build Tools with the 'Desktop development with C++' workload, then rerun:
-  pnpm backend:install
+  bun backend:install
 "@
     }
 

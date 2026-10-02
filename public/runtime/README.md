@@ -38,7 +38,7 @@ The optional `llamaServer` section names the MTP-capable inference server inside
 - `entry` — the executable to install and later launch (`llama-server.exe`).
 - `healthEndpoint` — the loopback HTTP path used to verify a running instance (`/health`).
 
-Install it with `pnpm backend:install:llama-server`, which downloads both pinned assets,
+Install it with `bun backend:install:llama-server`, which downloads both pinned assets,
 verifies HTTPS origin, byte size, SHA-256, and archive-entry safety (no path traversal),
 extracts only `requiredExecutables` plus DLLs to `backend/runtime/llama-bin` — ignoring any
 other digest-verified upstream contents — and gates activation on a successful

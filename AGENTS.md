@@ -62,16 +62,16 @@ conflicts and stale competing status reports.
 Update results with exact commands and outcomes; do not mark partial or simulated checks as physical
 acceptance.
 
-- [x] `pnpm install` — dependency graph and lockfile created successfully.
-- [x] `pnpm peers check` — no peer dependency issues.
-- [x] `pnpm format:check` — all matched repository files use Prettier formatting.
-- [x] `pnpm typecheck` — strict TypeScript project build passes.
-- [x] `pnpm lint` — ESLint passes with zero warnings.
-- [x] `pnpm test` — 39/39 frontend tests pass.
-- [x] `pnpm test:coverage` — 39/39 tests passed with 92.04% statements, 86.52% branches,
+- [x] `bun install` — dependency graph and lockfile created successfully.
+- [x] `bun peers` — no unmet peer dependencies.
+- [x] `bun format:check` — all matched repository files use Prettier formatting.
+- [x] `bun typecheck` — strict TypeScript project build passes.
+- [x] `bun lint` — ESLint passes with zero warnings.
+- [x] `bun test` — 39/39 frontend tests pass.
+- [x] `bun test:coverage` — 39/39 tests passed with 92.04% statements, 86.52% branches,
       92.03% functions, and 93.54% lines.
-- [x] `pnpm build` — production Vite build succeeds.
-- [x] `pnpm e2e` — four of four Chromium browser-demo workflows pass.
+- [x] `bun build` — production Vite build succeeds.
+- [x] `bun e2e` — four of four Chromium browser-demo workflows pass.
 - [x] `cargo fmt --manifest-path src-tauri/Cargo.toml --all --check` — passes.
 - [x] `cargo test --manifest-path src-tauri/Cargo.toml --all-targets` — 24/24 tests pass.
 - [x] `cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings` — passes.
@@ -79,7 +79,7 @@ acceptance.
 - [x] Production readability audit — every production file changed for version 0.1.2 is under 300
       lines; the largest changed file is `src-tauri/src/commands/pairing.rs` at 284 lines. The
       pre-existing `src/components/SetupStepContent.tsx` remains 306 lines.
-- [x] `pnpm tauri build --bundles nsis` — version 0.1.2 built in the isolated
+- [x] `bun tauri build --bundles nsis` — version 0.1.2 built in the isolated
       `src-tauri/target-package` target while preserving the running development app; SHA-256
       `28444fe5fd7822aa92114a8080c22fff9959246841b24ce587eaae387d2f9abd`.
 - [ ] Physical two-computer acceptance in `docs/testing.md`; automated loopback/demo tests do not
@@ -97,7 +97,7 @@ acceptance.
 - Prefer typed, narrow Tauri commands and versioned peer/persistence interfaces. Treat renderer and
   peer input as untrusted.
 - Keep checks non-mutating. Formatting may be applied deliberately by the owning agent, but CI and
-  `pnpm check` use check-only commands.
+  `bun check` use check-only commands.
 - Record the real error when a benchmark, runtime action, or validation command fails. Separate an
   unrelated environment failure from a product failure.
 - Root is the sole updater of the **Live progress**, **Validation checklist**, and **Current blockers**
@@ -110,6 +110,23 @@ acceptance.
   browser-demo tests are not a substitute for that hardware check.
 - Stronger production-grade peer authentication is explicitly deferred to `ideas.md`; v1 remains a
   trusted-private-LAN preview.
+
+## Tooling note: pnpm to Bun migration
+
+The package manager is Bun (`packageManager: bun@1.3.14`, `bun.lock` is the only lockfile). Two pnpm
+capabilities were lost or replaced, and neither is recoverable from Bun itself:
+
+- **Lost:** `pnpm-workspace.yaml` set `minimumReleaseAge: 1440` with a `minimumReleaseAgeExclude` for
+  `@tauri-apps/*`, which held every install to a 24-hour release cooldown as a supply-chain control.
+  Bun has no equivalent setting, so that cooldown is no longer enforced. Do not describe the 24-hour
+  protection as still active.
+- **Replaced:** `pnpm peers check` is now `bun peers`, which runs `check-peer-dependencies`. It exits
+  non-zero on any unmet or incorrectly versioned transitive peer dependency and runs inside `bun
+check` and CI, so the gate itself is preserved.
+- Dependabot's ecosystem changed from `npm` to `bun`, which reads the text-based `bun.lock`. The legacy
+  binary `bun.lockb` is not supported.
+- CI pins Node 24 alongside Bun because `node_modules/.bin` tooling (Vite, Vitest, tsc, ESLint,
+  Playwright, the Tauri CLI) still executes through its Node shebang; `bun run` does not replace it.
 
 ## graphify
 

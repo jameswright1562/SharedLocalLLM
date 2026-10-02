@@ -205,7 +205,7 @@ class BackendRuntime:
             raise BackendError(
                 "runtime_unavailable",
                 str(self._runtime.get("error") or "The llama.cpp runtime is unavailable."),
-                "Run pnpm backend:install in development, or reinstall the desktop application.",
+                "Run bun backend:install in development, or reinstall the desktop application.",
             )
         return self.snapshot()
 
@@ -676,7 +676,7 @@ class BackendRuntime:
                 raise BackendError(
                     "runtime_unavailable",
                     "The pinned llama-bench tool is not installed.",
-                    "Run pnpm backend:install in development, or reinstall the desktop application.",
+                    "Run bun backend:install in development, or reinstall the desktop application.",
                 )
             nodes = self._cluster_nodes()
             peer = self.store.get("peer")

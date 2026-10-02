@@ -380,7 +380,7 @@ fn spawn_backend(app: &AppHandle) -> Result<Child, ErrorPayload> {
         ErrorPayload::new(
             "python_backend_start_failed",
             format!("Could not start {label}: {error}"),
-            Some("Run `pnpm backend:install` and retry.".into()),
+            Some("Run `bun backend:install` and retry.".into()),
         )
     })
 }
@@ -415,7 +415,7 @@ fn backend_command(app: &AppHandle) -> Result<(Command, String), ErrorPayload> {
     Err(ErrorPayload::new(
         "python_backend_missing",
         "The SharedLocalLLM Python backend is not installed.",
-        Some("Run `pnpm backend:install` from the repository root.".into()),
+        Some("Run `bun backend:install` from the repository root.".into()),
     ))
 }
 

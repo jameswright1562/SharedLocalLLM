@@ -63,38 +63,38 @@ Non-secret settings and the existing peer record are migrated from `%LOCALAPPDAT
 
 ## Development setup
 
-Install Node.js 22.12+, pnpm 11, Rust/MSVC, Python 3.12, CMake, and an NVIDIA CUDA toolkit. Then:
+Install Bun 1.3+, Node.js 22.12+, Rust/MSVC, Python 3.12, CMake, and an NVIDIA CUDA toolkit. Then:
 
 ```powershell
-corepack enable
-pnpm install --frozen-lockfile
-pnpm backend:install
-pnpm tauri dev
+bun install --frozen-lockfile
+bun backend:install
+bun tauri dev
 ```
 
-`pnpm backend:install` creates `backend/.venv`, installs Ninja, and builds llama-cpp-python from source
-with CUDA and RPC enabled. `pnpm tauri dev` checks that the backend environment is present before
+`bun backend:install` creates `backend/.venv`, installs Ninja, and builds llama-cpp-python from source
+with CUDA and RPC enabled. `bun tauri dev` checks that the backend environment is present before
 starting Vite/Tauri; it does not rebuild the package or the PyInstaller executable (use
-`pnpm backend:package` explicitly when you need the packaged sidecar).
+`bun backend:package` explicitly when you need the packaged sidecar).
 
 In debug builds the Rust shell auto-restarts the Python backend when you edit
 `backend/sharedlocalllm_backend/**/*.py`, `backend/sidecar_entry.py`, or `backend/pyproject.toml`, so
-backend changes hot-reload during `pnpm tauri dev`. A restart drops runtime state such as the loaded
+backend changes hot-reload during `bun tauri dev`. A restart drops runtime state such as the loaded
 model and the peer session. Set `SHARED_LOCAL_LLM_BACKEND_RELOAD=0` to disable the watcher.
 
 The browser-only preview still uses the deterministic demo service:
 
 ```powershell
-pnpm dev
+bun dev
 ```
 
 ## Checks
 
 ```powershell
-pnpm typecheck
-pnpm lint
-pnpm test
-pnpm backend:test
+bun typecheck
+bun lint
+bun peers
+bun test
+bun backend:test
 cargo fmt --manifest-path src-tauri/Cargo.toml --all --check
 cargo test --manifest-path src-tauri/Cargo.toml --all-targets
 cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
@@ -103,7 +103,7 @@ cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
 ## Build the Windows installer
 
 ```powershell
-pnpm tauri build --bundles nsis
+bun tauri build --bundles nsis
 ```
 
 The Tauri build first packages the Python backend with PyInstaller and then bundles

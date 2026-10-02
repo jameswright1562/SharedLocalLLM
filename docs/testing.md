@@ -7,21 +7,21 @@ driver, network, and GPU behavior.
 ## Frontend gate
 
 ```powershell
-pnpm install --frozen-lockfile
-pnpm check
+bun install --frozen-lockfile
+bun check
 ```
 
-`pnpm check` performs a Prettier check, strict TypeScript build, ESLint with zero warnings, Vitest
-with coverage, production Vite build, and Chromium browser tests. It does not rewrite source files.
-Vitest enforces at least 80% statements, branches, functions, and lines across frontend production
-code.
+`bun check` performs a Prettier check, strict TypeScript build, ESLint with zero warnings, unmet
+peer-dependency check, Vitest with coverage, production Vite build, and Chromium browser tests. It
+does not rewrite source files. Vitest enforces at least 80% statements, branches, functions, and
+lines across frontend production code.
 
 For a focused loop:
 
 ```powershell
-pnpm test
-pnpm test:coverage
-pnpm e2e
+bun test
+bun test:coverage
+bun e2e
 ```
 
 The Playwright suite starts a production Vite preview and exercises the browser-demo path with
@@ -44,8 +44,8 @@ protocol rejection, tunnel integrity, cancellation, API proxying, occupied ports
 ## Packaging
 
 ```powershell
-pnpm build
-pnpm tauri build --bundles nsis
+bun build
+bun tauri build --bundles nsis
 ```
 
 GitHub Actions builds an unsigned NSIS artifact on Windows. Before a public release, also:

@@ -8,7 +8,7 @@ bundles, or personal paths.
 
 1. Create or update a failing test for the behavior.
 2. Make the smallest implementation change that passes it.
-3. Run `pnpm check` and the Rust formatting, test, and Clippy commands in
+3. Run `bun check` and the Rust formatting, test, and Clippy commands in
    [docs/testing.md](docs/testing.md).
 4. Update user or architecture documentation when behavior, security boundaries, ports, or protocol
    shapes change.

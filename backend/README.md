@@ -6,12 +6,12 @@ This branch moves application orchestration, peer networking, model discovery, b
 The backend uses `llama-cpp-python==0.3.35`. Install it with both CUDA and RPC enabled:
 
 ```powershell
-pnpm backend:install
+bun backend:install
 ```
 
 For local development the Rust shell starts `backend/.venv/Scripts/python.exe -m sharedlocalllm_backend`
 and (in debug builds) auto-restarts it when the package sources change. The packaged app uses the
-PyInstaller sidecar created by `pnpm backend:package`.
+PyInstaller sidecar created by `bun backend:package`.
 
 Ports remain loopback/private by design:
 
