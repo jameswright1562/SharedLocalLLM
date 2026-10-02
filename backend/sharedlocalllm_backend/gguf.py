@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import struct
 from pathlib import Path
-from typing import BinaryIO, Any
+from typing import Any, BinaryIO
 
 MAX_STRING = 16 * 1024 * 1024
 MAX_ARRAY = 10_000_000

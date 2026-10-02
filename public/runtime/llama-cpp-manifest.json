@@ -11,17 +11,17 @@
     "cudaRuntime": "cudart-llama-bin-win-cuda-12.4-x64.zip"
   },
   "release": {
-    "tag": "b10405",
-    "publishedAt": "2026-08-13",
+    "tag": "b11342",
+    "publishedAt": "2026-02-10",
     "llamaCpp": {
-      "url": "https://github.com/ggml-org/llama.cpp/releases/download/b10405/llama-b10405-bin-win-cuda-12.4-x64.zip",
-      "size": 250767461,
-      "sha256": "7da18847181aa668a77b02fa8bd47bb9588b82ca077cf184bccc3bf016b46e79"
+      "url": "https://github.com/ggml-org/llama.cpp/releases/download/b11342/llama-b11342-bin-win-cuda-13.4-x64.zip",
+      "size": 152775637,
+      "sha256": "95343961b21067de6a826dad662deba29c25ba517a423559c87a22308666acc1"
     },
     "cudaRuntime": {
-      "url": "https://github.com/ggml-org/llama.cpp/releases/download/b10405/cudart-llama-bin-win-cuda-12.4-x64.zip",
-      "size": 391443627,
-      "sha256": "8c79a9b226de4b3cacfd1f83d24f962d0773be79f1e7b75c6af4ded7e32ae1d6"
+      "url": "https://github.com/ggml-org/llama.cpp/releases/download/b11342/cudart-llama-bin-win-cuda-13.4-x64.zip",
+      "size": 423535356,
+      "sha256": "738f8c251ac22b70c3ae6f83a10cf222725df0395246a2cf58f32bdb85fbe668"
     }
   },
   "llamaServer": {
