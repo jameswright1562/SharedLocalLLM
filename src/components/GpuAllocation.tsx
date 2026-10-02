@@ -10,6 +10,7 @@ import {
   Title,
 } from "@mantine/core";
 import type { GpuLayerAllocation, ModelRecord, NodeCapabilities, SplitEstimate } from "../types";
+import { upsertGpuNodeLayers } from "../services/splitEstimate";
 import { formatMib } from "./formatMib";
 
 interface GpuAllocationProps {
@@ -149,17 +150,14 @@ function DeviceAllocation({
   const id = `layer-allocation-${node.id}-${kind}`;
 
   function updateLayers(rawValue: string) {
-    const layers = Math.max(0, Math.min(maxLayers, Number.parseInt(rawValue || "0", 10)));
     if (kind === "gpu") {
-      setGpuLayers(
-        gpuLayers.map((item) =>
-          item.nodeId === node.id && item.kind !== "cpu" ? { ...item, layers } : item,
-        ),
-      );
+      setGpuLayers(upsertGpuNodeLayers(gpuLayers, node.id, rawValue, maxLayers));
       return;
     }
     // CPU offload: trim any overflow from the worker GPU share first, then from
     // every other share, so total assigned layers never exceed the layer count.
+    const parsed = Number.parseInt(rawValue || "0", 10);
+    const layers = Math.max(0, Math.min(maxLayers, Number.isFinite(parsed) ? parsed : 0));
     const withoutCpu = gpuLayers.filter(
       (item) => !(item.nodeId === node.id && item.kind === "cpu"),
     );

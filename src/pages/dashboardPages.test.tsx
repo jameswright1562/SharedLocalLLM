@@ -254,6 +254,7 @@ describe("dashboard pages", () => {
       cpuThreads: 0,
       batchSize: 512,
       kvUnified: false,
+      noLoadTimeout: false,
     });
 
     await user.click(screen.getByRole("button", { name: /^add folder$/i }));
@@ -293,7 +294,10 @@ describe("dashboard pages", () => {
     await user.click(screen.getByRole("button", { name: /launch orchid/i }));
     expect(startCluster).toHaveBeenCalledWith("model-text", {
       contextSize: 4096,
-      gpuLayers: [{ nodeId: "node-a", layers: 12 }],
+      gpuLayers: [
+        { nodeId: "node-a", layers: 12 },
+        { nodeId: "node-b", layers: 0 },
+      ],
       includeRemoteCpu: false,
       force: false,
       flashAttention: true,
@@ -302,7 +306,46 @@ describe("dashboard pages", () => {
       cpuThreads: 6,
       batchSize: 1024,
       kvUnified: false,
+      noLoadTimeout: false,
     });
+  });
+
+  it("restores the startup timeout when a saved no-timeout option is unchecked", async () => {
+    const user = userEvent.setup();
+    const snapshot = cloneSnapshot();
+    snapshot.models[0]!.layerCount = 40;
+    snapshot.modelLoadConfigs = {
+      "model-text": {
+        contextSize: 4096,
+        gpuLayers: [{ nodeId: "node-a", layers: 12 }],
+        noLoadTimeout: true,
+      },
+    };
+    const startCluster = vi.fn().mockResolvedValue({ status: "running" });
+    render(<ModelsPage {...props(snapshot, { startCluster })} />);
+    const row = within(screen.getByTestId("model-list"))
+      .getByText(/orchid 9b/i)
+      .closest("tr");
+    await user.click(row as HTMLElement);
+    const checkbox = await screen.findByRole("checkbox", { name: /wait as long as it takes/i });
+    expect(checkbox).toBeChecked();
+    await user.click(checkbox);
+    expect(checkbox).not.toBeChecked();
+    await user.click(screen.getByRole("button", { name: /launch orchid/i }));
+    expect(startCluster).toHaveBeenCalledWith(
+      "model-text",
+      expect.objectContaining({
+        noLoadTimeout: false,
+      }),
+    );
+    await user.click(checkbox);
+    await user.click(screen.getByRole("button", { name: /launch orchid/i }));
+    expect(startCluster).toHaveBeenLastCalledWith(
+      "model-text",
+      expect.objectContaining({
+        noLoadTimeout: true,
+      }),
+    );
   });
 
   it("launches with every setting from an applied model tune", async () => {
@@ -336,6 +379,7 @@ describe("dashboard pages", () => {
       kvUnified: false,
       noOpOffload: 1,
       rpcPoll: 50,
+      noLoadTimeout: true,
     };
     const applyModelTune = vi.fn().mockResolvedValue({
       loadConfig: appliedConfig,
@@ -353,9 +397,17 @@ describe("dashboard pages", () => {
     await user.click(await screen.findByRole("button", { name: /apply tuned settings/i }));
     await waitFor(() => expect(applyModelTune).toHaveBeenCalledWith("model-text"));
     await user.keyboard("{Escape}");
+    await user.click(screen.getByRole("checkbox", { name: /wait as long as it takes/i }));
     await user.click(screen.getByRole("button", { name: /launch orchid/i }));
 
-    expect(startCluster).toHaveBeenCalledWith("model-text", appliedConfig);
+    expect(startCluster).toHaveBeenCalledWith("model-text", {
+      ...appliedConfig,
+      noLoadTimeout: false,
+      gpuLayers: [
+        { nodeId: "node-a", layers: 20, kind: "gpu" as const },
+        { nodeId: "node-b", layers: 0 },
+      ],
+    });
   });
 
   it("configures GPU layers per computer and previews estimated VRAM before launch", async () => {
@@ -398,6 +450,7 @@ describe("dashboard pages", () => {
       cpuThreads: 0,
       batchSize: 512,
       kvUnified: false,
+      noLoadTimeout: false,
     });
   });
 
@@ -519,6 +572,7 @@ describe("dashboard pages", () => {
       cpuThreads: 8,
       batchSize: 2048,
       kvUnified: false,
+      noLoadTimeout: false,
     });
   });
 
@@ -557,6 +611,7 @@ describe("dashboard pages", () => {
       cpuThreads: 0,
       batchSize: 512,
       kvUnified: false,
+      noLoadTimeout: false,
     });
   });
 

@@ -4,7 +4,8 @@ import asyncio
 
 import uvicorn
 
-from .api import CONTROL_PORT, ApiServerManager, create_control_app
+from .api import CONTROL_PORT, create_control_app
+from .api_server import ApiServerManager, start_with_port_fallback
 from .llama_server import load_dotenv_files
 from .runtime import BackendRuntime
 
@@ -15,7 +16,7 @@ async def run_backend() -> None:
     api = ApiServerManager(runtime)
     runtime.api_port_changed = api.restart
     runtime.api_health = api.is_healthy
-    await api.start(int(runtime.store.get("apiPort", 11435)))
+    await start_with_port_fallback(api, runtime.store, int(runtime.store.get("apiPort", 11435)))
     control = uvicorn.Server(uvicorn.Config(
         create_control_app(runtime), host="127.0.0.1", port=CONTROL_PORT,
         log_level="warning", access_log=False,

@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { ModelRecord, NodeCapabilities } from "../types";
-import { distributeLayersByVram, estimateModelSplitLocally } from "./splitEstimate";
+import {
+  distributeLayersByVram,
+  estimateModelSplitLocally,
+  normalizeManualGpuLayers,
+  upsertGpuNodeLayers,
+} from "./splitEstimate";
 
 function node(id: string, availableVram: number, ram = 32): NodeCapabilities {
   return {
@@ -71,5 +76,50 @@ describe("split estimates", () => {
       gpuLayers: [{ nodeId: "local", layers: 16 }],
     });
     expect(Number.isFinite(estimate.devices[0]?.estimatedVramMib)).toBe(true);
+  });
+
+  it("adds a late-joining GPU node with zero layers instead of leaving it uneditable", () => {
+    const stale = [{ nodeId: "local", layers: 24 }];
+    const normalized = normalizeManualGpuLayers(stale, [node("local", 8), node("peer", 8)]);
+    expect(normalized).toEqual([
+      { nodeId: "local", layers: 24 },
+      { nodeId: "peer", layers: 0 },
+    ]);
+    const estimate = estimateModelSplitLocally(model, [node("local", 8), node("peer", 8)], {
+      contextSize: 4096,
+      gpuLayers: normalized,
+    });
+    expect(estimate.devices.map((device) => device.nodeId).sort()).toEqual(["local", "peer"]);
+  });
+
+  it("preserves remote CPU and offline entries while ensuring every GPU node exists", () => {
+    const normalized = normalizeManualGpuLayers(
+      [
+        { nodeId: "local", layers: 10 },
+        { nodeId: "peer", layers: 4, kind: "cpu" },
+        { nodeId: "gone", layers: 2 },
+      ],
+      [node("local", 8), node("peer", 8)],
+    );
+    expect(normalized).toEqual([
+      { nodeId: "local", layers: 10 },
+      { nodeId: "peer", layers: 0 },
+      { nodeId: "peer", layers: 4, kind: "cpu" },
+      { nodeId: "gone", layers: 2 },
+    ]);
+  });
+
+  it("upserts GPU layers for a node with no existing allocation entry", () => {
+    expect(upsertGpuNodeLayers([{ nodeId: "local", layers: 24 }], "peer", "10", 65)).toEqual([
+      { nodeId: "local", layers: 24 },
+      { nodeId: "peer", layers: 10 },
+    ]);
+    expect(upsertGpuNodeLayers([{ nodeId: "local", layers: 24 }], "local", "12", 65)).toEqual([
+      { nodeId: "local", layers: 12 },
+    ]);
+    expect(upsertGpuNodeLayers([], "peer", "999", 65)).toEqual([{ nodeId: "peer", layers: 65 }]);
+    expect(upsertGpuNodeLayers([], "peer", "not-a-number", 65)).toEqual([
+      { nodeId: "peer", layers: 0 },
+    ]);
   });
 });

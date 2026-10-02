@@ -13,6 +13,7 @@ import {
   Title,
 } from "@mantine/core";
 import type {
+  ClusterSession,
   GpuLayerAllocation,
   ModelLoadOptions,
   ModelRecord,
@@ -22,6 +23,7 @@ import type {
 import { fitLabels, formatContext } from "../pages/pageFormat";
 import { AdvancedLoadOptions } from "./LoadOptions";
 import { GpuAllocation } from "./GpuAllocation";
+import { LoadProgress } from "./LoadProgress";
 
 const MIN_CONTEXT = 4096;
 
@@ -45,6 +47,10 @@ interface ModelInspectorProps {
   splitInvalid: boolean;
   force: boolean;
   setForce: (force: boolean) => void;
+  noTimeout: boolean;
+  setNoTimeout: (value: boolean) => void;
+  cluster?: ClusterSession;
+  workerName?: string;
   launch: () => void;
   autotuneSection?: ReactNode;
 }
@@ -76,6 +82,10 @@ export function ModelInspector({
   splitInvalid,
   force,
   setForce,
+  noTimeout,
+  setNoTimeout,
+  cluster,
+  workerName,
   launch,
   autotuneSection,
 }: ModelInspectorProps) {
@@ -158,6 +168,12 @@ export function ModelInspector({
       )}
       <AdvancedLoadOptions options={loadOptions} setOptions={setLoadOptions} />
       {autotuneSection}
+      <Checkbox
+        label={<Text size="sm">Wait as long as it takes — ignore the startup timeout</Text>}
+        description="Applies to llama-server startup (5-minute limit). Built-in loads already wait as long as needed."
+        checked={noTimeout}
+        onChange={(event) => setNoTimeout(event.currentTarget.checked)}
+      />
       <Button
         fullWidth
         disabled={busy || ((selected.fit === "does-not-fit" || splitInvalid) && !force)}
@@ -166,6 +182,9 @@ export function ModelInspector({
       >
         {busy ? "Starting cluster…" : `Launch ${selected.name}`}
       </Button>
+      {cluster?.status === "loading" && cluster?.modelId === selected.id && (
+        <LoadProgress cluster={cluster} workerName={workerName} />
+      )}
       {selected.remoteOnly && (
         <Note>
           This GGUF is stored on the other computer. Launching here asks that computer to coordinate

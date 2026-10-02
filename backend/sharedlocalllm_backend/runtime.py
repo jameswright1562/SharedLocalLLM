@@ -15,11 +15,12 @@ from .errors import BackendError
 from .hardware import probe_node
 from .inference import InferenceEngine, layer_totals
 from .llama_server import install_root_candidates
+from .load_progress import LoadStage, loading_cluster
 from .models import discover_local, hf_cache_roots, lm_studio_roots, merge_remote, refresh_fits
 from .peer import PeerManager, RpcForwarder
-from .placement import estimate_split, normalize_load_config, validate_fit
+from .placement import estimate_split, expected_transfer_bytes, normalize_load_config, validate_fit
 from .rpc_native import runtime_health
-from .server_engine import ServerEngine
+from .server_engine import START_TIMEOUT_SECONDS, ServerEngine
 from .store import Store
 
 
@@ -156,7 +157,7 @@ class BackendRuntime:
             "modelTunes": self.store.model_tunes(),
             "modelDirectories": self._directories(),
             "network": self.network,
-            "cluster": self.cluster,
+            "cluster": self._cluster_snapshot(),
             "benchmarks": self.store.get("benchmarks", []),
             "logs": self.store.logs(),
         }
@@ -361,6 +362,16 @@ class BackendRuntime:
             load_config.get("engine")
             or ("llama-server" if model.get("mtp") else "builtin")
         )
+        no_load_timeout = bool(normalized_config.get("noLoadTimeout"))
+        expected_bytes = self._expected_transfer_bytes(model, normalized_config, peer_id)
+        allocations = normalized_config.get("gpuLayers") or []
+        remote_gpu, remote_cpu, local_layers = layer_totals(
+            allocations, peer_id, self.local_node["id"],
+            bool(normalized_config.get("includeRemoteCpu")),
+        )
+        worker_id = peer_id if peer_id and (
+            remote_gpu + remote_cpu > 0 or model.get("fit") == "combined-gpu"
+        ) else None
         if engine == "llama-server":
             exe = self.server_engine.available()
             if exe is None:
@@ -371,37 +382,38 @@ class BackendRuntime:
             else:
                 await self.inference.unload()
                 await self._stop_server_forwarder()
-                include_remote_cpu = bool(normalized_config.get("includeRemoteCpu"))
-                allocations = normalized_config.get("gpuLayers") or []
-                remote_gpu, remote_cpu, local_layers = layer_totals(
-                    allocations, peer_id,
-                    self.local_node["id"], include_remote_cpu,
+                self.cluster = loading_cluster(
+                    model_id, self.local_node["id"], worker_id, "llama-server", expected_bytes,
                 )
-                forwarder: RpcForwarder | None = None
-                rpc_endpoint = None
-                if peer_id and (remote_gpu + remote_cpu > 0 or model.get("fit") == "combined-gpu"):
-                    # Same tunnel the built-in engine uses: llama-server reaches
-                    # the worker's RPC daemon through loopback only.
-                    forwarder = RpcForwarder(self.peer, model_id=model_id, include_cpu=remote_cpu > 0)
-                    rpc_endpoint = await forwarder.start()
-                tensor_split: list[int] | None = None
-                gpu_layers: int | None = None
-                if allocations:
-                    gpu_layers = remote_gpu + remote_cpu + local_layers
-                    tensor_split = []
-                    peer_node = self._peer_node() or {}
-                    if rpc_endpoint and (remote_gpu > 0 or _node_has_gpu(peer_node)):
-                        tensor_split.append(remote_gpu)
-                    if rpc_endpoint and remote_cpu > 0:
-                        tensor_split.append(remote_cpu)
-                    if local_layers > 0 or _node_has_gpu(self.local_node):
-                        tensor_split.append(local_layers)
-                self.cluster = {
-                    "status": "loading", "coordinatorNodeId": self.local_node["id"],
-                    "modelId": model_id,
-                }
                 self._publish_local_cluster()
                 try:
+                    rpc_endpoint = None
+                    if worker_id:
+                        self._set_load_stage(model_id, "tunnel")
+                        # Publish ownership before starting, so polls see live
+                        # counters and every preparation failure can clean up.
+                        self._server_forwarder = RpcForwarder(
+                            self.peer, model_id=model_id, include_cpu=remote_cpu > 0,
+                        )
+                        rpc_endpoint = await self._server_forwarder.start()
+                    tensor_split: list[int] | None = None
+                    gpu_layers: int | None = None
+                    if allocations:
+                        gpu_layers = remote_gpu + remote_cpu + local_layers
+                        tensor_split = []
+                        peer_node = self._peer_node() or {}
+                        if rpc_endpoint and (remote_gpu > 0 or _node_has_gpu(peer_node)):
+                            tensor_split.append(remote_gpu)
+                        if rpc_endpoint and remote_cpu > 0:
+                            tensor_split.append(remote_cpu)
+                        if local_layers > 0 or _node_has_gpu(self.local_node):
+                            tensor_split.append(local_layers)
+                    self._set_load_stage(model_id, "loading_weights")
+                    if no_load_timeout:
+                        self.store.log(
+                            "INFO", "llama_server_no_timeout",
+                            "Startup timeout disabled for this launch; waiting as long as it takes.",
+                        )
                     await self.server_engine.start(
                         exe=exe, model_path=path, model_id=model_id,
                         context=int(normalized_config.get("contextSize", 4096)),
@@ -411,43 +423,42 @@ class BackendRuntime:
                         tensor_split=tensor_split,
                         reasoning_preserve=bool(model.get("reasoningPreserve")),
                         load_config=normalized_config,
+                        timeout_seconds=None if no_load_timeout else START_TIMEOUT_SECONDS,
                     )
-                except Exception:
+                except (Exception, asyncio.CancelledError) as error:
                     await self.server_engine.stop()
-                    if forwarder:
-                        await forwarder.stop()
+                    await self._stop_server_forwarder()
                     self.cluster = {
                         "status": "error", "coordinatorNodeId": self.local_node["id"],
-                        "modelId": model_id, "error": "llama-server failed to start",
+                        "modelId": model_id, "engine": "llama-server",
+                        "error": str(error) or "llama-server startup was cancelled",
                     }
                     self._publish_local_cluster()
                     raise
-                self._server_forwarder = forwarder
                 if save_config:
                     self.store.save_model_load_config(model_id, normalized_config)
                 self.cluster = {
                     "status": "running", "coordinatorNodeId": self.local_node["id"],
-                    "modelId": model_id, "engine": "llama-server",
+                    "workerNodeId": worker_id, "modelId": model_id, "engine": "llama-server",
                 }
                 self._publish_local_cluster()
                 return self.cluster
         await self.server_engine.stop()
         await self._stop_server_forwarder()
-        self.cluster = {"status": "loading", "coordinatorNodeId": self.local_node["id"], "modelId": model_id}
+        self.cluster = loading_cluster(
+            model_id, self.local_node["id"], worker_id, "builtin", expected_bytes,
+        )
         self._publish_local_cluster()
         try:
             await self.inference.load(
-                model, path, normalized_config, self.peer, self.local_node["id"], peer_id
+                model, path, normalized_config, self.peer, self.local_node["id"], peer_id,
+                on_stage=lambda stage: self._set_load_stage(model_id, stage),
             )
             if save_config:
                 self.store.save_model_load_config(model_id, normalized_config)
-            uses_peer = bool(peer_id and any(
-                x.get("nodeId") == peer_id and x.get("layers", 0) > 0
-                for x in normalized_config.get("gpuLayers", [])
-            ))
             self.cluster = {
                 "status": "running", "coordinatorNodeId": self.local_node["id"],
-                "workerNodeId": peer_id if uses_peer else None, "modelId": model_id,
+                "workerNodeId": worker_id, "modelId": model_id, "engine": "builtin",
             }
             self._publish_local_cluster()
             return self.cluster
@@ -508,6 +519,46 @@ class BackendRuntime:
             self.local_node["clusterModelId"] = model_id
         else:
             self.local_node.pop("clusterModelId", None)
+
+    def _set_load_stage(self, model_id: str, stage: LoadStage) -> None:
+        """Advance the visible load stage while a cluster is starting.
+
+        Late callbacks (for example after a stop) must not resurrect a
+        finished load, so stages only apply to the matching model load.
+        """
+        if self.cluster.get("modelId") != model_id:
+            return
+        if self.cluster.get("status") != "loading":
+            return
+        self.cluster = {**self.cluster, "stage": stage}
+        self._publish_local_cluster()
+
+    def _expected_transfer_bytes(
+        self, model: dict[str, Any], normalized_config: dict[str, Any], peer_id: str | None,
+    ) -> int:
+        allocations = normalized_config.get("gpuLayers") or []
+        remote_gpu, remote_cpu, _local = layer_totals(
+            allocations, peer_id, self.local_node["id"],
+            bool(normalized_config.get("includeRemoteCpu")),
+        )
+        total_layers = int(model.get("layerCount") or 0)
+        return expected_transfer_bytes(
+            int(model.get("sizeBytes") or 0), remote_gpu + remote_cpu, total_layers
+        )
+
+    def _cluster_snapshot(self) -> dict[str, Any]:
+        """Snapshot the cluster with live load-progress counters attached.
+
+        Forwarder byte counters are read here (on every snapshot poll) rather
+        than cached, so the transfer meter moves while native code loads.
+        """
+        cluster = dict(self.cluster)
+        if cluster.get("status") == "loading":
+            forwarder = self._server_forwarder or getattr(self.inference, "_forwarder", None)
+            if forwarder is not None:
+                cluster["bytesToWorker"] = int(getattr(forwarder, "bytes_to_worker", 0))
+                cluster["bytesFromWorker"] = int(getattr(forwarder, "bytes_from_worker", 0))
+        return cluster
 
     async def chat(
         self, messages: list[dict[str, Any]], settings: dict[str, Any], images: list[str],

@@ -37,6 +37,7 @@ import { OverviewPage } from "./pages/OverviewPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { appService, demoService } from "./services/appService";
 import { describeAppError } from "./services/errors";
+import { useSnapshotPolling } from "./services/useSnapshotPolling";
 import type { AppService, AppSnapshot, PageId, PageProps } from "./types";
 
 const navigation: Array<{
@@ -97,22 +98,7 @@ export default function App({ service = appService }: { service?: AppService }) 
     void refreshSnapshot();
   }, [refreshSnapshot]);
 
-  useEffect(() => {
-    let active = true;
-    let timer = 0;
-    const schedule = () => {
-      timer = window.setTimeout(() => {
-        void refreshSnapshot().finally(() => {
-          if (active) schedule();
-        });
-      }, 8_000);
-    };
-    schedule();
-    return () => {
-      active = false;
-      window.clearTimeout(timer);
-    };
-  }, [refreshSnapshot]);
+  useSnapshotPolling(refreshSnapshot, snapshot?.cluster.status === "loading");
 
   function navigate(nextPage: PageId) {
     setPage(nextPage);

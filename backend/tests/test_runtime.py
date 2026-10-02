@@ -9,7 +9,7 @@ import pytest
 from sharedlocalllm_backend.errors import BackendError
 from sharedlocalllm_backend.autotune import Autotuner, topology_fingerprint
 from sharedlocalllm_backend.inference import InferenceEngine
-from sharedlocalllm_backend.peer import PeerManager
+from sharedlocalllm_backend.peer import PeerManager, RpcForwarder
 from sharedlocalllm_backend.runtime import BackendRuntime
 from sharedlocalllm_backend.server_engine import ServerEngine
 from sharedlocalllm_backend.store import Store
@@ -51,7 +51,7 @@ class FakeStore:
 class FailingLoadInference:
     model_id = None
 
-    async def load(self, *_args) -> None:
+    async def load(self, *_args, **_kwargs) -> None:
         raise RuntimeError("diagnostic load failure")
 
     async def unload(self) -> None:
@@ -68,7 +68,7 @@ class FailingBenchmarkInference:
 class SuccessfulLoadInference:
     model_id = None
 
-    async def load(self, *_args) -> None:
+    async def load(self, *_args, **_kwargs) -> None:
         return None
 
     async def unload(self) -> None:
@@ -78,7 +78,7 @@ class SuccessfulLoadInference:
 class TemporaryBenchmarkInference:
     model_id = None
 
-    async def load(self, *_args) -> None:
+    async def load(self, *_args, **_kwargs) -> None:
         return None
 
     async def unload(self) -> None:
@@ -360,8 +360,11 @@ def test_temporary_benchmark_load_does_not_replace_a_saved_config() -> None:
     saved = {"contextSize": 8192, "gpuLayers": []}
     cast(FakeStore, runtime.store).values["modelLoadConfigs"] = {"model": saved}
 
-    asyncio.run(runtime.run_inference_benchmark("model"))
+    result = asyncio.run(runtime.run_inference_benchmark("model"))
 
+    assert result[0]["recommended"] is True
+    assert result[0]["promptTokensPerSecond"] == 10.0
+    assert result[0]["generationTokensPerSecond"] == 5.0
     assert runtime.store.model_load_configs() == {"model": saved}
 
 
@@ -723,3 +726,99 @@ def test_peer_refresh_loop_survives_unexpected_errors(monkeypatch) -> None:
         entry for entry in cast(FakeStore, runtime.store).entries if entry[0] == "WARN"
     ]
     assert len(warnings) == 2
+
+
+def test_builtin_load_reports_stages_and_expected_transfer() -> None:
+    holder: dict = {}
+    snapshots: list[dict] = []
+
+    class StagedInference(SuccessfulLoadInference):
+        async def load(self, *args, **kwargs) -> None:
+            for stage in ("tunnel", "staging", "loading_weights"):
+                kwargs["on_stage"](stage)
+                snapshots.append(dict(holder["runtime"].cluster))
+
+    runtime = runtime_with(StagedInference())
+    holder["runtime"] = runtime
+    runtime.models[0]["sizeBytes"] = 8 * 1024**3
+    runtime.models[0]["layerCount"] = 4
+    cast(FakeStore, runtime.store).values["peer"] = {
+        "id": "peer-1",
+        "capabilities": {
+            "id": "peer-1", "name": "Peer", "online": True,
+            "gpu": {"vramAvailableGb": 8}, "ramAvailableGb": 16,
+        },
+    }
+
+    cluster = asyncio.run(runtime.start_cluster(
+        "model",
+        {
+            "contextSize": 4096,
+            "gpuLayers": [
+                {"nodeId": "local", "layers": 3},
+                {"nodeId": "peer-1", "layers": 1},
+            ],
+        },
+    ))
+
+    assert cluster["status"] == "running"
+    assert [snapshot["stage"] for snapshot in snapshots] == [
+        "tunnel", "staging", "loading_weights",
+    ]
+    # One of four layers is remote: a quarter of the 8 GiB model is expected.
+    assert snapshots[0]["expectedBytes"] == 2 * 1024**3
+
+
+def test_server_start_uses_default_startup_timeout() -> None:
+    from sharedlocalllm_backend.server_engine import START_TIMEOUT_SECONDS
+
+    runtime = runtime_with(SuccessfulLoadInference())
+    runtime.models[0]["mtp"] = True
+    server = LaunchServerEngine()
+    runtime.server_engine = cast(ServerEngine, server)
+
+    asyncio.run(runtime.start_cluster(
+        "model",
+        {"contextSize": 4096, "gpuLayers": [{"nodeId": "local", "layers": 1}]},
+    ))
+
+    assert server.started["timeout_seconds"] == START_TIMEOUT_SECONDS
+
+
+def test_no_load_timeout_disables_the_startup_deadline() -> None:
+    runtime = runtime_with(SuccessfulLoadInference())
+    runtime.models[0]["mtp"] = True
+    server = LaunchServerEngine()
+    runtime.server_engine = cast(ServerEngine, server)
+
+    asyncio.run(runtime.start_cluster(
+        "model",
+        {
+            "contextSize": 4096,
+            "noLoadTimeout": True,
+            "gpuLayers": [{"nodeId": "local", "layers": 1}],
+        },
+    ))
+
+    assert server.started["timeout_seconds"] is None
+    saved = runtime.store.model_load_configs()["model"]
+    assert saved["noLoadTimeout"] is True
+
+
+def test_loading_snapshot_reports_live_forwarder_bytes() -> None:
+    runtime = runtime_with(SuccessfulLoadInference())
+    runtime.cluster = {
+        "status": "loading", "modelId": "model",
+        "stage": "loading_weights", "expectedBytes": 1024,
+    }
+
+    class Forwarder:
+        bytes_to_worker = 1500
+        bytes_from_worker = 300
+
+    runtime._server_forwarder = cast(RpcForwarder, Forwarder())
+    cluster = runtime.snapshot()["cluster"]
+
+    assert cluster["bytesToWorker"] == 1500
+    assert cluster["bytesFromWorker"] == 300
+    assert cluster["expectedBytes"] == 1024

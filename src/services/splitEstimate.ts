@@ -95,6 +95,45 @@ export function distributeLayersByVram(
   });
 }
 
+export function normalizeManualGpuLayers(
+  stored: ModelLoadConfig["gpuLayers"] | undefined,
+  gpuNodes: NodeCapabilities[],
+): ModelLoadConfig["gpuLayers"] {
+  const list = stored ?? [];
+  const seen = new Set<string>();
+  const result: ModelLoadConfig["gpuLayers"] = [];
+  for (const node of gpuNodes) {
+    const existing = list.find((item) => item.nodeId === node.id && item.kind !== "cpu");
+    seen.add(`gpu:${node.id}`);
+    result.push(existing ? { ...existing } : { nodeId: node.id, layers: 0 });
+  }
+  for (const item of list) {
+    const key = `${item.kind === "cpu" ? "cpu" : "gpu"}:${item.nodeId}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push({ ...item });
+  }
+  return result;
+}
+
+export function upsertGpuNodeLayers(
+  layers: ModelLoadConfig["gpuLayers"],
+  nodeId: string,
+  rawValue: string,
+  maxLayers: number,
+): ModelLoadConfig["gpuLayers"] {
+  const parsed = Number.parseInt(rawValue || "0", 10);
+  const safe = Number.isFinite(parsed) ? parsed : 0;
+  const next = Math.max(0, Math.min(maxLayers, safe));
+  const exists = layers.some((item) => item.nodeId === nodeId && item.kind !== "cpu");
+  if (exists) {
+    return layers.map((item) =>
+      item.nodeId === nodeId && item.kind !== "cpu" ? { ...item, layers: next } : item,
+    );
+  }
+  return [...layers, { nodeId, layers: next }];
+}
+
 export function fitLayersByVram(
   model: ModelRecord,
   nodes: NodeCapabilities[],

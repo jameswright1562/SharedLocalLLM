@@ -25,6 +25,10 @@ export function savedForceLaunches(configs: SavedLoadConfigs): Record<string, bo
   return pickValues(configs, (config) => (config.force ? true : undefined));
 }
 
+export function savedNoTimeoutFlags(configs: SavedLoadConfigs): Record<string, boolean> {
+  return pickValues(configs, (config) => (config.noLoadTimeout ? true : undefined));
+}
+
 export function savedOptionValues(configs: SavedLoadConfigs): Record<string, ModelLoadOptions> {
   return pickValues(configs, (config) => ({
     flashAttention: Boolean(config.flashAttention),

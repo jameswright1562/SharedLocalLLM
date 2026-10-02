@@ -10,6 +10,7 @@ from sharedlocalllm_backend.peer import (
     PEER_PORT,
     PEER_REQUEST_TIMEOUT_SECONDS,
     PeerManager,
+    RpcForwarder,
     _parse_endpoint,
 )
 
@@ -237,6 +238,7 @@ def test_closing_peer_stream_cancels_coordinator_generation() -> None:
 
 
 def test_cancelling_stream_relay_closes_the_active_generator() -> None:
+
     async def scenario() -> None:
         from sharedlocalllm_backend.peer_stream import serve_events
 
@@ -265,5 +267,41 @@ def test_cancelling_stream_relay_closes_the_active_generator() -> None:
         with pytest.raises(asyncio.CancelledError):
             await task
         await asyncio.wait_for(closed.wait(), 1)
+
+    asyncio.run(scenario())
+
+
+def test_rpc_forwarder_counts_tunnel_bytes_per_direction() -> None:
+    async def scenario() -> None:
+        forwarder = RpcForwarder.__new__(RpcForwarder)
+        forwarder.bytes_to_worker = 0
+        forwarder.bytes_from_worker = 0
+
+        class Writer:
+            def __init__(self) -> None:
+                self.data = bytearray()
+                self.closed = False
+
+            def write(self, chunk: bytes) -> None:
+                self.data.extend(chunk)
+
+            async def drain(self) -> None:
+                return None
+
+            def close(self) -> None:
+                self.closed = True
+
+        local_reader = asyncio.StreamReader()
+        local_reader.feed_data(b"l" * 1000)
+        local_reader.feed_eof()
+        remote_reader = asyncio.StreamReader()
+        remote_reader.feed_data(b"r" * 250)
+        remote_reader.feed_eof()
+        await forwarder._bridge_counted(
+            local_reader, cast(asyncio.StreamWriter, Writer()),
+            remote_reader, cast(asyncio.StreamWriter, Writer()),
+        )
+        assert forwarder.bytes_to_worker == 1000
+        assert forwarder.bytes_from_worker == 250
 
     asyncio.run(scenario())

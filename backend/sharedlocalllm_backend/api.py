@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import re
@@ -8,7 +7,6 @@ import time
 from contextlib import asynccontextmanager
 from typing import Any
 
-import uvicorn
 from fastapi import FastAPI, Header, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
@@ -283,62 +281,3 @@ def create_openai_app(runtime: Any) -> FastAPI:
         }
 
     return app
-
-
-class ApiServerManager:
-    """Runs the user-facing API on the same asyncio loop as the control/peer runtime."""
-
-    def __init__(self, runtime: Any) -> None:
-        self.runtime = runtime
-        self.server: uvicorn.Server | None = None
-        self.task: asyncio.Task[None] | None = None
-        self.port: int | None = None
-
-    async def start(self, port: int) -> None:
-        if self.task and not self.task.done() and self.port == port:
-            return
-        await self.stop()
-        config = uvicorn.Config(
-            create_openai_app(self.runtime), host="127.0.0.1", port=port,
-            log_level="warning", access_log=False, lifespan="off",
-        )
-        self.server = uvicorn.Server(config)
-        self.task = asyncio.create_task(self.server.serve())
-        self.port = port
-        for _ in range(100):
-            if self.server.started:
-                return
-            if self.task.done():
-                await self.task
-                raise BackendError("api_start_failed", f"OpenAI API failed to bind port {port}.")
-            await asyncio.sleep(0.05)
-        raise BackendError("api_start_timeout", f"OpenAI API did not bind port {port} in time.")
-
-    async def restart(self, port: int) -> None:
-        previous = self.port
-        try:
-            await self.start(port)
-        except Exception:
-            if previous is not None and previous != port:
-                await self.start(previous)
-            raise
-
-    def is_healthy(self) -> bool:
-        return bool(
-            self.server
-            and self.server.started
-            and self.task
-            and not self.task.done()
-        )
-
-    async def stop(self) -> None:
-        if self.server:
-            self.server.should_exit = True
-        if self.task:
-            try:
-                await asyncio.wait_for(self.task, 3)
-            except (asyncio.TimeoutError, asyncio.CancelledError):
-                self.task.cancel()
-        self.server = None
-        self.task = None
-        self.port = None

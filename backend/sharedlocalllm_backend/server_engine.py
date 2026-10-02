@@ -303,6 +303,7 @@ class ServerEngine:
         tensor_split: list[int] | None = None,
         reasoning_preserve: bool = False,
         load_config: dict[str, Any] | None = None,
+        timeout_seconds: float | None = START_TIMEOUT_SECONDS,
     ) -> None:
         await self.stop()
         port = free_port()
@@ -347,8 +348,8 @@ class ServerEngine:
         self.model_path = model_path
         self.rpc_endpoint = rpc_endpoint
 
-        deadline = time.monotonic() + START_TIMEOUT_SECONDS
-        while time.monotonic() < deadline:
+        deadline = None if timeout_seconds is None else time.monotonic() + timeout_seconds
+        while deadline is None or time.monotonic() < deadline:
             if self.process.poll() is not None:
                 await self._finish_log_relay()
                 detail = log_tail(log_path, start=self._log_offset)

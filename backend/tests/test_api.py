@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import errno
 import json
 import logging
 import socket
@@ -13,11 +14,13 @@ import uvicorn
 
 from sharedlocalllm_backend.api import (
     API_LOG_LOGGER,
+    CONTROL_PORT,
     create_control_app,
     create_openai_app,
     format_api_request,
     prepare_logged_body,
 )
+from sharedlocalllm_backend.api_server import start_with_port_fallback
 from sharedlocalllm_backend.errors import BackendError
 from sharedlocalllm_backend.runtime import BackendRuntime
 from sharedlocalllm_backend.store import Store as RuntimeStore
@@ -742,3 +745,73 @@ def test_format_api_request_is_a_single_redacted_line() -> None:
     with_body = format_api_request("POST", "/v1/chat/completions", 200, 12.0, '{"model": "active"}')
     assert with_body == '[api] POST /v1/chat/completions -> 200 in 12 ms body={"model": "active"}'
     assert "\n" not in with_body
+
+
+class OccupiedManager:
+    """Pretends the first ports are taken, then binds successfully."""
+
+    def __init__(self, occupied: int) -> None:
+        self.occupied = occupied
+        self.started: list[int] = []
+
+    async def start(self, port: int) -> None:
+        self.started.append(port)
+        if len(self.started) <= self.occupied:
+            raise OSError(errno.EADDRINUSE, f"OpenAI API failed to bind port {port}.")
+
+
+class FallbackStore:
+    def __init__(self) -> None:
+        self.values: dict = {}
+        self.entries: list[tuple] = []
+
+    def update(self, **values) -> None:
+        self.values.update(values)
+
+    def log(self, level: str, event: str, message: str = "") -> None:
+        self.entries.append((level, event, message))
+
+
+def test_api_start_uses_the_configured_port_when_free() -> None:
+    manager = OccupiedManager(occupied=0)
+    store = FallbackStore()
+
+    port = asyncio.run(start_with_port_fallback(manager, store, 11435))
+
+    assert port == 11435
+    assert manager.started == [11435]
+    assert store.values == {}
+
+
+def test_api_start_moves_to_the_next_free_port_and_records_it() -> None:
+    manager = OccupiedManager(occupied=1)
+    store = FallbackStore()
+
+    port = asyncio.run(start_with_port_fallback(manager, store, 11435))
+
+    # 11436 is the loopback control port and is skipped as a candidate.
+    assert port == 11437
+    assert manager.started == [11435, 11437]
+    assert store.values == {"apiPort": 11437}
+    assert store.entries[0][0] == "WARN"
+    assert store.entries[0][1] == "api_port_auto_picked"
+    assert "11435" in store.entries[0][2] and "11437" in store.entries[0][2]
+
+
+def test_api_start_never_offers_the_loopback_control_port() -> None:
+    manager = OccupiedManager(occupied=5)
+    store = FallbackStore()
+
+    port = asyncio.run(start_with_port_fallback(manager, store, CONTROL_PORT - 2))
+
+    assert port == CONTROL_PORT + 4
+    assert CONTROL_PORT not in manager.started
+    assert store.values["apiPort"] == port
+
+
+def test_api_start_raises_when_no_port_is_free() -> None:
+    manager = OccupiedManager(occupied=99)
+    store = FallbackStore()
+
+    with pytest.raises(BackendError):
+        asyncio.run(start_with_port_fallback(manager, store, 11435, attempts=3))

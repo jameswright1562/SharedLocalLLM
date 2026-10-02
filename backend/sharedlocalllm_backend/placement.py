@@ -218,5 +218,17 @@ def validate_fit(estimate: dict[str, Any], force: bool) -> None:
         )
 
 
+def expected_transfer_bytes(size_bytes: int, remote_layers: int, total_layers: int) -> int:
+    """Approximate model bytes staged to the worker for a layer split.
+
+    The worker never receives a GGUF file; weights move inside llama.cpp's RPC
+    protocol, so tunnel bytes only approximate this figure (protocol overhead
+    included). Used as the denominator of the load-progress transfer meter.
+    """
+    if size_bytes <= 0 or remote_layers <= 0 or total_layers <= 0:
+        return 0
+    return math.ceil(size_bytes * remote_layers / total_layers)
+
+
 def invalid_split(message: str) -> BackendError:
     return BackendError("invalid_layer_split", message, "Adjust the per-device layer counts.")

@@ -15,6 +15,7 @@ import { IconAlertTriangle, IconPlus } from "@tabler/icons-react";
 
 import type { PageProps } from "../types";
 import { ComputePath } from "../components/ComputePath";
+import { LoadProgress } from "../components/LoadProgress";
 import { Meter, StatusPill } from "../components/Telemetry";
 import { fitLabels, formatGb } from "./pageFormat";
 
@@ -24,6 +25,7 @@ export function OverviewPage({ snapshot, service, refreshSnapshot, navigate }: P
   const combinedRam = online.reduce((sum, node) => sum + node.ramAvailableGb, 0);
   const clusterModel = snapshot.models.find((model) => model.id === snapshot.cluster.modelId);
   const running = snapshot.cluster.status === "running" || snapshot.cluster.status === "loading";
+  const workerName = snapshot.nodes.find((node) => node.id === snapshot.cluster.workerNodeId)?.name;
 
   return (
     <Box>
@@ -65,6 +67,9 @@ export function OverviewPage({ snapshot, service, refreshSnapshot, navigate }: P
       )}
 
       <ComputePath cluster={snapshot.cluster} nodes={snapshot.nodes} />
+      {snapshot.cluster.status === "loading" && (
+        <LoadProgress cluster={snapshot.cluster} workerName={workerName} />
+      )}
 
       <SimpleGrid
         cols={{ base: 1, xs: 2, lg: 4 }}

@@ -31,6 +31,11 @@ class RpcForwarder:
         self.include_cpu = include_cpu
         self.server: asyncio.AbstractServer | None = None
         self.endpoint: str | None = None
+        # Raw tunnel bytes, counted on the coordinator side only. These feed
+        # the load-progress transfer meter; they include RPC protocol
+        # overhead, so they are an approximation, never an exact model share.
+        self.bytes_to_worker = 0
+        self.bytes_from_worker = 0
 
     async def start(self) -> str:
         if self.server and self.endpoint:
@@ -63,13 +68,35 @@ class RpcForwarder:
             ready = await _read_json(remote_reader)
             if not ready.get("ok"):
                 raise BackendError("rpc_tunnel_failed", ready.get("message", "RPC tunnel failed"))
-            await _bridge(reader, writer, remote_reader, remote_writer)
+            await self._bridge_counted(reader, writer, remote_reader, remote_writer)
         except Exception as error:
             self.peer.runtime.store.log("WARN", "rpc_forwarder_failed", str(error))
         finally:
             writer.close()
             if remote_writer:
                 remote_writer.close()
+
+    async def _bridge_counted(
+        self,
+        local_reader: asyncio.StreamReader, local_writer: asyncio.StreamWriter,
+        remote_reader: asyncio.StreamReader, remote_writer: asyncio.StreamWriter,
+    ) -> None:
+        async def copy(
+            reader: asyncio.StreamReader, writer: asyncio.StreamWriter, attr: str
+        ) -> None:
+            try:
+                while data := await reader.read(256 * 1024):
+                    writer.write(data)
+                    await writer.drain()
+                    setattr(self, attr, getattr(self, attr) + len(data))
+            finally:
+                writer.close()
+
+        await asyncio.gather(
+            copy(local_reader, remote_writer, "bytes_to_worker"),
+            copy(remote_reader, local_writer, "bytes_from_worker"),
+            return_exceptions=True,
+        )
 
 
 class PeerManager:

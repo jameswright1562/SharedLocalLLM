@@ -6,12 +6,14 @@ import gc
 import os
 import threading
 import time
+from collections.abc import Callable
 from typing import Any, AsyncIterator
 
 import numpy as np
 import numpy.typing as npt
 
 from .errors import BackendError
+from .load_progress import LoadStage
 from .openai_compat import reasoning_stream_chunks, sampling_kwargs
 from .peer import RpcForwarder
 from .reasoning import ReasoningStreamSplitter, is_reasoning_model, split_reasoning
@@ -156,7 +158,12 @@ class InferenceEngine:
     async def load(
         self, model: dict[str, Any], path: str, load_config: dict[str, Any],
         peer: Any, local_id: str, peer_id: str | None,
+        on_stage: Callable[[LoadStage], None] | None = None,
     ) -> None:
+        def report(stage: LoadStage) -> None:
+            if on_stage is not None:
+                on_stage(stage)
+
         async with self._async_lock:
             await self._unload_locked()
             allocations = load_config.get("gpuLayers") or []
@@ -167,6 +174,7 @@ class InferenceEngine:
             )
             remote_total = remote_gpu_layers + remote_cpu_layers
             if peer_id and (remote_total > 0 or model.get("fit") == "combined-gpu"):
+                report("tunnel")
                 self._forwarder = RpcForwarder(
                     peer, model_id=model["id"], include_cpu=remote_cpu_layers > 0
                 )
@@ -178,9 +186,11 @@ class InferenceEngine:
                 # layers evenly across them instead of pretending two layers
                 # exist (which silently degraded the model to near-pure CPU).
                 load_config = {**load_config, "automaticGpuOffload": True}
+                report("staging")
                 await asyncio.to_thread(prepare_rpc_load, rpc_endpoint, 0, 0, 0)
                 tensor_split = None
             else:
+                report("staging")
                 tensor_split = await asyncio.to_thread(
                     prepare_rpc_load, rpc_endpoint, remote_gpu_layers, remote_cpu_layers,
                     local_layers,
@@ -197,6 +207,7 @@ class InferenceEngine:
                 f"batch={int(load_config.get('batchSize', 512))}",
             )
             try:
+                report("loading_weights")
                 await asyncio.to_thread(
                     self._load_sync, path, context, total_layers, tensor_split, load_config
                 )

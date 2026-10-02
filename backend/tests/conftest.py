@@ -26,13 +26,13 @@ def _install_llama_cpp_stub() -> None:
     lowlevel.llama_context_default_params = llama_context_default_params  # type: ignore[attr-defined]
 
     package = types.ModuleType("llama_cpp")
-    package.__version__ = "0.0.0-stub"
+    setattr(package, "__version__", "0.0.0-stub")
     package.__file__ = __file__
     # Lets tests that need the real native registry distinguish the stub.
-    package.__llama_stub__ = True
-    package.Llama = type("Llama", (), {})
-    package.LogitsProcessorList = list
-    package.llama_cpp = lowlevel
+    setattr(package, "__llama_stub__", True)
+    setattr(package, "Llama", type("Llama", (), {}))
+    setattr(package, "LogitsProcessorList", list)
+    setattr(package, "llama_cpp", lowlevel)
 
     sys.modules["llama_cpp"] = package
     sys.modules["llama_cpp.llama_cpp"] = lowlevel

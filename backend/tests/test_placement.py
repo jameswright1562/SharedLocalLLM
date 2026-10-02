@@ -6,6 +6,7 @@ from sharedlocalllm_backend.errors import BackendError
 from sharedlocalllm_backend.placement import (
     distribute_layers,
     estimate_split,
+    expected_transfer_bytes,
     normalize_load_config,
 )
 
@@ -117,3 +118,25 @@ def test_normalize_load_config_preserves_kv_cache_options() -> None:
     assert config["kvCacheK"] == "q8_0"
     assert config["kvCacheV"] == "q4_0"
     assert config["kvUnified"] is True
+
+
+def test_expected_transfer_bytes_scales_with_remote_layer_share() -> None:
+    size = 22 * 1024**3
+    assert expected_transfer_bytes(size, 32, 64) == 11 * 1024**3
+    assert expected_transfer_bytes(size, 0, 64) == 0
+    assert expected_transfer_bytes(size, 64, 64) == size
+    assert expected_transfer_bytes(0, 10, 64) == 0
+    assert expected_transfer_bytes(size, 10, 0) == 0
+
+
+def test_normalize_load_config_preserves_no_load_timeout_flag() -> None:
+    config = normalize_load_config(
+        MODEL,
+        {
+            "contextSize": 4096,
+            "noLoadTimeout": True,
+            "gpuLayers": [{"nodeId": "local", "layers": 8}],
+        },
+        [node("local", 8)],
+    )
+    assert config["noLoadTimeout"] is True

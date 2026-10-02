@@ -1,4 +1,4 @@
-import { screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
@@ -101,6 +101,34 @@ function serviceWith(snapshot: AppSnapshot, overrides: Partial<AppService> = {})
 }
 
 describe("SharedLocalLLM app", () => {
+  it("polls loading clusters on other pages and recovers from a failed refresh", async () => {
+    vi.useFakeTimers();
+    const snapshot = {
+      ...readySnapshot,
+      cluster: { status: "loading" as const, modelId: "model-text" },
+    };
+    const getAppSnapshot = vi
+      .fn()
+      .mockResolvedValueOnce(snapshot)
+      .mockRejectedValueOnce(new Error("temporary failure"))
+      .mockResolvedValue(snapshot);
+    let view: ReturnType<typeof render> | undefined;
+    try {
+      await act(async () => {
+        view = render(<App service={serviceWith(snapshot, { getAppSnapshot })} />);
+      });
+      fireEvent.click(screen.getByRole("button", { name: /nodes/i }));
+      await act(() => vi.advanceTimersByTimeAsync(1500));
+      expect(screen.getByRole("alert")).toHaveTextContent("temporary failure");
+      await act(() => vi.advanceTimersByTimeAsync(1500));
+      expect(getAppSnapshot).toHaveBeenCalledTimes(3);
+      expect(screen.queryByText(/latest refresh failed/i)).not.toBeInTheDocument();
+    } finally {
+      view?.unmount();
+      vi.useRealTimers();
+    }
+  });
+
   it("navigates between the instrument panels", async () => {
     const user = userEvent.setup();
     render(<App service={serviceWith(readySnapshot)} />);

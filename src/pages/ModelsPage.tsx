@@ -26,6 +26,7 @@ import {
   savedForceLaunches,
   savedLayerSplits,
   savedManualSplits,
+  savedNoTimeoutFlags,
   savedOptionValues,
   savedRemoteCpuFlags,
 } from "../services/savedLoadConfigs";
@@ -33,6 +34,7 @@ import {
   distributeLayersByVram,
   estimateModelSplitLocally,
   fitLayersByVram,
+  normalizeManualGpuLayers,
 } from "../services/splitEstimate";
 import type { ModelLoadConfig, ModelRecord, PageProps } from "../types";
 
@@ -59,6 +61,7 @@ export function ModelsPage({ snapshot, service, refreshSnapshot }: PageProps) {
   const [layersByModel, setLayersByModel] = useState(() => savedLayerSplits(savedConfigs));
   const [remoteCpuByModel, setRemoteCpuByModel] = useState(() => savedRemoteCpuFlags(savedConfigs));
   const [forceByModel, setForceByModel] = useState(() => savedForceLaunches(savedConfigs));
+  const [noTimeoutByModel, setNoTimeoutByModel] = useState(() => savedNoTimeoutFlags(savedConfigs));
   const [optionsByModel, setOptionsByModel] = useState(() => savedOptionValues(savedConfigs));
   const [appliedConfigsByModel, setAppliedConfigsByModel] = useState<
     Record<string, ModelLoadConfig>
@@ -92,13 +95,16 @@ export function ModelsPage({ snapshot, service, refreshSnapshot }: PageProps) {
   const manualSplit = selected ? Boolean(manualByModel[selected.id]) : false;
   const includeRemoteCpu = selected ? Boolean(remoteCpuByModel[selected.id]) : false;
   const force = selected ? Boolean(forceByModel[selected.id]) : false;
+  const noTimeout = selected ? Boolean(noTimeoutByModel[selected.id]) : false;
   const loadOptions = selected
     ? (optionsByModel[selected.id] ?? DEFAULT_LOAD_OPTIONS)
     : DEFAULT_LOAD_OPTIONS;
   const gpuLayers = useMemo(() => {
     if (!selected) return [];
     if (!manualSplit) return fitLayersByVram(selected, gpuNodes);
-    return layersByModel[selected.id] ?? distributeLayersByVram(selected.layerCount ?? 0, gpuNodes);
+    const stored =
+      layersByModel[selected.id] ?? distributeLayersByVram(selected.layerCount ?? 0, gpuNodes);
+    return normalizeManualGpuLayers(stored, gpuNodes);
   }, [gpuNodes, layersByModel, manualSplit, selected]);
   const splitEstimate = useMemo(() => {
     if (!selected?.layerCount || !manualSplit) return undefined;
@@ -187,6 +193,7 @@ export function ModelsPage({ snapshot, service, refreshSnapshot }: PageProps) {
         gpuLayers: selected.layerCount ? gpuLayers : [],
         includeRemoteCpu,
         force: forceLaunch,
+        noLoadTimeout: noTimeout,
         flashAttention: loadOptions.flashAttention,
         useMmap: loadOptions.useMmap,
         useMlock: loadOptions.useMlock,
@@ -223,7 +230,7 @@ export function ModelsPage({ snapshot, service, refreshSnapshot }: PageProps) {
     setRemoteCpuByModel({ ...remoteCpuByModel, [selected.id]: value });
     const current =
       layersByModel[selected.id] ?? distributeLayersByVram(selected.layerCount ?? 0, gpuNodes);
-    const withoutCpu = current.filter(
+    const withoutCpu = normalizeManualGpuLayers(current, gpuNodes).filter(
       (item) => !(item.nodeId === workerNode.id && item.kind === "cpu"),
     );
     setLayersByModel({
@@ -237,6 +244,11 @@ export function ModelsPage({ snapshot, service, refreshSnapshot }: PageProps) {
   function setForce(next: boolean) {
     if (!selected) return;
     setForceByModel({ ...forceByModel, [selected.id]: next });
+  }
+
+  function setNoTimeout(next: boolean) {
+    if (!selected) return;
+    setNoTimeoutByModel({ ...noTimeoutByModel, [selected.id]: next });
   }
 
   function applyTuneToEditor(config: ModelLoadConfig) {
@@ -254,6 +266,10 @@ export function ModelsPage({ snapshot, service, refreshSnapshot }: PageProps) {
       [modelId]: Boolean(config.includeRemoteCpu),
     }));
     setForceByModel((current) => ({ ...current, [modelId]: Boolean(config.force) }));
+    setNoTimeoutByModel((current) => ({
+      ...current,
+      [modelId]: Boolean(config.noLoadTimeout),
+    }));
     setOptionsByModel((current) => ({
       ...current,
       [modelId]: {
@@ -382,7 +398,11 @@ export function ModelsPage({ snapshot, service, refreshSnapshot }: PageProps) {
           gpuLayers={gpuLayers}
           splitEstimate={splitEstimate}
           setGpuLayers={(layers) =>
-            selected && setLayersByModel({ ...layersByModel, [selected.id]: layers })
+            selected &&
+            setLayersByModel({
+              ...layersByModel,
+              [selected.id]: normalizeManualGpuLayers(layers, gpuNodes),
+            })
           }
           workerNode={workerNode}
           includeRemoteCpu={includeRemoteCpu}
@@ -395,6 +415,10 @@ export function ModelsPage({ snapshot, service, refreshSnapshot }: PageProps) {
           splitInvalid={splitInvalid}
           force={force}
           setForce={setForce}
+          noTimeout={noTimeout}
+          setNoTimeout={setNoTimeout}
+          cluster={snapshot.cluster}
+          workerName={workerNode?.name}
           launch={() => void launch()}
           autotuneSection={
             selected && !selected.remoteOnly ? (

@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import type { LoadStage } from "./services/loadStages";
 
 export type PageId =
   "overview" | "nodes" | "network" | "models" | "benchmarks" | "chat" | "api" | "settings";
@@ -72,6 +73,7 @@ export interface ModelLoadConfig {
   gpuLayers: GpuLayerAllocation[];
   includeRemoteCpu?: boolean;
   force?: boolean;
+  noLoadTimeout?: boolean;
   flashAttention?: boolean;
   useMmap?: boolean;
   useMlock?: boolean;
@@ -207,6 +209,13 @@ export interface ClusterSession {
   modelId?: string;
   engine?: "builtin" | "llama-server";
   error?: string;
+  /** Machine-readable load stage while status is "loading". */
+  stage?: LoadStage;
+  /** Raw RPC tunnel bytes counted coordinator-side during this load. */
+  bytesToWorker?: number;
+  bytesFromWorker?: number;
+  /** Approximate model bytes expected on the worker for this split. */
+  expectedBytes?: number;
 }
 
 export interface AppSnapshot {
