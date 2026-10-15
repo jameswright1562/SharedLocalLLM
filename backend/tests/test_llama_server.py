@@ -13,6 +13,8 @@ import pytest
 from sharedlocalllm_backend.errors import BackendError
 from sharedlocalllm_backend.llama_server import (
     EXPERIMENTAL_DIR_ENV,
+    MANIFEST_FILENAME,
+    SERVER_EXECUTABLE,
     _load_dotenv,
     binary_version,
     dotenv_candidates,
@@ -26,7 +28,7 @@ from sharedlocalllm_backend.llama_server import (
 
 
 def repo_manifest_path() -> Path:
-    path = Path(__file__).resolve().parents[2] / "public" / "runtime" / "llama-cpp-manifest.json"
+    path = Path(__file__).resolve().parents[2] / "public" / "runtime" / MANIFEST_FILENAME
     if not path.is_file():
         pytest.skip("repository runtime manifest is not present")
     return path
@@ -35,8 +37,8 @@ def repo_manifest_path() -> Path:
 def test_repository_manifest_loads_and_pins_the_llama_server() -> None:
     manifest = load_manifest(repo_manifest_path())
     assert manifest["channel"] == "pinned"
-    assert "llama-server.exe" in manifest["requiredExecutables"]
-    assert manifest["llamaServer"]["entry"] == "llama-server.exe"
+    assert SERVER_EXECUTABLE in manifest["requiredExecutables"]
+    assert manifest["llamaServer"]["entry"] == SERVER_EXECUTABLE
     assert manifest["llamaServer"]["assetKey"] in manifest["release"]
 
 
@@ -59,7 +61,7 @@ def write_manifest(tmp_path: Path, **overrides) -> Path:
                 "sha256": "a" * 64,
             }
         },
-        "llamaServer": {"assetKey": "llamaCpp", "entry": "llama-server.exe"},
+        "llamaServer": {"assetKey": "llamaCpp", "entry": SERVER_EXECUTABLE},
     }
     manifest.update(overrides)
     path = tmp_path / "llama-cpp-manifest.json"
@@ -120,9 +122,9 @@ def test_locate_llama_server_returns_the_first_directory_that_has_it(tmp_path: P
     filled = tmp_path / "filled"
     empty.mkdir()
     filled.mkdir()
-    (filled / "llama-server.exe").write_bytes(b"MZ")
+    (filled / SERVER_EXECUTABLE).write_bytes(b"MZ")
 
-    assert locate_llama_server((empty, filled)) == filled / "llama-server.exe"
+    assert locate_llama_server((empty, filled)) == filled / SERVER_EXECUTABLE
     assert locate_llama_server((empty,)) is None
 
 
@@ -142,7 +144,7 @@ def test_install_root_candidates_includes_the_repo_llama_bin(monkeypatch) -> Non
 def test_install_root_candidates_optin_override_prepends_experimental_dir(monkeypatch, tmp_path) -> None:
     experimental = tmp_path / "experimental"
     experimental.mkdir()
-    (experimental / "llama-server.exe").write_bytes(b"MZ")
+    (experimental / SERVER_EXECUTABLE).write_bytes(b"MZ")
     monkeypatch.setenv(EXPERIMENTAL_DIR_ENV, str(experimental))
     monkeypatch.setattr(
         "sharedlocalllm_backend.llama_server.dotenv_candidates", lambda: []
@@ -159,13 +161,13 @@ def test_locate_llama_server_prefers_the_optin_experimental_binary(monkeypatch, 
     repo_bin = tmp_path / "backend" / "runtime" / "llama-bin"
     experimental.mkdir()
     repo_bin.mkdir(parents=True)
-    (experimental / "llama-server.exe").write_bytes(b"MZ-experimental")
-    (repo_bin / "llama-server.exe").write_bytes(b"MZ-pinned")
+    (experimental / SERVER_EXECUTABLE).write_bytes(b"MZ-experimental")
+    (repo_bin / SERVER_EXECUTABLE).write_bytes(b"MZ-pinned")
     monkeypatch.setenv(EXPERIMENTAL_DIR_ENV, str(experimental))
 
     found = locate_llama_server(install_root_candidates())
     assert found is not None
-    assert found == experimental / "llama-server.exe"
+    assert found == experimental / SERVER_EXECUTABLE
     assert found.read_bytes() == b"MZ-experimental"
 
 

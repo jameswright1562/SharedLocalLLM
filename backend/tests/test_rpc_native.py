@@ -8,6 +8,7 @@ import pytest
 
 from sharedlocalllm_backend.rpc_native import (
     NativeRpcServer,
+    RPC_SERVER_EXECUTABLE,
     classify_devices,
     prepare_model_devices,
     server_start_arguments,
@@ -159,6 +160,12 @@ def test_prepare_rpc_load_distributed_builds_remote_first_split(monkeypatch, tmp
     from sharedlocalllm_backend import rpc_native
     from sharedlocalllm_backend.rpc_native import NativeRpcServer, prepare_rpc_load
 
+    try:
+        rpc_native.ensure_backend_initialized()
+        rpc_native._symbol("ggml_backend_rpc_start_server")
+    except Exception:
+        pytest.skip("prepare_rpc_load needs a llama.cpp build with GGML_RPC=ON")
+
     monkeypatch.setenv("LLAMA_CACHE", str(tmp_path))
     monkeypatch.setattr(rpc_native, "_experimental_rpc_server_exe", lambda: None)
 
@@ -184,6 +191,12 @@ def test_prepare_rpc_load_reserves_remote_cpu_device(monkeypatch, tmp_path) -> N
 
     from sharedlocalllm_backend import rpc_native
     from sharedlocalllm_backend.rpc_native import NativeRpcServer, prepare_rpc_load
+
+    try:
+        rpc_native.ensure_backend_initialized()
+        rpc_native._symbol("ggml_backend_rpc_start_server")
+    except Exception:
+        pytest.skip("prepare_rpc_load needs a llama.cpp build with GGML_RPC=ON")
 
     monkeypatch.setenv("LLAMA_CACHE", str(tmp_path))
     monkeypatch.setattr(rpc_native, "_experimental_rpc_server_exe", lambda: None)
@@ -260,9 +273,9 @@ def test_experimental_rpc_server_exe_finds_the_override_install(monkeypatch) -> 
 
     override = rpc_native.Path("C:/exp/runtime")
     monkeypatch.setattr(rpc_native, "install_root_candidates", lambda: [override])
-    monkeypatch.setattr(rpc_native.Path, "is_file", lambda self: self.name == "ggml-rpc-server.exe")
+    monkeypatch.setattr(rpc_native.Path, "is_file", lambda self: self.name == RPC_SERVER_EXECUTABLE)
 
-    assert rpc_native._experimental_rpc_server_exe() == override / "ggml-rpc-server.exe"
+    assert rpc_native._experimental_rpc_server_exe() == override / RPC_SERVER_EXECUTABLE
 
 
 def test_experimental_rpc_server_exe_returns_none_without_the_binary(monkeypatch, tmp_path) -> None:

@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "enabled": true,
+  "channel": "pinned",
+  "project": "ggml-org/llama.cpp",
+  "releasePage": "https://github.com/ggml-org/llama.cpp/releases",
+  "platform": "macos-aarch64",
+  "backend": "metal",
+  "assetPatterns": {
+    "llamaCpp": "llama-{tag}-bin-macos-arm64.tar.gz"
+  },
+  "release": {
+    "tag": "b11342",
+    "publishedAt": "2026-02-10",
+    "llamaCpp": {
+      "url": "https://github.com/ggml-org/llama.cpp/releases/download/b11342/llama-b11342-bin-macos-arm64.tar.gz",
+      "size": 11828239,
+      "sha256": "1050318ed5fb941a1b4c1c603f6c3c7fd3f065b56af3b8cfab39aee70f3ad076"
+    }
+  },
+  "llamaServer": {
+    "assetKey": "llamaCpp",
+    "entry": "llama-server",
+    "healthEndpoint": "/health",
+    "role": "Optional MTP speculative-decoding engine. Installed only through the verified installer; launched by the backend when present, otherwise the built-in Metal engine is used."
+  },
+  "requiredExecutables": ["llama-server", "llama-bench"],
+  "notes": [
+    "Assets and SHA-256 values are pinned from the official GitHub release metadata for b11342 (size cross-checked against the releases API; archive downloaded and hashed locally).",
+    "Runtime installation must still verify HTTPS origin, byte size, SHA-256, archive entries, and executable health before activation.",
+    "Day-to-day Mac inference uses the embedded llama-cpp-python Metal backend; this manifest covers the optional llama-server/llama-bench binaries."
+  ]
+}

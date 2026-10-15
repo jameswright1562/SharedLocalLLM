@@ -7,6 +7,7 @@ import pytest
 
 from sharedlocalllm_backend.autotune import (
     Autotuner,
+    BENCH_EXECUTABLE,
     _run_bench_process,
     allocations_from_split,
     apply_tune_result,
@@ -38,8 +39,8 @@ def row(**overrides):
 
 
 def test_locate_bench_finds_the_pinned_executable(tmp_path: Path) -> None:
-    (tmp_path / "llama-bench.exe").touch()
-    assert locate_bench([tmp_path, Path("elsewhere")]) == tmp_path / "llama-bench.exe"
+    (tmp_path / BENCH_EXECUTABLE).touch()
+    assert locate_bench([tmp_path, Path("elsewhere")]) == tmp_path / BENCH_EXECUTABLE
     assert locate_bench([Path("missing")]) is None
 
 

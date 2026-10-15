@@ -619,8 +619,9 @@ def _symbol(name: str, required: bool = True) -> Any:
         except AttributeError:
             continue
     if required:
+        hint = "GGML_RPC=ON" if os.name != "nt" else "GGML_RPC=ON and GGML_CUDA=ON"
         raise RuntimeError(
-            f"{name} is unavailable. Rebuild llama-cpp-python with GGML_RPC=ON and GGML_CUDA=ON."
+            f"{name} is unavailable. Rebuild llama-cpp-python with {hint}."
         )
     return None
 

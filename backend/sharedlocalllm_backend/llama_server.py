@@ -17,7 +17,11 @@ from typing import Any, Callable
 
 from .errors import BackendError
 
-MANIFEST_FILENAME = "llama-cpp-manifest.json"
+MANIFEST_FILENAME = (
+    "llama-cpp-manifest.macos-aarch64.json"
+    if sys.platform == "darwin"
+    else "llama-cpp-manifest.json"
+)
 # Pinned engine binary: .exe on Windows, extension-less on macOS/Linux.
 SERVER_EXECUTABLE = "llama-server.exe" if os.name == "nt" else "llama-server"
 ALLOWED_ASSET_PREFIX = "https://github.com/ggml-org/llama.cpp/releases/download/"
