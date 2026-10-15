@@ -127,6 +127,11 @@ class NativeRpcServer:
         self.cache_dir = _rpc_cache_dir()
         devices = _probe_rpc_devices(exe)
         gpu_devices = [name for name in devices if name.lower() != "cpu"]
+        # Like the embedded worker: BLAS/Accelerate helpers (0 MiB) are not
+        # real offload targets. Drop them only when real GPUs remain.
+        non_blas = [name for name in gpu_devices if not name.lower().startswith("blas")]
+        if non_blas:
+            gpu_devices = non_blas
         if not gpu_devices:
             gpu_devices = ["CPU"]
         selected = list(gpu_devices)
@@ -188,12 +193,19 @@ class NativeRpcServer:
             # the final RPC device because llama.cpp reports every RPC device as a
             # GPU regardless of its real type.
             gpu_devices: list[int] = []
+            accel_devices: list[int] = []
             cpu_device: int | None = None
             for index in range(dev_count()):
                 device = dev_get(index)
                 # Current ggml enum: CPU=0, GPU=1, IGPU=2, ACCEL=3.
-                if device and dev_type(device) in (1, 2, 3):
+                if device and dev_type(device) in (1, 2):
                     gpu_devices.append(device)
+                elif device and dev_type(device) == 3:
+                    # ACCEL backends (e.g. the macOS Accelerate/BLAS helper with
+                    # 0 MiB) are CPU-side helpers, not real offload targets:
+                    # splitting GPU layers onto them silently degrades the
+                    # model. Kept only as a last resort when no GPU exists.
+                    accel_devices.append(device)
                 elif device and dev_type(device) == 0 and cpu_device is None:
                     cpu_device = device
             if gpu_devices:
@@ -201,6 +213,10 @@ class NativeRpcServer:
             elif cpu_device:
                 # No GPU present: keep the historical no-GPU fallback to the CPU.
                 devices = [cpu_device]
+            elif accel_devices:
+                # No GPU or CPU device enumerated (some Metal-only builds):
+                # use the accelerator rather than failing outright.
+                devices = accel_devices
             else:
                 raise RuntimeError("No llama.cpp backend device is available")
 
