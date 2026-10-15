@@ -18,7 +18,8 @@ from typing import Any, Callable
 from .errors import BackendError
 
 MANIFEST_FILENAME = "llama-cpp-manifest.json"
-SERVER_EXECUTABLE = "llama-server.exe"
+# Pinned engine binary: .exe on Windows, extension-less on macOS/Linux.
+SERVER_EXECUTABLE = "llama-server.exe" if os.name == "nt" else "llama-server"
 ALLOWED_ASSET_PREFIX = "https://github.com/ggml-org/llama.cpp/releases/download/"
 EXPERIMENTAL_DIR_ENV = "SHAREDLOCALLLM_LLAMA_SERVER_DIR"
 _DIGEST_PATTERN = re.compile(r"[0-9a-f]{64}")

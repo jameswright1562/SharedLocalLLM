@@ -11,6 +11,7 @@ import psutil
 
 from .errors import BackendError
 from .peer_stream import request_stream, serve_events
+from .store import save_peers, stored_peers
 
 DISCOVERY_PORT = 49157
 PEER_PORT = 49158
@@ -24,11 +25,13 @@ SLOW_PEER_OPS = {"chat", "benchmark_inference", "start_cluster"}
 
 class RpcForwarder:
     def __init__(
-        self, peer: "PeerManager", model_id: str, include_cpu: bool = False
+        self, peer: "PeerManager", model_id: str | None = None, include_cpu: bool = False,
+        peer_id: str | None = None,
     ) -> None:
         self.peer = peer
         self.model_id = model_id
         self.include_cpu = include_cpu
+        self.peer_id = peer_id
         self.server: asyncio.AbstractServer | None = None
         self.endpoint: str | None = None
         # Raw tunnel bytes, counted on the coordinator side only. These feed
@@ -56,7 +59,7 @@ class RpcForwarder:
     async def _handle(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         remote_writer: asyncio.StreamWriter | None = None
         try:
-            host, port = self.peer.endpoint()
+            host, port = self.peer.peer_endpoint(self.peer_id)
             remote_reader, remote_writer = await asyncio.open_connection(
                 host, port, limit=2 * 1024 * 1024
             )
@@ -105,6 +108,7 @@ class PeerManager:
         self.server: asyncio.AbstractServer | None = None
         self._broadcast_task: asyncio.Task[None] | None = None
         self.remote_models: list[dict[str, Any]] = []
+        self.remote_models_by_peer: dict[str, list[dict[str, Any]]] = {}
         self._rpc_tunnels = 0
 
     async def start(self) -> None:
@@ -129,24 +133,103 @@ class PeerManager:
             await self.server.wait_closed()
         self.server = None
 
+    def peers(self) -> list[dict[str, Any]]:
+        """All paired computers in stored order (up to N, e.g. 2 + 1 Mac)."""
+        return stored_peers(self.runtime.store)
+
+    def peer_by_id(self, peer_id: str) -> dict[str, Any] | None:
+        return next((peer for peer in self.peers() if peer.get("id") == peer_id), None)
+
     def endpoint(self) -> tuple[str, int]:
-        peer = self.runtime.store.get("peer")
-        if not peer or not peer.get("address"):
-            raise BackendError("peer_unavailable", "Connect another computer first.")
-        host, _, port = peer["address"].partition(":")
-        return host, int(port or PEER_PORT)
+        """First paired computer with an address (legacy single-peer callers)."""
+        for peer in self.peers():
+            if peer.get("address"):
+                host, _, port = str(peer["address"]).partition(":")
+                return host, int(port or PEER_PORT)
+        raise BackendError("peer_unavailable", "Connect another computer first.")
+
+    def peer_endpoint(self, peer_id: str | None) -> tuple[str, int]:
+        """Address of one specific paired computer (multi-peer callers)."""
+        if peer_id:
+            peer = self.peer_by_id(peer_id)
+            if peer and peer.get("address"):
+                host, _, port = str(peer["address"]).partition(":")
+                return host, int(port or PEER_PORT)
+            raise BackendError(
+                "peer_unavailable",
+                "The selected computer is not paired or has no saved endpoint.",
+                "Connect the computers again.",
+            )
+        return self.endpoint()
+
+    def _save_peer_record(
+        self, node: dict[str, Any], host: str, port: int,
+        models: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        """Insert or replace one peer record by id without dropping the others,
+        so adding a third computer (for example a Mac) keeps the second."""
+        record = {
+            "id": node["id"], "name": node["name"],
+            "address": f"{host}:{port}", "capabilities": node,
+        }
+        peers = [peer for peer in self.peers() if peer.get("id") != node["id"]]
+        peers.append(record)
+        if len(peers) > 8:
+            peers = peers[-8:]
+        save_peers(self.runtime.store, peers)
+        if models is not None:
+            self.remote_models_by_peer[node["id"]] = list(models)
+            self._rebuild_remote_models()
+        return node
+
+    def _rebuild_remote_models(self) -> None:
+        order = [str(peer["id"]) for peer in self.peers() if peer.get("id") is not None]
+        merged: list[dict[str, Any]] = []
+        for peer_id in order:
+            merged.extend(self.remote_models_by_peer.get(peer_id, []))
+        for peer_id, models in self.remote_models_by_peer.items():
+            if peer_id not in order:
+                merged.extend(models)
+        self.remote_models = merged
+
+    def forget_peer_models(self, peer_id: str) -> None:
+        self.remote_models_by_peer.pop(peer_id, None)
+        self._rebuild_remote_models()
 
     async def connect(self, manual_endpoint: str | None) -> dict[str, Any]:
         if manual_endpoint:
-            host, port = _parse_endpoint(manual_endpoint)
+            endpoints = [_parse_endpoint_rejecting_local(manual_endpoint)]
         else:
             discovered = await asyncio.to_thread(self._discover_sync, 4.0)
-            if not discovered:
+            known_ids = {peer.get("id") for peer in self.peers()}
+            endpoints = [
+                (host, port)
+                for host, port, announcement in discovered
+                if announcement.get("deviceId") not in known_ids
+            ]
+            if not endpoints:
+                if self.peers():
+                    raise BackendError(
+                        "peer_already_connected",
+                        "No new SharedLocalLLM computer was discovered.",
+                        "Enter the third computer's IPv4 address to add it.",
+                    )
                 raise BackendError(
                     "peer_not_discovered", "No SharedLocalLLM computer was discovered.",
                     "Enter the other computer's Ethernet IPv4 address."
                 )
-            host, port, _ = discovered[0]
+        last_error: BackendError | None = None
+        last_node: dict[str, Any] | None = None
+        for host, port in endpoints:
+            try:
+                last_node = await self._connect_one(host, port)
+            except BackendError as error:
+                last_error = error
+        if last_node is not None:
+            return last_node
+        raise last_error or BackendError("peer_connect_failed", "The connection attempt failed.")
+
+    async def _connect_one(self, host: str, port: int) -> dict[str, Any]:
         response = await self.request_to(host, port, "connect", {
             "node": self.runtime.local_node,
             "models": self.runtime.local_models,
@@ -154,10 +237,7 @@ class PeerManager:
         node = response["node"]
         node["online"] = True
         node["role"] = "worker"
-        self.remote_models = response.get("models", [])
-        self.runtime.store.update(peer={
-            "id": node["id"], "name": node["name"], "address": f"{host}:{port}", "capabilities": node,
-        })
+        self._save_peer_record(node, host, port, response.get("models", []))
         return node
 
     async def request(
@@ -207,20 +287,64 @@ class PeerManager:
         async for event in request_stream(host, port, PROTOCOL_VERSION, op, data or {}):
             yield event
 
-    async def heartbeat(self) -> dict[str, Any] | None:
+    async def request_to_peer(
+        self, peer_id: str, op: str, data: dict[str, Any] | None = None,
+        timeout: int | None = None,
+    ) -> Any:
+        """Send an op to one specific paired computer (3-node routing)."""
+        host, port = self.peer_endpoint(peer_id)
+        if timeout is None:
+            timeout = None if op in SLOW_PEER_OPS else PEER_REQUEST_TIMEOUT_SECONDS
+        return await self.request_to(host, port, op, data, timeout)
+
+    async def stream_to_peer(
+        self, peer_id: str, op: str, data: dict[str, Any] | None = None,
+    ) -> AsyncIterator[dict[str, Any]]:
+        host, port = self.peer_endpoint(peer_id)
+        async for event in request_stream(host, port, PROTOCOL_VERSION, op, data or {}):
+            yield event
+
+    async def heartbeat_peer(self, peer_id: str) -> dict[str, Any] | None:
         try:
-            value = await self.request("heartbeat")
+            value = await self.request_to_peer(peer_id, "heartbeat")
             node = dict(value["node"])
             node["online"] = True
             node["role"] = "worker"
-            peer = self.runtime.store.get("peer")
-            if peer and peer.get("capabilities") != node:
-                peer["capabilities"] = node
-                self.runtime.store.update(peer=peer)
-            self.remote_models = value.get("models", self.remote_models)
+            peers = self.peers()
+            for peer in peers:
+                if peer.get("id") == peer_id and peer.get("capabilities") != node:
+                    peer["capabilities"] = node
+                    save_peers(self.runtime.store, peers)
+                    break
+            self.remote_models_by_peer[peer_id] = list(value.get("models", self.remote_models_by_peer.get(peer_id, [])))
+            self._rebuild_remote_models()
             return node
         except BackendError:
+            peers = self.peers()
+            for peer in peers:
+                capabilities = peer.get("capabilities")
+                if peer.get("id") == peer_id and isinstance(capabilities, dict):
+                    capabilities["online"] = False
+                    save_peers(self.runtime.store, peers)
+                    break
             return None
+
+    async def heartbeat_all(self) -> dict[str, dict[str, Any]]:
+        """Heartbeat every paired computer; returns the reachable subset by id."""
+        found: dict[str, dict[str, Any]] = {}
+        for peer in self.peers():
+            node = await self.heartbeat_peer(str(peer.get("id")))
+            if node is not None:
+                found[str(peer.get("id"))] = node
+        return found
+
+    async def heartbeat(self) -> dict[str, Any] | None:
+        """First reachable peer (legacy single-peer callers)."""
+        for peer in self.peers():
+            node = await self.heartbeat_peer(str(peer.get("id")))
+            if node is not None:
+                return node
+        return None
 
     async def network_benchmark(self) -> dict[str, Any]:
         samples: list[float] = []
@@ -288,9 +412,10 @@ class PeerManager:
                 model_id = str(data.get("modelId") or "") or None
                 rpc_reader, rpc_writer = await self.runtime.inference.open_rpc_worker_connection(include_cpu)
                 self._rpc_tunnels += 1
+                coordinator = self._coordinator_for_source(writer)
                 self.runtime.cluster = {
                     "status": "running",
-                    "coordinatorNodeId": (self.runtime.store.get("peer") or {}).get("id"),
+                    "coordinatorNodeId": coordinator,
                     "workerNodeId": self.runtime.local_node["id"],
                     "modelId": model_id,
                 }
@@ -303,7 +428,7 @@ class PeerManager:
                     self._rpc_tunnels = max(0, self._rpc_tunnels - 1)
                     if self._rpc_tunnels == 0:
                         self.runtime.cluster = {
-                            "status": "ready" if self.runtime.store.get("peer") else "idle"
+                            "status": "ready" if self.peers() else "idle"
                         }
                         self.runtime._publish_local_cluster()
                 return
@@ -325,6 +450,20 @@ class PeerManager:
         finally:
             writer.close()
 
+    def _coordinator_for_source(self, writer: asyncio.StreamWriter) -> str | None:
+        """Id of the paired computer that opened this connection, if known.
+
+        Matches by source IP so a 3-node worker attributes the cluster to the
+        coordinator that actually connected, not just the first stored peer.
+        """
+        source = writer.get_extra_info("peername")
+        source_ip = source[0] if source else None
+        for peer in self.peers():
+            if source_ip and str(peer.get("address", "")).startswith(f"{source_ip}:"):
+                return str(peer.get("id"))
+        peers = self.peers()
+        return str(peers[0].get("id")) if peers else None
+
     def _accept_peer(self, data: dict[str, Any], writer: asyncio.StreamWriter) -> None:
         node = data.get("node")
         source = writer.get_extra_info("peername")
@@ -333,11 +472,7 @@ class PeerManager:
         remote = dict(node)
         remote["online"] = True
         remote["role"] = "worker"
-        self.remote_models = list(data.get("models") or [])
-        self.runtime.store.update(peer={
-            "id": remote["id"], "name": remote["name"],
-            "address": f"{source[0]}:{PEER_PORT}", "capabilities": remote,
-        })
+        self._save_peer_record(remote, source[0], PEER_PORT, list(data.get("models") or []))
         self.runtime._merge_models()
 
     async def _dispatch(self, op: str, data: dict[str, Any]) -> Any:
@@ -491,3 +626,24 @@ def _parse_endpoint(value: str) -> tuple[str, int]:
     if not 1 <= parsed_port <= 65535:
         raise BackendError("peer_endpoint_invalid", "Peer port must be between 1 and 65535.")
     return host, parsed_port
+
+
+def _parse_endpoint_rejecting_local(value: str) -> tuple[str, int]:
+    """Parse a manual endpoint, refusing addresses owned by this computer."""
+    host, port = _parse_endpoint(value)
+    try:
+        local = {
+            address.address
+            for addresses in psutil.net_if_addrs().values()
+            for address in addresses
+            if address.family == socket.AF_INET and address.address
+        }
+    except OSError:
+        local = set()
+    if host in local:
+        raise BackendError(
+            "peer_endpoint_is_local",
+            f"{host} belongs to this computer, not another computer.",
+            "Enter the other computer's IPv4 address.",
+        )
+    return host, port

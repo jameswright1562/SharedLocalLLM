@@ -109,6 +109,13 @@ class RunningModelInference:
 
 class FakePeer:
     remote_models: list[dict] = []
+    remote_models_by_peer: dict[str, list[dict]] = {}
+
+    async def heartbeat_peer(self, peer_id: str) -> dict:
+        return {"id": peer_id, "name": peer_id, "online": True, "role": "worker"}
+
+    def forget_peer_models(self, peer_id: str) -> None:
+        self.remote_models_by_peer.pop(peer_id, None)
 
 
 class InactiveServerEngine:
@@ -209,6 +216,7 @@ class RecordingInference:
 
 class ProxyingPeer:
     remote_models: list[dict] = []
+    remote_models_by_peer: dict[str, list[dict]] = {}
 
     def __init__(self, response=None) -> None:
         self.response = response if response is not None else {}
@@ -219,9 +227,16 @@ class ProxyingPeer:
         self.calls.append((op, data))
         return self.response
 
+    async def request_to_peer(self, peer_id: str, op: str, data: dict | None = None):
+        return await self.request(op, data)
+
     async def stream(self, op: str, data: dict | None = None):
         self.calls.append((op, data))
         for event in self.stream_events:
+            yield event
+
+    async def stream_to_peer(self, peer_id: str, op: str, data: dict | None = None):
+        async for event in self.stream(op, data):
             yield event
 
 
@@ -253,7 +268,7 @@ def runtime_with(inference: object) -> BackendRuntime:
     runtime._active_compute_operation = None
     runtime._server_forwarder = None
     runtime.peer = cast(PeerManager, FakePeer())
-    runtime.peer_active_model_id = None
+    runtime.peer_active_models = {}
     runtime.network = None
     runtime._runtime = {"status": "ready"}
     return runtime
@@ -263,7 +278,7 @@ def peer_runtime(inference: object, peer: object) -> BackendRuntime:
     runtime = runtime_with(inference)
     runtime.peer = cast(PeerManager, peer)
     cast(FakeStore, runtime.store).values["peer"] = {"id": "peer-1", "name": "Worker"}
-    runtime.peer_active_model_id = "model"
+    runtime.peer_active_models = {"peer-1": "model"}
     return runtime
 
 
@@ -577,10 +592,11 @@ def test_server_engine_uses_and_stops_the_peer_rpc_forwarder(monkeypatch) -> Non
     class Forwarder:
         instances: list["Forwarder"] = []
 
-        def __init__(self, peer, model_id, include_cpu=False) -> None:
+        def __init__(self, peer, model_id, include_cpu=False, peer_id=None) -> None:
             self.peer = peer
             self.model_id = model_id
             self.include_cpu = include_cpu
+            self.peer_id = peer_id
             self.stopped = False
             self.instances.append(self)
 
@@ -636,6 +652,61 @@ def test_stop_cluster_stops_a_peer_loaded_model_from_this_computer() -> None:
 
     assert peer.calls[-1][0] == "stop_cluster"
     assert cluster["status"] == "ready"
+
+
+def test_forget_peer_removes_one_computer_and_keeps_the_other() -> None:
+    runtime = runtime_with(RecordingInference())
+    runtime.local_models = []
+    cast(FakeStore, runtime.store).values["peers"] = [
+        {"id": "peer-1", "name": "Worker A", "address": "10.10.10.2:49158",
+         "capabilities": {"id": "peer-1", "name": "Worker A", "online": True}},
+        {"id": "peer-2", "name": "Worker B", "address": "10.10.10.3:49158",
+         "capabilities": {"id": "peer-2", "name": "Worker B", "online": True}},
+    ]
+
+    snapshot = asyncio.run(runtime.forget_peer("peer-1"))
+
+    remaining = [node["id"] for node in snapshot["nodes"]]
+    assert "peer-1" not in remaining
+    assert "peer-2" in remaining
+    assert cast(FakeStore, runtime.store).values["peer"]["id"] == "peer-2"
+
+
+def test_forget_unknown_peer_is_rejected() -> None:
+    runtime = runtime_with(RecordingInference())
+    with pytest.raises(BackendError) as caught:
+        asyncio.run(runtime.forget_peer("ghost"))
+    assert caught.value.code == "peer_unknown"
+
+
+def test_cluster_launch_records_every_worker() -> None:
+    runtime = runtime_with(SuccessfulLoadInference())
+    cast(FakeStore, runtime.store).values["peers"] = [
+        {"id": "peer-1", "address": "10.10.10.2:49158",
+         "capabilities": {
+             "id": "peer-1", "name": "Worker A", "online": True,
+             "gpu": {"vramAvailableGb": 8}, "ramAvailableGb": 16,
+         }},
+        {"id": "peer-2", "address": "10.10.10.3:49158",
+         "capabilities": {
+             "id": "peer-2", "name": "Worker B", "online": True,
+             "gpu": {"vramAvailableGb": 8}, "ramAvailableGb": 16,
+         }},
+    ]
+    runtime.models[0]["layerCount"] = 3
+
+    cluster = asyncio.run(runtime.start_cluster("model", {
+        "contextSize": 4096,
+        "gpuLayers": [
+            {"nodeId": "local", "layers": 1},
+            {"nodeId": "peer-1", "layers": 1},
+            {"nodeId": "peer-2", "layers": 1},
+        ],
+    }))
+
+    assert cluster["status"] == "running"
+    assert cluster["workerNodeId"] == "peer-1"
+    assert cluster["workerNodeIds"] == ["peer-1", "peer-2"]
 
 
 def test_cancel_generation_is_forwarded_to_the_peer() -> None:

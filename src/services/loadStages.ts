@@ -11,7 +11,10 @@ export type LoadStage = (typeof LOAD_STAGES)[number]["id"];
 
 export function usesWorker(cluster: ClusterSession): boolean {
   return Boolean(
-    cluster.workerNodeId || cluster.bytesToWorker !== undefined || (cluster.expectedBytes ?? 0) > 0,
+    (cluster.workerNodeIds?.length ?? 0) > 0 ||
+    cluster.workerNodeId ||
+    cluster.bytesToWorker !== undefined ||
+    (cluster.expectedBytes ?? 0) > 0,
   );
 }
 

@@ -7,7 +7,7 @@ from sharedlocalllm_backend.gguf import (
     chat_template_supports_reasoning_preserve,
     has_nextn_tensors,
 )
-from sharedlocalllm_backend.models import _fit, discover_local, hf_cache_roots, merge_remote
+from sharedlocalllm_backend.models import _fit, _fit_multi, discover_local, hf_cache_roots, merge_remote
 
 
 def node(node_id: str, vram: float = 12.0) -> dict:
@@ -34,6 +34,17 @@ def test_fit_still_reports_does_not_fit_when_weights_alone_exceed_vram() -> None
 
     assert _fit(31 * 1024**3, hardware, None, metadata) in ("combined-gpu", "gpu-ram")
     assert _fit(80 * 1024**3, hardware, None, metadata) == "does-not-fit"
+
+
+def test_fit_multi_combines_vram_across_two_workers() -> None:
+    hardware = node("node-a", vram=8.0)
+    metadata = {"layerCount": 64, "contextLength": 8192}
+    size = 18 * 1024**3
+
+    # Neither worker alone closes the gap, but both together do.
+    assert _fit_multi(size, hardware, [node("node-b", 8.0)], metadata) == "gpu-ram"
+    assert _fit_multi(size, hardware, [node("node-b", 8.0), node("node-c", 8.0)], metadata) == "combined-gpu"
+    assert _fit_multi(80 * 1024**3, hardware, [node("node-b", 8.0)], metadata) == "does-not-fit"
 
 
 def test_discovers_a_gguf_and_extracts_quantization(tmp_path: Path) -> None:

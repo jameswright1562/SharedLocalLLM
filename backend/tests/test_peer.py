@@ -12,6 +12,7 @@ from sharedlocalllm_backend.peer import (
     PeerManager,
     RpcForwarder,
     _parse_endpoint,
+    _parse_endpoint_rejecting_local,
 )
 
 
@@ -29,6 +30,48 @@ def test_manual_peer_endpoint_rejects_hostnames() -> None:
 def test_manual_peer_endpoint_rejects_invalid_ports(value: str) -> None:
     with pytest.raises(BackendError):
         _parse_endpoint(value)
+
+
+def test_manual_peer_endpoint_rejects_an_address_owned_by_this_computer() -> None:
+    with pytest.raises(BackendError) as caught:
+        _parse_endpoint_rejecting_local("127.0.0.1")
+    assert caught.value.code == "peer_endpoint_is_local"
+
+
+def test_connect_accumulates_peers_instead_of_replacing_them(tmp_path, monkeypatch) -> None:
+    from sharedlocalllm_backend.store import Store
+
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+
+    class Runtime:
+        local_node = {"id": "local", "name": "Local"}
+        local_models: list = []
+
+        def __init__(self) -> None:
+            self.store = Store()
+
+    runtime = Runtime()
+    peer = PeerManager(runtime)
+
+    async def fake_request_to(host, port, op, data=None, timeout=None):
+        assert op == "connect"
+        device = "device-b" if host == "10.10.10.2" else "device-c"
+        name = "Node B" if host == "10.10.10.2" else "Node C"
+        return {
+            "node": {"id": device, "name": name},
+            "models": [],
+        }
+
+    peer.request_to = fake_request_to  # type: ignore[method-assign]
+
+    async def scenario() -> None:
+        first = await peer.connect("10.10.10.2")
+        assert first["id"] == "device-b"
+        second = await peer.connect("10.10.10.3")
+        assert second["id"] == "device-c"
+        assert [item["id"] for item in peer.peers()] == ["device-b", "device-c"]
+
+    asyncio.run(scenario())
 
 
 def test_network_benchmark_measures_upload_and_download_separately(monkeypatch) -> None:

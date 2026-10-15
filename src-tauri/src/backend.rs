@@ -399,10 +399,10 @@ fn backend_command(app: &AppHandle) -> Result<(Command, String), ErrorPayload> {
         }
     }
 
-    if let Ok(resource) = app.path().resolve(
-        "backend/sharedlocalllm-backend.exe",
-        BaseDirectory::Resource,
-    ) {
+    if let Ok(resource) = app
+        .path()
+        .resolve(sidecar_resource_name(), BaseDirectory::Resource)
+    {
         if resource.is_file() {
             return Ok((Command::new(&resource), resource.display().to_string()));
         }
@@ -419,6 +419,17 @@ fn backend_command(app: &AppHandle) -> Result<(Command, String), ErrorPayload> {
     ))
 }
 
+/// Bundled Python sidecar name: `.exe` on Windows (PyInstaller onefile),
+/// extension-less on macOS/Linux. The tauri.conf resources glob ships
+/// whichever name the platform packager produced.
+fn sidecar_resource_name() -> &'static str {
+    if cfg!(windows) {
+        "backend/sharedlocalllm-backend.exe"
+    } else {
+        "backend/sharedlocalllm-backend"
+    }
+}
+
 fn development_backend_dir() -> Option<PathBuf> {
     let backend_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
@@ -432,7 +443,12 @@ fn development_backend_command() -> Option<(Command, String)> {
     let configured = std::env::var("SHARED_LOCAL_LLM_BACKEND_PYTHON")
         .ok()
         .map(PathBuf::from);
-    let venv = backend_dir.join(".venv").join("Scripts").join("python.exe");
+    // Windows venv layout (.venv/Scripts/python.exe) vs POSIX (.venv/bin/python).
+    let venv = if cfg!(windows) {
+        backend_dir.join(".venv").join("Scripts").join("python.exe")
+    } else {
+        backend_dir.join(".venv").join("bin").join("python")
+    };
     let python = configured
         .filter(|path| path.is_file())
         .or_else(|| venv.is_file().then_some(venv))?;

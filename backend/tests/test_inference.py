@@ -11,6 +11,7 @@ from sharedlocalllm_backend.inference import (
     InferenceEngine,
     build_llama_kwargs,
     layer_totals,
+    layer_totals_multi,
     sampling_kwargs,
 )
 
@@ -122,6 +123,21 @@ def test_layer_totals_ignore_unknown_nodes_and_missing_peer() -> None:
         {"nodeId": "stranger", "layers": 99},
     ]
     assert layer_totals(allocations, None, "local", True) == (0, 0, 0)
+
+
+def test_layer_totals_multi_splits_across_two_workers() -> None:
+    allocations = [
+        {"nodeId": "worker-a", "layers": 12},
+        {"nodeId": "worker-a", "layers": 4, "kind": "cpu"},
+        {"nodeId": "worker-b", "layers": 8},
+        {"nodeId": "local", "layers": 16},
+        {"nodeId": "stranger", "layers": 99},
+    ]
+    per_worker, local = layer_totals_multi(
+        allocations, ["worker-a", "worker-b"], "local", True
+    )
+    assert per_worker == {"worker-a": (12, 4), "worker-b": (8, 0)}
+    assert local == 16
 
 
 def test_sampling_kwargs_maps_settings_onto_llama_arguments() -> None:
@@ -561,7 +577,7 @@ def test_chat_stream_sets_cancel_when_the_consumer_disconnects() -> None:
 
 def test_forced_combined_gpu_launch_without_split_offloads_automatically(monkeypatch) -> None:
     class FakeForwarder:
-        def __init__(self, peer, model_id=None, include_cpu=False) -> None:
+        def __init__(self, peer, model_id=None, include_cpu=False, peer_id=None) -> None:
             return None
 
         async def start(self) -> str:
@@ -582,7 +598,7 @@ def test_forced_combined_gpu_launch_without_split_offloads_automatically(monkeyp
 
     monkeypatch.setattr("sharedlocalllm_backend.inference.RpcForwarder", FakeForwarder)
     monkeypatch.setattr(
-        "sharedlocalllm_backend.inference.prepare_rpc_load", lambda *_args: [1.0]
+        "sharedlocalllm_backend.inference.prepare_rpc_load_multi", lambda *_args: [1.0]
     )
     monkeypatch.setattr(InferenceEngine, "_load_sync", fake_load_sync)
 

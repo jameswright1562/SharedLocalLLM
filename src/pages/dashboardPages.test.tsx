@@ -86,19 +86,19 @@ describe("dashboard pages", () => {
 
   it("forgets a paired worker only after explicit confirmation", async () => {
     const user = userEvent.setup();
-    const resetPairing = vi.fn().mockResolvedValue({
+    const forgetPeer = vi.fn().mockResolvedValue({
       ...cloneSnapshot(),
       nodes: cloneSnapshot().nodes.slice(0, 1),
     });
-    const pageProps = props(cloneSnapshot(), { resetPairing });
+    const pageProps = props(cloneSnapshot(), { forgetPeer });
     render(<NodesPage {...pageProps} />);
 
     await user.click(screen.getByRole("button", { name: /forget remote node/i }));
-    expect(resetPairing).not.toHaveBeenCalled();
+    expect(forgetPeer).not.toHaveBeenCalled();
     expect(screen.getByText(/model files and folders stay untouched/i)).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: /confirm forget remote node/i }));
-    expect(resetPairing).toHaveBeenCalledTimes(1);
+    expect(forgetPeer).toHaveBeenCalledTimes(1);
     await waitFor(() => expect(pageProps.refreshSnapshot).toHaveBeenCalled());
   });
 

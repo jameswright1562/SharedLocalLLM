@@ -25,7 +25,18 @@ export function OverviewPage({ snapshot, service, refreshSnapshot, navigate }: P
   const combinedRam = online.reduce((sum, node) => sum + node.ramAvailableGb, 0);
   const clusterModel = snapshot.models.find((model) => model.id === snapshot.cluster.modelId);
   const running = snapshot.cluster.status === "running" || snapshot.cluster.status === "loading";
-  const workerName = snapshot.nodes.find((node) => node.id === snapshot.cluster.workerNodeId)?.name;
+  const workerIds = [
+    ...(snapshot.cluster.workerNodeIds ?? []),
+    ...(snapshot.cluster.workerNodeId &&
+    !snapshot.cluster.workerNodeIds?.includes(snapshot.cluster.workerNodeId)
+      ? [snapshot.cluster.workerNodeId]
+      : []),
+  ];
+  const workerName =
+    snapshot.nodes
+      .filter((node) => workerIds.includes(node.id))
+      .map((node) => node.name)
+      .join(" + ") || undefined;
 
   return (
     <Box>

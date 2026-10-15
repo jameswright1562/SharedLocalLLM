@@ -1,11 +1,12 @@
 """Staged llama-bench autotune bound to per-model load configurations.
 
-Drives the pinned ``llama-bench.exe`` (verified installer output, never a
-downloaded ad-hoc binary) through a staged sweep — batch/ubatch groups, GPU
-layer totals, CPU threads and, in the full profile, tensor split, KV cache
-types, operation offload, and RPC polling. Each stage keeps its winner as the
-baseline for the next stage, mirroring a coordinate-descent search, and a
-final prompt + generation verification measures the combined configuration.
+Drives the pinned ``llama-bench`` binary (verified installer output, never a
+downloaded ad-hoc binary; ``.exe`` on Windows, extension-less on macOS/Linux)
+through a staged sweep — batch/ubatch groups, GPU layer totals, CPU threads
+and, in the full profile, tensor split, KV cache types, operation offload, and
+RPC polling. Each stage keeps its winner as the baseline for the next stage,
+mirroring a coordinate-descent search, and a final prompt + generation
+verification measures the combined configuration.
 
 Tuning is experimental: results are measured for one hardware/link topology
 and are only re-applied while that topology fingerprint still matches.
@@ -24,7 +25,7 @@ from typing import Any, Awaitable, Callable
 from .errors import BackendError
 from .server_engine import _redact_server_output
 
-BENCH_EXECUTABLE = "llama-bench.exe"
+BENCH_EXECUTABLE = "llama-bench.exe" if os.name == "nt" else "llama-bench"
 
 BATCH_GROUPS: tuple[tuple[str, str], ...] = (
     ("512,1024,2048", "256"),

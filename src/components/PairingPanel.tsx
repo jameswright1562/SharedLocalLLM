@@ -26,11 +26,11 @@ export function PairingPanel({
           <Badge size="lg" w={34} h={34} p={0} radius="xl" variant="light" color="cyan">
             A
           </Badge>
-          <Title order={3}>Connect to the second computer</Title>
+          <Title order={3}>Connect another computer</Title>
         </Group>
         <Text c="dimmed" mb="md">
-          Both computers auto-discover each other. For a direct cable, enter the peer&apos;s IPv4
-          address.
+          All computers auto-discover each other. For a direct cable, enter the peer&apos;s IPv4
+          address. Repeat to add a third computer, for example a Mac.
         </Text>
         <TextInput
           id="manual-peer-endpoint"

@@ -21,6 +21,14 @@ function nodeName(nodes: NodeCapabilities[], id?: string, fallback = "Waiting fo
   return nodes.find((node) => node.id === id)?.name ?? fallback;
 }
 
+function workerNames(nodes: NodeCapabilities[], cluster: ClusterSession) {
+  const ids = [...(cluster.workerNodeIds ?? [])];
+  if (cluster.workerNodeId && !ids.includes(cluster.workerNodeId))
+    ids.unshift(cluster.workerNodeId);
+  if (!ids.length) return "Waiting for peer";
+  return ids.map((id) => nodeName(nodes, id)).join(" + ");
+}
+
 function PathLine({ active }: { active: boolean }) {
   return (
     <Box
@@ -40,7 +48,7 @@ function PathLine({ active }: { active: boolean }) {
 export function ComputePath({ cluster, nodes, compact = false }: ComputePathProps) {
   const active = cluster.status === "loading" || cluster.status === "running";
   const coordinator = nodeName(nodes, cluster.coordinatorNodeId, "Choose coordinator");
-  const worker = nodeName(nodes, cluster.workerNodeId);
+  const worker = workerNames(nodes, cluster);
 
   const renderNode = (index: string, label: string, value: string, empty = false) => (
     <Box maw={compact ? 150 : undefined}>

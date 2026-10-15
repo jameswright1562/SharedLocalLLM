@@ -33,6 +33,10 @@ class Store:
             "customModelDirectories": [],
             "modelLoadConfigs": {},
             "modelTunes": {},
+            # Canonical multi-peer list (up to N computers, e.g. 2 Windows + 1
+            # Mac). "peer" is a legacy compat mirror of peers[0], kept so older
+            # readers/tests keep working; new code must use "peers".
+            "peers": [],
             "peer": None,
             "benchmarks": [],
         }
@@ -44,6 +48,8 @@ class Store:
             loaded = self._legacy_settings()
         if loaded:
             defaults.update(loaded)
+        defaults["peers"] = _normalize_peers(defaults.get("peers"), defaults.get("peer"))
+        defaults["peer"] = defaults["peers"][0] if defaults["peers"] else None
         self._write(defaults)
         return defaults
 
@@ -60,7 +66,9 @@ class Store:
                 migrated[key] = legacy[key]
         peers = legacy.get("peers")
         if isinstance(peers, list) and peers:
-            migrated["peer"] = peers[0]
+            migrated["peers"] = [peer for peer in peers if isinstance(peer, dict)]
+        elif isinstance(legacy.get("peer"), dict):
+            migrated["peers"] = [legacy["peer"]]
         return migrated
 
     @staticmethod
@@ -138,3 +146,43 @@ class Store:
     def logs(self) -> list[str]:
         with self._lock:
             return list(self._logs)
+
+
+def save_peers(store: "Store", peers: list[dict[str, Any]]) -> None:
+    """Persist the multi-peer list, keeping the legacy "peer" mirror in sync.
+
+    "peers" is the source of truth (up to N trusted computers); "peer" mirrors
+    peers[0] so older readers and tests keep working.
+    """
+    cleaned = [peer for peer in peers if isinstance(peer, dict) and peer.get("id")]
+    store.update(peers=cleaned, peer=cleaned[0] if cleaned else None)
+
+
+def stored_peers(store: Any) -> list[dict[str, Any]]:
+    """Every paired computer from any store-like object (real or test fake).
+
+    Reads the canonical "peers" list with a fallback to the legacy single
+    "peer" record, so older persisted settings and test fixtures keep working.
+    """
+    try:
+        stored = store.get("peers", [])
+    except Exception:
+        stored = []
+    if isinstance(stored, list) and stored:
+        return [peer for peer in stored if isinstance(peer, dict) and peer.get("id")]
+    try:
+        legacy = store.get("peer")
+    except Exception:
+        legacy = None
+    # Legacy records (and minimal test doubles) may carry only an address.
+    if isinstance(legacy, dict) and (legacy.get("id") or legacy.get("address")):
+        return [legacy]
+    return []
+
+
+def _normalize_peers(peers: Any, legacy: Any) -> list[dict[str, Any]]:
+    if isinstance(peers, list) and peers:
+        return [peer for peer in peers if isinstance(peer, dict) and peer.get("id")]
+    if isinstance(legacy, dict) and legacy.get("id"):
+        return [legacy]
+    return []

@@ -178,6 +178,7 @@ def build_command(
     tensor_split: list[int] | None,
     reasoning_preserve: bool,
     load_config: dict[str, Any] | None = None,
+    rpc_endpoints: list[str] | None = None,
 ) -> list[str]:
     """Assemble the pinned llama-server invocation for this launch."""
     command = [
@@ -241,8 +242,9 @@ def build_command(
         command += ["--spec-type", "draft-mtp"]
     if reasoning_preserve:
         command += ["--reasoning-preserve"]
-    if rpc_endpoint:
-        command += ["--rpc", rpc_endpoint]
+    # llama-server accepts repeated --rpc flags, one per worker (3-node: 2).
+    for endpoint in rpc_endpoints or ([rpc_endpoint] if rpc_endpoint else []):
+        command += ["--rpc", endpoint]
     if api_key:
         command += ["--api-key", api_key]
     return command
@@ -259,6 +261,7 @@ class ServerEngine:
         self.model_id: str | None = None
         self.model_path: str | None = None
         self.rpc_endpoint: str | None = None
+        self.rpc_endpoints: list[str] = []
         self._writer: asyncio.StreamWriter | None = None
         self._spec_support: dict[str, bool] = {}
         self._log_thread: threading.Thread | None = None
@@ -299,6 +302,7 @@ class ServerEngine:
         api_key: str | None,
         mtp: bool,
         rpc_endpoint: str | None = None,
+        rpc_endpoints: list[str] | None = None,
         gpu_layers: int | None = None,
         tensor_split: list[int] | None = None,
         reasoning_preserve: bool = False,
@@ -316,6 +320,7 @@ class ServerEngine:
             mtp=mtp,
             speculation_supported=self.supports_speculation(exe),
             rpc_endpoint=rpc_endpoint,
+            rpc_endpoints=rpc_endpoints,
             gpu_layers=gpu_layers,
             tensor_split=tensor_split,
             reasoning_preserve=reasoning_preserve,
@@ -347,6 +352,7 @@ class ServerEngine:
         self.model_id = model_id
         self.model_path = model_path
         self.rpc_endpoint = rpc_endpoint
+        self.rpc_endpoints = list(rpc_endpoints or ([rpc_endpoint] if rpc_endpoint else []))
 
         deadline = None if timeout_seconds is None else time.monotonic() + timeout_seconds
         while deadline is None or time.monotonic() < deadline:
@@ -360,6 +366,7 @@ class ServerEngine:
                 self.model_id = None
                 self.model_path = None
                 self.rpc_endpoint = None
+                self.rpc_endpoints = []
                 raise BackendError(
                     "llama_server_failed",
                     message,
@@ -368,7 +375,7 @@ class ServerEngine:
             if probe_health(port, api_key):
                 self.store.log(
                     "INFO", "llama_server_ready",
-                    f"127.0.0.1:{port} ctx={context} mtp={mtp} rpc={rpc_endpoint} "
+                    f"127.0.0.1:{port} ctx={context} mtp={mtp} rpc={self.rpc_endpoints} "
                     f"gpu_layers={gpu_layers} split={tensor_split} "
                     f"reasoning_preserve={reasoning_preserve}",
                 )
@@ -389,6 +396,7 @@ class ServerEngine:
         self.model_id = None
         self.model_path = None
         self.rpc_endpoint = None
+        self.rpc_endpoints = []
         if process is None or process.poll() is not None:
             await self._finish_log_relay()
             return

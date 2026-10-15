@@ -22,7 +22,7 @@ import { formatGb } from "./pageFormat";
 
 export function NodesPage({ snapshot, service, refreshSnapshot }: PageProps) {
   const [refreshing, setRefreshing] = useState(false);
-  const [confirmingReset, setConfirmingReset] = useState(false);
+  const [confirmingForgetId, setConfirmingForgetId] = useState<string | null>(null);
   const [message, setMessage] = useState("");
   const [manualEndpoint, setManualEndpoint] = useState("");
   async function refresh() {
@@ -37,14 +37,14 @@ export function NodesPage({ snapshot, service, refreshSnapshot }: PageProps) {
       setRefreshing(false);
     }
   }
-  async function resetPairing() {
+  async function forgetNode(peerId: string, peerName: string) {
     setRefreshing(true);
     setMessage("");
     try {
-      await service.resetPairing();
+      await service.forgetPeer(peerId);
       await refreshSnapshot();
-      setConfirmingReset(false);
-      setMessage("Paired node forgotten. Connect again to rejoin the peer.");
+      setConfirmingForgetId(null);
+      setMessage(`${peerName} forgotten. The remaining computers stay paired.`);
     } catch (reason) {
       setMessage(describeAppError(reason, "The paired node could not be forgotten."));
     } finally {
@@ -58,7 +58,8 @@ export function NodesPage({ snapshot, service, refreshSnapshot }: PageProps) {
       const endpoint = manualEndpoint.trim();
       await (endpoint ? service.connectPeer(endpoint) : service.connectPeer());
       await refreshSnapshot();
-      setMessage("Connected to the other computer.");
+      setManualEndpoint("");
+      setMessage("Connected to another computer. Repeat to add a third.");
     } catch (reason) {
       setMessage(describeAppError(reason, "Could not connect to the other computer."));
     } finally {
@@ -120,30 +121,30 @@ export function NodesPage({ snapshot, service, refreshSnapshot }: PageProps) {
                 </DataList.ItemValue>
               </DataList.Item>
             </DataList>
-            {index > 0 && !confirmingReset && (
+            {index > 0 && confirmingForgetId !== node.id && (
               <Button
                 variant="subtle"
                 color="coral"
                 size="compact-sm"
                 disabled={refreshing}
-                onClick={() => setConfirmingReset(true)}
+                onClick={() => setConfirmingForgetId(node.id)}
               >
                 Forget {node.name}
               </Button>
             )}
-            {index > 0 && confirmingReset && (
+            {index > 0 && confirmingForgetId === node.id && (
               <Alert role="alert" variant="light" color="coral" title={`Forget ${node.name}?`}>
                 <Stack gap="sm">
                   <Text size="sm">
-                    Trust and connection settings will reset. Model files and folders stay
-                    untouched.
+                    Only this computer is forgotten. The remaining computers stay paired. Model
+                    files and folders stay untouched.
                   </Text>
                   <Group gap="sm">
                     <Button
                       variant="default"
                       size="xs"
                       disabled={refreshing}
-                      onClick={() => setConfirmingReset(false)}
+                      onClick={() => setConfirmingForgetId(null)}
                     >
                       Keep node
                     </Button>
@@ -152,7 +153,7 @@ export function NodesPage({ snapshot, service, refreshSnapshot }: PageProps) {
                       size="xs"
                       aria-label={`Confirm forget ${node.name}`}
                       disabled={refreshing}
-                      onClick={() => void resetPairing()}
+                      onClick={() => void forgetNode(node.id, node.name)}
                     >
                       {refreshing ? "Forgetting…" : `Forget ${node.name}`}
                     </Button>
@@ -172,7 +173,7 @@ export function NodesPage({ snapshot, service, refreshSnapshot }: PageProps) {
                 <Title order={3}>No worker connected</Title>
                 <Text c="dimmed">
                   The local node can still run models that fit. Enter a peer IP or let discovery
-                  find the other computer.
+                  find another computer. Repeat to add a third (for example a Mac).
                 </Text>
               </Stack>
             </Paper>
@@ -184,6 +185,15 @@ export function NodesPage({ snapshot, service, refreshSnapshot }: PageProps) {
               connect={() => void connect()}
             />
           </>
+        )}
+        {snapshot.nodes.length >= 2 && snapshot.nodes.length < 4 && (
+          <PairingPanel
+            manualEndpoint={manualEndpoint}
+            setManualEndpoint={setManualEndpoint}
+            pairedNode={null}
+            busy={refreshing}
+            connect={() => void connect()}
+          />
         )}
       </Stack>
 

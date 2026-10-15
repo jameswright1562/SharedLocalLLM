@@ -127,6 +127,7 @@ describe("app services", () => {
     await nativeService.runNetworkTest();
     await nativeService.connectPeer("192.168.50.2");
     await nativeService.resetPairing();
+    await nativeService.forgetPeer("peer-node");
     const loadConfig = {
       contextSize: 8192,
       gpuLayers: [
@@ -169,6 +170,7 @@ describe("app services", () => {
       "run_network_test",
       "connect_peer",
       "reset_pairing",
+      "forget_peer",
       "estimate_model_split",
       "start_cluster",
       "stop_cluster",

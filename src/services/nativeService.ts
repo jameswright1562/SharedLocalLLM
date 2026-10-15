@@ -93,6 +93,7 @@ export const nativeService: AppService = {
   runNetworkTest: () => backend("run_network_test"),
   connectPeer: (manualEndpoint) => backend("connect_peer", { manualEndpoint }),
   resetPairing: () => backend("reset_pairing"),
+  forgetPeer: (peerId) => backend("forget_peer", { peerId }),
   estimateModelSplit: (modelId, loadConfig) =>
     backend("estimate_model_split", { modelId, loadConfig }),
   startCluster: (modelId, loadConfig) => backend("start_cluster", { modelId, loadConfig }),

@@ -1,7 +1,7 @@
 [package]
 name = "shared-local-llm"
-version = "0.2.0"
-description = "Two-node local LLM orchestration with a Python inference backend"
+version = "0.2.1"
+description = "Multi-node local LLM orchestration with a Python inference backend (Windows + macOS)"
 authors = ["SharedLocalLLM contributors"]
 edition = "2021"
 

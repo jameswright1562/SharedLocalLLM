@@ -80,12 +80,35 @@ def _quantization(name: str) -> str:
     return match.group(1).upper() if match else "unknown"
 
 
+def _online_peer_vram_bytes(peers: list[dict[str, Any]]) -> float:
+    """Combined VRAM of every online paired computer (supports 3-node clusters)."""
+    total = 0.0
+    for peer in peers or []:
+        if isinstance(peer, dict) and peer.get("online", False):
+            total += float(peer.get("gpu", {}).get("vramAvailableGb", 0)) * 1024**3
+    return total
+
+
 def _fit(
     size: int,
     node: dict[str, Any],
     peer: dict[str, Any] | None,
     metadata: dict[str, Any],
 ) -> str:
+    """Single-peer fit (kept for backward compatibility; tests use this shape)."""
+    peers = [peer] if isinstance(peer, dict) else []
+    return _fit_multi(size, node, peers, metadata)
+
+
+def _fit_multi(
+    size: int,
+    node: dict[str, Any],
+    peers: list[dict[str, Any]] | dict[str, Any] | None,
+    metadata: dict[str, Any],
+) -> str:
+    """Fit across the local node plus every online paired computer."""
+    if isinstance(peers, dict):
+        peers = [peers]
     # Include a conservative runtime/KV reserve instead of treating model bytes
     # alone as the complete GPU requirement. The reserve is sized for the
     # default launch context, not the native maximum (see FIT_CONTEXT_TOKENS).
@@ -97,9 +120,7 @@ def _fit(
     local_ram = float(node.get("ramAvailableGb", 0)) * 1024**3
     if required <= local_vram:
         return "single-node"
-    peer_vram = 0.0
-    if peer and peer.get("online", False):
-        peer_vram = float(peer.get("gpu", {}).get("vramAvailableGb", 0)) * 1024**3
+    peer_vram = _online_peer_vram_bytes(list(peers or []))
     if peer_vram and required + 512 * 1024**2 <= local_vram + peer_vram:
         return "combined-gpu"
     if required <= local_vram + local_ram:
@@ -108,7 +129,8 @@ def _fit(
 
 
 def discover_local(
-    roots: list[Path], node_id: str, node: dict[str, Any], peer: dict[str, Any] | None = None
+    roots: list[Path], node_id: str, node: dict[str, Any],
+    peers: list[dict[str, Any]] | dict[str, Any] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, str]]:
     files: list[Path] = []
     seen: set[Path] = set()
@@ -166,7 +188,7 @@ def discover_local(
             "capability": "vision" if projector or any(x in lower for x in ("vision", "-vl", "_vl")) else "text",
             "shards": len(shards),
             "locations": [{"nodeId": node_id, "path": str(first), "source": _source(first)}],
-            "fit": _fit(total_size, node, peer, metadata),
+            "fit": _fit_multi(total_size, node, peers, metadata),
             "remoteOnly": False,
             "isLocal": True,
             "mtp": any(has_nextn_tensors(shard) for shard in shards),
@@ -188,10 +210,11 @@ def _source(path: Path) -> str:
 
 
 def refresh_fits(
-    models: list[dict[str, Any]], node: dict[str, Any], peer: dict[str, Any] | None
+    models: list[dict[str, Any]], node: dict[str, Any],
+    peers: list[dict[str, Any]] | dict[str, Any] | None,
 ) -> None:
     for model in models:
-        model["fit"] = _fit(int(model["sizeBytes"]), node, peer, model)
+        model["fit"] = _fit_multi(int(model["sizeBytes"]), node, peers, model)
 
 
 def _has_gguf_magic(path: Path) -> bool:
@@ -241,3 +264,15 @@ def merge_remote(
                 for location in model.get("locations", [])
             )
     return result
+
+
+def merge_remote_multi(
+    local: list[dict[str, Any]],
+    remote_by_peer: dict[str, list[dict[str, Any]]],
+    local_node_id: str | None = None,
+) -> list[dict[str, Any]]:
+    """Merge catalogues from every paired computer (3-node clusters)."""
+    combined: list[dict[str, Any]] = []
+    for models in remote_by_peer.values():
+        combined.extend(models)
+    return merge_remote(local, combined, local_node_id)

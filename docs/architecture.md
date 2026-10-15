@@ -1,6 +1,10 @@
 # Architecture
 
-SharedLocalLLM runs the same application on both Windows computers. Roles are selected at runtime.
+SharedLocalLLM runs the same application on every computer (Windows and macOS). Roles are
+selected at runtime. The cluster supports up to three trusted computers on a private LAN: one
+coordinator plus up to two workers (for example two Windows NVIDIA computers plus one Mac with
+Apple Silicon, which contributes unified-memory VRAM through the Metal backend). Layer splits,
+capacity checks, and benchmarks already operate over N nodes.
 The desktop process is deliberately split into a small native shell and a Python control/inference
 backend.
 

@@ -17,7 +17,7 @@ from .load_progress import LoadStage
 from .openai_compat import reasoning_stream_chunks, sampling_kwargs
 from .peer import RpcForwarder
 from .reasoning import ReasoningStreamSplitter, is_reasoning_model, split_reasoning
-from .rpc_native import NativeRpcServer, prepare_rpc_load
+from .rpc_native import NativeRpcServer, prepare_rpc_load_multi
 from .tool_calls import normalize_tool_message, normalize_tool_stream, template_tool_inputs
 
 LLAMA_SPLIT_MODE_LAYER = 1
@@ -118,6 +118,31 @@ def build_llama_kwargs(
     return kwargs
 
 
+def layer_totals_multi(
+    allocations: list[dict[str, Any]], worker_ids: list[str], local_id: str,
+    include_remote_cpu: bool = False,
+) -> tuple[dict[str, tuple[int, int]], int]:
+    """Per-worker (gpu, cpu) layer totals plus the local total.
+
+    Supports 3-node clusters (coordinator + up to 2 workers). Unknown node ids
+    are ignored so a stale allocation never breaks a launch.
+    """
+    workers = set(worker_ids)
+    per_worker: dict[str, list[int]] = {worker_id: [0, 0] for worker_id in worker_ids}
+    local = 0
+    for allocation in allocations:
+        node_id = allocation.get("nodeId")
+        layers = int(allocation.get("layers", 0))
+        if node_id in workers:
+            if include_remote_cpu and allocation.get("kind") == "cpu":
+                per_worker[str(node_id)][1] += layers
+            else:
+                per_worker[str(node_id)][0] += layers
+        elif node_id == local_id:
+            local += layers
+    return ({key: (value[0], value[1]) for key, value in per_worker.items()}, local)
+
+
 def layer_totals(
     allocations: list[dict[str, Any]], peer_id: str | None, local_id: str,
     include_remote_cpu: bool = False,
@@ -129,17 +154,9 @@ def layer_totals(
     counts as GPU layers. Local CPU offload stays implicit in llama.cpp (layers
     not assigned to any device).
     """
-    remote_gpu = remote_cpu = local = 0
-    for allocation in allocations:
-        node_id = allocation.get("nodeId")
-        layers = int(allocation.get("layers", 0))
-        if peer_id and node_id == peer_id:
-            if include_remote_cpu and allocation.get("kind") == "cpu":
-                remote_cpu += layers
-            else:
-                remote_gpu += layers
-        elif node_id == local_id:
-            local += layers
+    workers = [peer_id] if peer_id else []
+    per_worker, local = layer_totals_multi(allocations, workers, local_id, include_remote_cpu)
+    remote_gpu, remote_cpu = per_worker.get(peer_id, (0, 0)) if peer_id else (0, 0)
     return remote_gpu, remote_cpu, local
 
 
@@ -151,14 +168,24 @@ class InferenceEngine:
         self._async_lock = asyncio.Lock()
         self._sync_lock = threading.RLock()
         self._cancel = threading.Event()
-        self._forwarder: RpcForwarder | None = None
+        self._forwarders: list[RpcForwarder] = []
         self._rpc_worker = NativeRpcServer()
         self.reasoning = False
+
+    @property
+    def _forwarder(self) -> RpcForwarder | None:
+        """First RPC forwarder (legacy single-worker readers)."""
+        return self._forwarders[0] if self._forwarders else None
+
+    @_forwarder.setter
+    def _forwarder(self, value: RpcForwarder | None) -> None:
+        self._forwarders = [value] if value is not None else []
 
     async def load(
         self, model: dict[str, Any], path: str, load_config: dict[str, Any],
         peer: Any, local_id: str, peer_id: str | None,
         on_stage: Callable[[LoadStage], None] | None = None,
+        worker_ids: list[str] | None = None,
     ) -> None:
         def report(stage: LoadStage) -> None:
             if on_stage is not None:
@@ -167,32 +194,60 @@ class InferenceEngine:
         async with self._async_lock:
             await self._unload_locked()
             allocations = load_config.get("gpuLayers") or []
-            rpc_endpoint = None
+            workers = list(worker_ids) if worker_ids else ([peer_id] if peer_id else [])
+            rpc_endpoints: list[str] = []
             include_remote_cpu = bool(load_config.get("includeRemoteCpu"))
-            remote_gpu_layers, remote_cpu_layers, local_layers = layer_totals(
-                allocations, peer_id, local_id, include_remote_cpu
+            per_worker, local_layers = layer_totals_multi(
+                allocations, workers, local_id, include_remote_cpu
             )
+            active_workers = [
+                worker_id for worker_id in workers
+                if sum(per_worker.get(worker_id, (0, 0))) > 0
+            ]
+            if not active_workers and model.get("fit") == "combined-gpu":
+                active_workers = list(workers)
+            remote_gpu_layers = sum(per_worker.get(worker_id, (0, 0))[0] for worker_id in active_workers)
+            remote_cpu_layers = sum(per_worker.get(worker_id, (0, 0))[1] for worker_id in active_workers)
             remote_total = remote_gpu_layers + remote_cpu_layers
-            if peer_id and (remote_total > 0 or model.get("fit") == "combined-gpu"):
+            rpc_endpoint = None
+            if active_workers and (remote_total > 0 or model.get("fit") == "combined-gpu"):
                 report("tunnel")
-                self._forwarder = RpcForwarder(
-                    peer, model_id=model["id"], include_cpu=remote_cpu_layers > 0
-                )
-                rpc_endpoint = await self._forwarder.start()
+                self._forwarders = []
+                for worker_id in active_workers:
+                    gpu_layers, cpu_layers = per_worker.get(worker_id, (0, 0))
+                    forwarder = RpcForwarder(
+                        peer, model_id=model["id"], include_cpu=cpu_layers > 0,
+                        peer_id=worker_id,
+                    )
+                    rpc_endpoints.append(await forwarder.start())
+                    self._forwarders.append(forwarder)
+                rpc_endpoint = rpc_endpoints[0]
             total_layers = remote_gpu_layers + remote_cpu_layers + local_layers
-            if rpc_endpoint and total_layers <= 0:
+            if rpc_endpoints and total_layers <= 0:
                 # Forced launch of a combined-GPU model without any usable
                 # split: stage the worker devices, then let llama.cpp spread
                 # layers evenly across them instead of pretending two layers
                 # exist (which silently degraded the model to near-pure CPU).
                 load_config = {**load_config, "automaticGpuOffload": True}
                 report("staging")
-                await asyncio.to_thread(prepare_rpc_load, rpc_endpoint, 0, 0, 0)
+                await asyncio.to_thread(
+                    prepare_rpc_load_multi,
+                    rpc_endpoints, [(0, 0, False)] * len(rpc_endpoints), 0,
+                )
                 tensor_split = None
             else:
                 report("staging")
                 tensor_split = await asyncio.to_thread(
-                    prepare_rpc_load, rpc_endpoint, remote_gpu_layers, remote_cpu_layers,
+                    prepare_rpc_load_multi,
+                    rpc_endpoints,
+                    [
+                        (
+                            per_worker.get(worker_id, (0, 0))[0],
+                            per_worker.get(worker_id, (0, 0))[1],
+                            per_worker.get(worker_id, (0, 0))[1] > 0,
+                        )
+                        for worker_id in active_workers
+                    ],
                     local_layers,
                 )
             context = max(512, int(load_config.get("contextSize", 4096)))
@@ -252,9 +307,9 @@ class InferenceEngine:
             gc.collect()
 
     async def _stop_forwarder(self) -> None:
-        if self._forwarder:
-            await self._forwarder.stop()
-            self._forwarder = None
+        forwarders, self._forwarders = self._forwarders, []
+        for forwarder in forwarders:
+            await forwarder.stop()
 
     async def open_rpc_worker_connection(
         self, include_cpu: bool = False
