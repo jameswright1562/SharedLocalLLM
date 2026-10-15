@@ -18,9 +18,10 @@ export default defineConfig({
         }
       : undefined,
     watch: {
-      // IDE and tooling dirs (Cursor skills use junctions that can dangle and
-      // crash the watcher with UNKNOWN stat errors); never source files.
-      ignored: ["**/src-tauri/**", "**/.cursor/**", "**/.idea/**", "**/node_modules/**"],
+      // IDE and tooling dirs (Cursor/AionUi skills use junctions that can dangle
+      // and crash the watcher with UNKNOWN stat errors); never source files.
+      // The dot-dir pattern covers .cursor, .aionrs, .idea, .vscode and similar.
+      ignored: ["**/src-tauri/**", "**/node_modules/**", "**/.git/**", "**/.*/**"],
     },
   },
   preview: {
