@@ -18,7 +18,9 @@ export default defineConfig({
         }
       : undefined,
     watch: {
-      ignored: ["**/src-tauri/**"],
+      // IDE and tooling dirs (Cursor skills use junctions that can dangle and
+      // crash the watcher with UNKNOWN stat errors); never source files.
+      ignored: ["**/src-tauri/**", "**/.cursor/**", "**/.idea/**", "**/node_modules/**"],
     },
   },
   preview: {
