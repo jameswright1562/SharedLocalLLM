@@ -1,7 +1,7 @@
 pub(crate) mod lifecycle;
 pub(crate) mod reset;
 
-pub use reset::reset_pairing;
+pub use reset::{forget_peer, reset_pairing};
 
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 
@@ -54,6 +54,24 @@ async fn connect_peer_inner(
     }
     endpoints.sort_unstable();
     endpoints.dedup();
+    // Skip computers we already trust so re-running discovery adds the
+    // third computer instead of failing or duplicating the second.
+    {
+        let known: std::collections::HashSet<String> = state
+            .lock()?
+            .peers
+            .iter()
+            .filter_map(|peer| peer.address.clone())
+            .collect();
+        endpoints.retain(|endpoint| !known.contains(&endpoint.to_string()));
+        if endpoints.is_empty() && !state.lock()?.peers.is_empty() {
+            return Err(ErrorPayload::new(
+                "peer_already_connected",
+                "No new SharedLocalLLM computer was discovered.",
+                Some("Enter the third computer's Ethernet IPv4 address to add it.".into()),
+            ));
+        }
+    }
     if endpoints.is_empty() {
         return Err(ErrorPayload::new(
             "peer_not_discovered",
@@ -62,6 +80,7 @@ async fn connect_peer_inner(
         ));
     }
     let mut last_error = None;
+    let mut last_node: Option<NodeCapabilities> = None;
     for endpoint in endpoints {
         let client = PeerClient::new(endpoint, local.id.clone());
         let capabilities = serde_json::to_value(&local)
@@ -74,7 +93,7 @@ async fn connect_peer_inner(
                         ErrorPayload::new(
                             "peer_capabilities_invalid",
                             error.to_string(),
-                            Some("Ensure both computers run the same app version.".into()),
+                            Some("Ensure all computers run the same app version.".into()),
                         )
                     })?;
                 if !connected.remote_device_id().is_empty() {
@@ -91,21 +110,25 @@ async fn connect_peer_inner(
                     trusted_at: now(),
                     capabilities: Some(node.clone()),
                 };
-                {
-                    let mut inner = state.lock()?;
-                    inner.peers.clear();
-                    inner.peers.push(record);
-                }
+                state.upsert_peer(record)?;
                 state.persist()?;
                 if let Err(error) = state.refresh_models_shared() {
                     state.log("WARN", "model_fit_refresh_failed", &error.to_string());
                 }
-                state.peer.lock().await.client = Some(Arc::new(connected));
-                state.log("INFO", "peer_connected", "Connected to the other computer");
-                return Ok(node);
+                {
+                    let connected = Arc::new(connected);
+                    let mut peer = state.peer.lock().await;
+                    peer.clients.insert(node.id.clone(), Arc::clone(&connected));
+                    peer.client = Some(connected);
+                }
+                state.log("INFO", "peer_connected", "Connected to another computer");
+                last_node = Some(node);
             }
             Err(error) => last_error = Some(error),
         }
+    }
+    if let Some(node) = last_node {
+        return Ok(node);
     }
     let error = last_error.unwrap_or_else(|| {
         ErrorPayload::new(

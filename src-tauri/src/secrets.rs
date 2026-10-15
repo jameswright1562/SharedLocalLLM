@@ -101,7 +101,8 @@ fn unprotect(data: &[u8]) -> Result<Vec<u8>, ErrorPayload> {
 
 #[cfg(not(windows))]
 fn protect(data: &[u8]) -> Result<Vec<u8>, ErrorPayload> {
-    // Development-only fallback: never claimed as secure and not used in supported Windows builds.
+    // Trusted-LAN preview fallback (macOS/Linux): file permissions only, NOT
+    // DPAPI/Keychain. Do not treat this as secure storage for untrusted machines.
     Ok(data.iter().map(|byte| byte ^ 0xa7).collect())
 }
 

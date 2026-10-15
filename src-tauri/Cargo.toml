@@ -1,7 +1,7 @@
 [package]
 name = "shared-local-llm"
-version = "0.1.2"
-description = "Secure two-node local LLM orchestration"
+version = "0.1.3"
+description = "Secure three-node local LLM orchestration (Windows + macOS)"
 authors = ["SharedLocalLLM contributors"]
 edition = "2021"
 
@@ -37,6 +37,17 @@ tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "process"
 uuid = { version = "1", features = ["v4", "serde"] }
 walkdir = "2"
 zip = { version = "8", default-features = false, features = ["deflate"] }
+
+# llama.cpp backends are OS-specific:
+# - Windows/x86_64 (and Linux): CUDA for NVIDIA + RPC for distribution
+# - macOS (including M5 Apple Silicon): Metal for unified memory + RPC
+# Keeping `cuda` enabled on macOS would fail to build (no CUDA toolkit) and
+# would hide the Metal path, so features are split by target.
+[target.'cfg(target_os = "macos")'.dependencies]
+llama-cpp-4 = { version = "0.5.1", features = ["metal", "openmp", "mtmd"] }
+llama-cpp-sys-4 = { version = "0.5.1", features = ["rpc", "metal"] }
+
+[target.'cfg(not(target_os = "macos"))'.dependencies]
 llama-cpp-4 = { version = "0.5.1", features = ["cuda", "openmp", "mtmd"] }
 llama-cpp-sys-4 = { version = "0.5.1", features = ["rpc"] }
 

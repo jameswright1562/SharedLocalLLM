@@ -123,6 +123,7 @@ export interface ClusterSession {
   status: ClusterStatus;
   coordinatorNodeId?: string;
   workerNodeId?: string;
+  workerNodeIds?: string[];
   modelId?: string;
   error?: string;
 }
@@ -188,6 +189,7 @@ export interface AppService {
   runNetworkTest(): Promise<NetworkBenchmark>;
   connectPeer(manualEndpoint?: string): Promise<NodeCapabilities>;
   resetPairing(): Promise<AppSnapshot>;
+  forgetPeer(peerId: string): Promise<AppSnapshot>;
   estimateModelSplit(modelId: string, loadConfig: ModelLoadConfig): Promise<SplitEstimate>;
   startCluster(modelId: string, loadConfig: ModelLoadConfig): Promise<ClusterSession>;
   stopCluster(): Promise<ClusterSession>;

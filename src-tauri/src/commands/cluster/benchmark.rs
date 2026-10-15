@@ -29,32 +29,29 @@ pub async fn run_inference_benchmark(
                     None,
                 )
             })?;
-        (
-            model,
-            split::cluster_nodes(&inner.local, inner.peers.first()),
-        )
+        (model, split::cluster_nodes(&inner.local, &inner.peers))
     };
     let executable = runtime::runtime_root()
         .join("current")
-        .join("llama-bench.exe");
+        .join(benchmark_executable_name());
     if !executable.is_file() {
         return Err(ErrorPayload::new(
             "benchmark_runtime_missing",
-            "llama-bench.exe is not installed.",
+            "The llama-bench runtime is not installed.",
             Some("Install or repair the pinned runtime.".into()),
         ));
     }
-    let paired = nodes.len() == 2;
+    let paired = nodes.len() > 1;
     let online_gpu_nodes = nodes
         .into_iter()
         .filter(|node| node.online && node.gpu.vram_available_gb > 0.0)
         .collect::<Vec<_>>();
-    if paired && online_gpu_nodes.len() != 2 {
+    if paired && online_gpu_nodes.len() < 2 {
         return Err(ErrorPayload::new(
             "benchmark_peer_offline",
-            "The paired computer must be online for a two-computer GPU benchmark.",
+            "Every paired computer must be online for a multi-computer GPU benchmark.",
             Some(
-                "Open SharedLocalLLM on both computers and wait for both nodes to show reachable."
+                "Open SharedLocalLLM on all computers and wait for every node to show reachable."
                     .into(),
             ),
         ));
@@ -67,9 +64,20 @@ pub async fn run_inference_benchmark(
         )
     })?;
     let allocations = fit_gpu_layers(&model, total_layers, &online_gpu_nodes)?;
-    let distributed = allocations.len() == 2;
-    let forwarder = if distributed {
-        let client = state.peer_client().await?;
+    let distributed = allocations.len() >= 2;
+    // For benchmarks, use the first remote worker only (llama-bench takes a
+    // single --rpc endpoint); full 3-node measurement is covered by split estimates.
+    let remote_allocation = allocations.iter().find(|allocation| {
+        online_gpu_nodes
+            .first()
+            .is_none_or(|local| allocation.node_id != local.id)
+    });
+    let forwarder = if distributed && remote_allocation.is_some() {
+        let worker_id = remote_allocation.map(|allocation| allocation.node_id.clone());
+        let client = match worker_id {
+            Some(id) => state.peer_client_for(&id).await?,
+            None => state.peer_client().await?,
+        };
         client.heartbeat().await?;
         Some(client.start_rpc_forwarder().await?)
     } else {
@@ -178,6 +186,16 @@ fn fit_gpu_layers(
         "The available GPUs cannot each hold even one model layer for this benchmark.",
         Some("Close GPU-heavy applications or choose a smaller quantization.".into()),
     ))
+}
+
+#[cfg(windows)]
+fn benchmark_executable_name() -> &'static str {
+    "llama-bench.exe"
+}
+
+#[cfg(not(windows))]
+fn benchmark_executable_name() -> &'static str {
+    "llama-bench"
 }
 
 fn benchmark_arguments(model_path: &str, layer_counts: &[u32], rpc: Option<&str>) -> Vec<String> {

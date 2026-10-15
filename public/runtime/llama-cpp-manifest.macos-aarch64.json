@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "enabled": true,
+  "channel": "pinned",
+  "project": "ggml-org/llama.cpp",
+  "releasePage": "https://github.com/ggml-org/llama.cpp/releases",
+  "platform": "macos-aarch64",
+  "backend": "metal",
+  "assetPatterns": {
+    "llamaCpp": "llama-{tag}-bin-macos-arm64.zip"
+  },
+  "release": {
+    "tag": "b10405",
+    "llamaCpp": {
+      "url": "https://github.com/ggml-org/llama.cpp/releases/download/b10405/llama-b10405-bin-macos-arm64.zip",
+      "size": 0,
+      "sha256": "pending-macos-arm64-pin"
+    }
+  },
+  "requiredExecutables": [],
+  "notes": [
+    "macOS Apple Silicon (including M5) uses the embedded Metal backend compiled into the app via llama-cpp-4 with the metal feature.",
+    "No external runtime download is required on macOS; this manifest only records the upstream release tag for parity.",
+    "External llama-bench/rpc binaries are not used on macOS in v0.1.3. Benchmarks run through the embedded engine.",
+    "Before enabling an external macOS runtime download, pin the real size and SHA-256 from official GitHub release metadata."
+  ]
+}

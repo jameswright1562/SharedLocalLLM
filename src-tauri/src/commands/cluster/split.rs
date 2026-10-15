@@ -18,16 +18,16 @@ pub fn estimate_model_split(
         .iter()
         .find(|model| model.id == model_id)
         .ok_or_else(model_not_found)?;
-    let nodes = cluster_nodes(&inner.local, inner.peers.first());
+    let nodes = cluster_nodes(&inner.local, &inner.peers);
     build_split_estimate(model, &load_config, &nodes).map(|(estimate, _)| estimate)
 }
 
 pub(super) fn cluster_nodes(
     local: &NodeCapabilities,
-    peer: Option<&crate::pairing::PeerRecord>,
+    peers: &[crate::pairing::PeerRecord],
 ) -> Vec<NodeCapabilities> {
     let mut nodes = vec![local.clone()];
-    if let Some(peer) = peer.filter(|peer| {
+    for peer in peers.iter().filter(|peer| {
         peer.capabilities
             .as_ref()
             .is_some_and(|capabilities| capabilities.online)

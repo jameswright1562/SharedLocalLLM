@@ -27,12 +27,16 @@ pub fn probe_local() -> NodeCapabilities {
         .first()
         .map(|cpu| cpu.brand().trim().to_owned())
         .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "Unknown processor".into());
+        .unwrap_or_else(macos_cpu_fallback);
     let total = system.total_memory() as f64 / 1024_f64.powi(3);
     let available = system.available_memory() as f64 / 1024_f64.powi(3);
-    let name = std::env::var("COMPUTERNAME")
-        .or_else(|_| std::env::var("HOSTNAME"))
-        .unwrap_or_else(|_| "This computer".into());
+    let name = device_name();
+    let gpu = probe_nvidia()
+        .or_else(|| probe_apple_silicon(total, available))
+        .unwrap_or_else(|| GpuInfo {
+            name: "No GPU detected".into(),
+            ..GpuInfo::default()
+        });
     NodeCapabilities {
         id: "local-node".into(),
         name,
@@ -41,18 +45,151 @@ pub fn probe_local() -> NodeCapabilities {
         cpu,
         ram_total_gb: total,
         ram_available_gb: available,
-        gpu: probe_nvidia().unwrap_or_else(|| GpuInfo {
-            name: "No NVIDIA CUDA GPU detected".into(),
-            ..GpuInfo::default()
-        }),
-        adapter: probe_adapter().unwrap_or_else(|| NetworkAdapterInfo {
-            name: "Unknown network adapter".into(),
-            kind: "other".into(),
-            link_speed_mbps: None,
+        gpu,
+        adapter: probe_adapter().unwrap_or_else(|| {
+            probe_macos_adapter().unwrap_or_else(|| NetworkAdapterInfo {
+                name: "Unknown network adapter".into(),
+                kind: "other".into(),
+                link_speed_mbps: None,
+            })
         }),
         cluster_status: None,
         cluster_model_id: None,
     }
+}
+
+fn device_name() -> String {
+    if let Ok(name) = std::env::var("COMPUTERNAME") {
+        if !name.trim().is_empty() {
+            return name;
+        }
+    }
+    if let Ok(name) = std::env::var("HOSTNAME") {
+        if !name.trim().is_empty() {
+            return name;
+        }
+    }
+    // macOS: scutil ComputerName, then hostname.
+    if let Some(name) =
+        output_with_timeout("scutil", &["--get", "ComputerName"], Duration::from_secs(3))
+            .map(|value| value.trim().to_owned())
+            .filter(|value| !value.is_empty())
+    {
+        return name;
+    }
+    if let Some(name) = output_with_timeout("hostname", &[], Duration::from_secs(3))
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+    {
+        return name;
+    }
+    "This computer".into()
+}
+
+fn macos_cpu_fallback() -> String {
+    output_with_timeout(
+        "sysctl",
+        &["-n", "machdep.cpu.brand_string"],
+        Duration::from_secs(3),
+    )
+    .map(|value| value.trim().to_owned())
+    .filter(|value| !value.is_empty())
+    .or_else(|| {
+        output_with_timeout("sysctl", &["-n", "hw.model"], Duration::from_secs(3))
+            .map(|value| value.trim().to_owned())
+            .filter(|value| !value.is_empty())
+    })
+    .unwrap_or_else(|| "Unknown processor".into())
+}
+
+/// Apple Silicon (including M5) uses unified memory shared between CPU and GPU.
+/// llama.cpp Metal backend can address that pool, so report it as GPU memory
+/// instead of "No GPU detected". Conservative: 75% of currently available RAM.
+fn probe_apple_silicon(ram_total_gb: f64, ram_available_gb: f64) -> Option<GpuInfo> {
+    if std::env::consts::OS != "macos" {
+        return None;
+    }
+    let arch = output_with_timeout("uname", &["-m"], Duration::from_secs(3))
+        .map(|value| value.trim().to_owned())
+        .unwrap_or_default();
+    // Only claim unified GPU memory on Apple Silicon (arm64). Intel Macs without
+    // NVIDIA keep the generic fallback so we never overstate VRAM.
+    if arch != "arm64" {
+        return None;
+    }
+    let chip = output_with_timeout("sysctl", &["-n", "hw.model"], Duration::from_secs(3))
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "Apple Silicon".into());
+    let os_version = output_with_timeout("sw_vers", &["-productVersion"], Duration::from_secs(3))
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty());
+    // Sanity: unified pool cannot exceed physical RAM; clamp to measured values.
+    let total = ram_total_gb.max(0.0);
+    let available = (ram_available_gb.max(0.0) * 0.75).min(total);
+    if total <= 0.0 {
+        return None;
+    }
+    Some(GpuInfo {
+        name: format!("{chip} GPU (unified memory, Metal)"),
+        vram_total_gb: total,
+        vram_available_gb: available,
+        driver_version: os_version.map(|version| format!("macOS {version}")),
+    })
+}
+
+fn probe_macos_adapter() -> Option<NetworkAdapterInfo> {
+    if std::env::consts::OS != "macos" {
+        return None;
+    }
+    // Default route interface, e.g. "en0".
+    let interface = output_with_timeout("route", &["-n", "get", "default"], Duration::from_secs(3))
+        .and_then(|output| {
+            output.lines().find_map(|line| {
+                let trimmed = line.trim();
+                trimmed
+                    .strip_prefix("interface:")
+                    .map(|value| value.trim().to_owned())
+                    .filter(|value| !value.is_empty())
+            })
+        });
+    let hardware_ports = output_with_timeout(
+        "networksetup",
+        &["-listallhardwareports"],
+        Duration::from_secs(4),
+    );
+    if let (Some(interface), Some(ports)) = (interface, hardware_ports) {
+        let mut current_port = String::new();
+        for line in ports.lines() {
+            let trimmed = line.trim();
+            if let Some(port) = trimmed.strip_prefix("Hardware Port:") {
+                current_port = port.trim().to_owned();
+            } else if let Some(device) = trimmed.strip_prefix("Device:") {
+                let device = device.trim();
+                if device == interface {
+                    let lowered = current_port.to_ascii_lowercase();
+                    let kind = if lowered.contains("wi-fi") || lowered.contains("airport") {
+                        "wifi"
+                    } else if lowered.contains("ethernet") || lowered.contains("thunderbolt") {
+                        "ethernet"
+                    } else {
+                        "other"
+                    };
+                    return Some(NetworkAdapterInfo {
+                        name: format!("{current_port} ({device})"),
+                        kind: kind.into(),
+                        link_speed_mbps: None,
+                    });
+                }
+            }
+        }
+        return Some(NetworkAdapterInfo {
+            name: interface,
+            kind: "other".into(),
+            link_speed_mbps: None,
+        });
+    }
+    None
 }
 
 fn probe_nvidia() -> Option<GpuInfo> {

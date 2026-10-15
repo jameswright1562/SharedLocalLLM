@@ -295,7 +295,11 @@ mod tests {
     #[tokio::test]
     async fn bridge_survives_random_small_frame_stress() {
         for iteration in 0..25_u64 {
-            run_roundtrip(64, 0xdead_beef_0000_0001 ^ (iteration.wrapping_mul(0x9e37_79b9))).await;
+            run_roundtrip(
+                64,
+                0xdead_beef_0000_0001 ^ (iteration.wrapping_mul(0x9e37_79b9)),
+            )
+            .await;
         }
     }
 }

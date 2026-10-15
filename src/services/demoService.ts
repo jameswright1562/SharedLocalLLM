@@ -69,8 +69,12 @@ export const demoService: AppService = {
   },
   async connectPeer() {
     await delay(620);
-    const peerNode = demoNodes[1]!;
-    if (!demoSnapshot.nodes.some((node) => node.id === "peer-node"))
+    // Cycle through demo peers so the browser preview can show the 3-node case.
+    const next = demoNodes.find(
+      (node) => !demoSnapshot.nodes.some((existing) => existing.id === node.id),
+    );
+    const peerNode = next ?? demoNodes[1]!;
+    if (!demoSnapshot.nodes.some((node) => node.id === peerNode.id))
       demoSnapshot.nodes.push(peerNode);
     return structuredClone(peerNode);
   },
@@ -79,6 +83,17 @@ export const demoService: AppService = {
     demoSnapshot.nodes = demoSnapshot.nodes.slice(0, 1);
     demoSnapshot.network = undefined;
     demoSnapshot.cluster = { status: "idle" };
+    return structuredClone(demoSnapshot);
+  },
+  async forgetPeer(peerId) {
+    await delay();
+    demoSnapshot.nodes = demoSnapshot.nodes.filter((node) => node.id !== peerId);
+    if (
+      demoSnapshot.cluster.workerNodeId === peerId ||
+      demoSnapshot.cluster.workerNodeIds?.includes(peerId)
+    ) {
+      demoSnapshot.cluster = { status: "idle" };
+    }
     return structuredClone(demoSnapshot);
   },
   async estimateModelSplit(modelId, loadConfig) {

@@ -22,10 +22,10 @@ export function PairingPanel({
       <div className="pair-grid">
         <div className="pair-option">
           <span className="option-number">A</span>
-          <h3>Connect to the second computer</h3>
+          <h3>Connect another computer</h3>
           <p>
-            Both computers auto-discover each other. For a direct cable, enter the peer's IPv4
-            address.
+            All computers auto-discover each other. For a direct cable, enter the peer's IPv4
+            address. Repeat to add a third computer, for example a Mac.
           </p>
           <label className="field-label" htmlFor="manual-peer-endpoint">
             Ethernet IPv4 address (optional)

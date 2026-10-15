@@ -146,8 +146,23 @@ pub struct ClusterSession {
     pub status: String,
     pub coordinator_node_id: Option<String>,
     pub worker_node_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub worker_node_ids: Option<Vec<String>>,
     pub model_id: Option<String>,
     pub error: Option<String>,
+}
+
+impl ClusterSession {
+    /// All worker ids, combining the legacy single field with the multi-node list.
+    pub fn workers(&self) -> Vec<String> {
+        let mut ids = self.worker_node_ids.clone().unwrap_or_default();
+        if let Some(single) = self.worker_node_id.as_ref() {
+            if !ids.contains(single) {
+                ids.insert(0, single.clone());
+            }
+        }
+        ids
+    }
 }
 
 impl Default for ClusterSession {
@@ -156,6 +171,7 @@ impl Default for ClusterSession {
             status: "idle".into(),
             coordinator_node_id: None,
             worker_node_id: None,
+            worker_node_ids: None,
             model_id: None,
             error: None,
         }

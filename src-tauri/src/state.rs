@@ -42,7 +42,9 @@ pub struct PeerRuntime {
     pub server: Option<PeerServer>,
     pub discovery: Option<DiscoveryBroadcaster>,
     pub client: Option<std::sync::Arc<PeerClient>>,
+    pub clients: std::collections::HashMap<String, std::sync::Arc<PeerClient>>,
     pub forwarder: Option<RpcForwarder>,
+    pub forwarders: Vec<RpcForwarder>,
 }
 
 pub struct InnerState {
@@ -243,12 +245,36 @@ impl AppState {
     }
 
     pub async fn peer_client(&self) -> Result<std::sync::Arc<PeerClient>, ErrorPayload> {
-        if let Some(client) = self.peer.lock().await.client.clone() {
+        let peers = {
+            let inner = self.lock()?;
+            inner.peers.clone()
+        };
+        let peer = peers.iter().find(|peer| {
+            peer.capabilities
+                .as_ref()
+                .is_none_or(|capabilities| capabilities.online)
+        });
+        let peer = peer.or(peers.first()).cloned().ok_or_else(|| {
+            ErrorPayload::new("peer_unavailable", "Connect another computer first.", None)
+        })?;
+        self.peer_client_for(&peer.id).await
+    }
+
+    /// Client for a specific peer id, creating and caching it on demand.
+    /// Supports up to N peers (2 Windows + 1 Mac, or any 3-node mix).
+    pub async fn peer_client_for(
+        &self,
+        peer_id: &str,
+    ) -> Result<std::sync::Arc<PeerClient>, ErrorPayload> {
+        if let Some(client) = self.peer.lock().await.clients.get(peer_id).cloned() {
             return Ok(client);
         }
         let (local_id, peer) = {
             let inner = self.lock()?;
-            (inner.local.id.clone(), inner.peers.first().cloned())
+            (
+                inner.local.id.clone(),
+                inner.peers.iter().find(|p| p.id == peer_id).cloned(),
+            )
         };
         let peer = peer.ok_or_else(|| {
             ErrorPayload::new("peer_unavailable", "Connect another computer first.", None)
@@ -272,8 +298,58 @@ impl AppState {
                 )
             })?;
         let client = std::sync::Arc::new(PeerClient::new(endpoint, local_id));
-        self.peer.lock().await.client = Some(client.clone());
+        {
+            let mut peer_state = self.peer.lock().await;
+            peer_state
+                .clients
+                .insert(peer_id.to_owned(), client.clone());
+            // Keep the legacy slot pointing at the most recently used peer
+            // so older single-peer call sites keep working.
+            peer_state.client = Some(client.clone());
+        }
         Ok(client)
+    }
+
+    /// One cached client per known peer (best effort; skips peers without endpoints).
+    pub async fn peer_clients(&self) -> Vec<(String, std::sync::Arc<PeerClient>)> {
+        let (local_id, peers) = match self.lock() {
+            Ok(inner) => (inner.local.id.clone(), inner.peers.clone()),
+            Err(_) => return Vec::new(),
+        };
+        let mut out = Vec::new();
+        for peer in &peers {
+            if let Some(cached) = self.peer.lock().await.clients.get(&peer.id).cloned() {
+                out.push((peer.id.clone(), cached));
+                continue;
+            }
+            let Ok(endpoint) = peer.address.as_deref().unwrap_or("").parse() else {
+                continue;
+            };
+            let client = std::sync::Arc::new(PeerClient::new(endpoint, local_id.clone()));
+            self.peer
+                .lock()
+                .await
+                .clients
+                .insert(peer.id.clone(), client.clone());
+            out.push((peer.id.clone(), client));
+        }
+        out
+    }
+
+    /// Insert or replace a peer record by id instead of clearing the list,
+    /// so a third computer (for example a Mac) joins without forgetting the second.
+    pub fn upsert_peer(&self, record: crate::pairing::PeerRecord) -> Result<(), ErrorPayload> {
+        let mut inner = self.lock()?;
+        if let Some(existing) = inner.peers.iter_mut().find(|p| p.id == record.id) {
+            *existing = record;
+        } else {
+            // Cap at 8 peers to bound memory; the product target is 3 nodes.
+            if inner.peers.len() >= 8 {
+                inner.peers.remove(0);
+            }
+            inner.peers.push(record);
+        }
+        Ok(())
     }
 
     pub fn log(&self, level: &str, event: &str, detail: &str) {

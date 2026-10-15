@@ -11,15 +11,28 @@ pub(crate) async fn halt(state: &AppState) {
         processes.stop();
     }
 
-    let mut peer = state.peer.lock().await;
-    if let Some(forwarder) = peer.forwarder.take() {
-        drop(peer);
+    let (forwarders, clients) = {
+        let mut peer = state.peer.lock().await;
+        let legacy = peer.forwarder.take();
+        let mut forwarders = std::mem::take(&mut peer.forwarders);
+        if let Some(legacy) = legacy {
+            forwarders.push(legacy);
+        }
+        let clients: Vec<_> = peer.clients.values().cloned().collect();
+        let legacy_client = peer.client.clone();
+        (forwarders, (clients, legacy_client))
+    };
+    for forwarder in forwarders {
         forwarder.shutdown().await;
-        peer = state.peer.lock().await;
     }
-    if let Some(client) = peer.client.clone() {
-        drop(peer);
-        let _ = client.stop_worker().await;
+    // Ask every worker to stop (coordinator + up to 2 workers for the 3-node case).
+    let mut seen = std::collections::HashSet::new();
+    for client in clients.0.into_iter().chain(clients.1) {
+        // Deduplicate by endpoint; PeerClient has no id, so use endpoint string.
+        let key = client.endpoint().to_string();
+        if seen.insert(key) {
+            let _ = client.stop_worker().await;
+        }
     }
     if let Some(server) = state.peer.lock().await.server.as_ref() {
         server.stop_local_worker().await;

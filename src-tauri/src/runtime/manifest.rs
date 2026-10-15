@@ -4,6 +4,10 @@ use serde::Deserialize;
 
 use crate::types::{ErrorPayload, RuntimeStatus};
 
+#[cfg(target_os = "macos")]
+const MANIFEST_JSON: &str =
+    include_str!("../../../public/runtime/llama-cpp-manifest.macos-aarch64.json");
+#[cfg(not(target_os = "macos"))]
 const MANIFEST_JSON: &str = include_str!("../../../public/runtime/llama-cpp-manifest.json");
 
 #[derive(Clone, Debug, Deserialize)]
@@ -19,7 +23,9 @@ pub struct RuntimeManifest {
 pub struct RuntimeRelease {
     pub tag: String,
     pub llama_cpp: RuntimeAsset,
-    pub cuda_runtime: RuntimeAsset,
+    // Absent on macOS Metal builds (single archive, no separate CUDA runtime).
+    #[serde(default)]
+    pub cuda_runtime: Option<RuntimeAsset>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -49,37 +55,54 @@ pub fn status() -> RuntimeStatus {
             error: Some("The bundled runtime manifest is invalid.".into()),
         };
     };
-    let Some(release) = manifest.release else {
+    // macOS Apple Silicon uses the embedded Metal backend compiled into the app,
+    // so no external runtime download is required for inference.
+    #[cfg(target_os = "macos")]
+    {
+        let tag = manifest
+            .release
+            .as_ref()
+            .map(|release| format!("llama.cpp {} (Metal, embedded)", release.tag));
         return RuntimeStatus {
-            status: "missing".into(),
-            version: None,
-            error: Some("No pinned llama.cpp release is configured.".into()),
-        };
-    };
-    let current = runtime_root().join("current");
-    let missing: Vec<_> = manifest
-        .required_executables
-        .iter()
-        .filter(|name| !current.join(name).is_file())
-        .collect();
-    if missing.is_empty() {
-        RuntimeStatus {
             status: "ready".into(),
-            version: Some(format!("llama.cpp {}", release.tag)),
+            version: tag,
             error: None,
-        }
-    } else {
-        RuntimeStatus {
-            status: "missing".into(),
-            version: Some(format!("llama.cpp {}", release.tag)),
-            error: Some(format!(
-                "Missing runtime files: {}",
-                missing
-                    .into_iter()
-                    .map(|name| name.as_str())
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            )),
+        };
+    }
+    #[allow(unreachable_code)]
+    {
+        let Some(release) = manifest.release else {
+            return RuntimeStatus {
+                status: "missing".into(),
+                version: None,
+                error: Some("No pinned llama.cpp release is configured.".into()),
+            };
+        };
+        let current = runtime_root().join("current");
+        let missing: Vec<_> = manifest
+            .required_executables
+            .iter()
+            .filter(|name| !current.join(name).is_file())
+            .collect();
+        if missing.is_empty() {
+            RuntimeStatus {
+                status: "ready".into(),
+                version: Some(format!("llama.cpp {}", release.tag)),
+                error: None,
+            }
+        } else {
+            RuntimeStatus {
+                status: "missing".into(),
+                version: Some(format!("llama.cpp {}", release.tag)),
+                error: Some(format!(
+                    "Missing runtime files: {}",
+                    missing
+                        .into_iter()
+                        .map(|name| name.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )),
+            }
         }
     }
 }

@@ -52,16 +52,11 @@ where
             &release.llama_cpp,
             &staging.join("llama.zip"),
             2,
-            42,
-            &mut progress,
-        )
-        .await?;
-        emit(&mut progress, 44, "Downloading CUDA runtime");
-        let cuda = download_verified(
-            &release.cuda_runtime,
-            &staging.join("cuda.zip"),
-            44,
-            82,
+            if release.cuda_runtime.is_some() {
+                42
+            } else {
+                82
+            },
             &mut progress,
         )
         .await?;
@@ -69,7 +64,12 @@ where
         fs::create_dir_all(&extracted).map_err(runtime_io)?;
         emit(&mut progress, 84, "Extracting verified archives");
         extract_archive(&llama, &extracted)?;
-        extract_archive(&cuda, &extracted)?;
+        if let Some(cuda) = release.cuda_runtime.as_ref() {
+            emit(&mut progress, 44, "Downloading CUDA runtime");
+            let cuda_archive =
+                download_verified(cuda, &staging.join("cuda.zip"), 44, 82, &mut progress).await?;
+            extract_archive(&cuda_archive, &extracted)?;
+        }
         flatten_required(&extracted, &manifest.required_executables)?;
         validate_required(&extracted, &manifest.required_executables)?;
         activate(&root, &extracted, &release.tag)?;

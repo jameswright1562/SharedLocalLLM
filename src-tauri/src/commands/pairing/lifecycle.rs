@@ -129,9 +129,8 @@ fn persist_connected_peer(state: &AppState, event: PeerConnectedEvent) {
         trusted_at: now(),
         capabilities: Some(capabilities),
     };
-    if let Ok(mut inner) = state.lock() {
-        inner.peers.clear();
-        inner.peers.push(record);
+    if state.upsert_peer(record).is_err() {
+        return;
     }
     if let Err(error) = state.persist() {
         state.log("WARN", "peer_persist_failed", &error.to_string());
@@ -139,24 +138,32 @@ fn persist_connected_peer(state: &AppState, event: PeerConnectedEvent) {
     if let Err(error) = state.refresh_models_shared() {
         state.log("WARN", "model_fit_refresh_failed", &error.to_string());
     }
-    state.log("INFO", "peer_connected", "The other computer connected");
+    state.log("INFO", "peer_connected", "Another computer connected");
 }
 
 pub async fn refresh_peer_status(state: &AppState) {
-    let peer = match state.lock() {
-        Ok(inner) => inner.peers.first().cloned(),
+    let peers = match state.lock() {
+        Ok(inner) => inner.peers.clone(),
         Err(_) => return,
     };
-    let Some(peer) = peer else { return };
+    if peers.is_empty() {
+        return;
+    }
+    for peer in peers {
+        refresh_single_peer(state, &peer).await;
+    }
+}
+
+async fn refresh_single_peer(state: &AppState, peer: &PeerRecord) {
     let was_online = peer
         .capabilities
         .as_ref()
         .is_some_and(|capabilities| capabilities.online);
-    let result = connect_and_refresh(state, &peer).await;
+    let result = connect_and_refresh(state, peer).await;
     match result {
         Ok(capabilities) => {
             if let Ok(mut inner) = state.lock() {
-                if let Some(saved) = inner.peers.first_mut() {
+                if let Some(saved) = inner.peers.iter_mut().find(|p| p.id == peer.id) {
                     saved.name = capabilities.name.clone();
                     saved.capabilities = Some(capabilities);
                 }
@@ -165,16 +172,23 @@ pub async fn refresh_peer_status(state: &AppState) {
                 state.log(
                     "INFO",
                     "peer_reconnected",
-                    "The other computer answered a heartbeat",
+                    "Another computer answered a heartbeat",
                 );
             }
         }
         Err(error) => {
-            state.peer.lock().await.client = None;
+            {
+                let mut runtime = state.peer.lock().await;
+                runtime.clients.remove(&peer.id);
+                if runtime.clients.is_empty() {
+                    runtime.client = None;
+                }
+            }
             if let Ok(mut inner) = state.lock() {
                 if let Some(capabilities) = inner
                     .peers
-                    .first_mut()
+                    .iter_mut()
+                    .find(|saved| saved.id == peer.id)
                     .and_then(|saved| saved.capabilities.as_mut())
                 {
                     capabilities.online = false;
@@ -191,7 +205,7 @@ async fn connect_and_refresh(
     state: &AppState,
     peer: &PeerRecord,
 ) -> Result<NodeCapabilities, ErrorPayload> {
-    let client = state.peer_client().await?;
+    let client = state.peer_client_for(&peer.id).await?;
     client.heartbeat().await?;
     let mut capabilities: NodeCapabilities = serde_json::from_value(client.capabilities().await?)
         .map_err(|error| {
@@ -201,6 +215,12 @@ async fn connect_and_refresh(
     capabilities.name = peer.name.clone();
     capabilities.online = true;
     capabilities.role = "worker".into();
-    state.peer.lock().await.client = Some(Arc::clone(&client));
+    state
+        .peer
+        .lock()
+        .await
+        .clients
+        .insert(peer.id.clone(), Arc::clone(&client));
+    state.peer.lock().await.client = Some(client);
     Ok(capabilities)
 }

@@ -13,7 +13,7 @@ pub enum InferenceCommand {
         model_path: String,
         context_size: u32,
         allocations: Vec<GpuLayerAllocation>,
-        rpc_endpoint: Option<String>,
+        rpc_endpoints: Vec<String>,
         response: tokio::sync::oneshot::Sender<Result<(), ErrorPayload>>,
     },
 
@@ -60,6 +60,24 @@ impl InferenceEngine {
         allocations: Vec<GpuLayerAllocation>,
         rpc_endpoint: Option<String>,
     ) -> Result<(), ErrorPayload> {
+        self.load_multi(
+            model_path,
+            context_size,
+            allocations,
+            rpc_endpoint.into_iter().collect(),
+        )
+        .await
+    }
+
+    /// Multi-worker load: registers one RPC backend per remote computer
+    /// (supports the 3-node topology: coordinator + 2 workers).
+    pub async fn load_multi(
+        &self,
+        model_path: String,
+        context_size: u32,
+        allocations: Vec<GpuLayerAllocation>,
+        rpc_endpoints: Vec<String>,
+    ) -> Result<(), ErrorPayload> {
         let (tx, rx) = tokio::sync::oneshot::channel();
 
         self.sender
@@ -67,7 +85,7 @@ impl InferenceEngine {
                 model_path,
                 context_size,
                 allocations,
-                rpc_endpoint,
+                rpc_endpoints,
                 response: tx,
             })
             .map_err(|_| {
@@ -170,7 +188,7 @@ fn inference_thread(
                 model_path,
                 context_size,
                 allocations,
-                rpc_endpoint,
+                rpc_endpoints,
                 response,
             } => {
                 let result = load_model(
@@ -179,7 +197,7 @@ fn inference_thread(
                     model_path,
                     context_size,
                     allocations,
-                    rpc_endpoint,
+                    rpc_endpoints,
                 );
 
                 let _ = response.send(result);
@@ -210,10 +228,10 @@ fn load_model(
     model_path: String,
     context_size: u32,
     allocations: Vec<GpuLayerAllocation>,
-    rpc_endpoint: Option<String>,
+    rpc_endpoints: Vec<String>,
 ) -> Result<(), ErrorPayload> {
-    // 1. Register the remote RPC device BEFORE model loading.
-    if let Some(endpoint) = rpc_endpoint.as_deref() {
+    // 1. Register each remote RPC device BEFORE model loading (one per worker).
+    for endpoint in rpc_endpoints.iter() {
         rpc::register_remote_server(endpoint)?;
     }
 

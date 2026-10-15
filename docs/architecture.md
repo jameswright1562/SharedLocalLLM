@@ -1,7 +1,10 @@
 # Architecture
 
-SharedLocalLLM uses one Tauri application on both Windows computers. Roles are selected at runtime,
-not encoded in separate builds.
+SharedLocalLLM uses one Tauri application on every computer (Windows and macOS).
+Roles are selected at runtime, not encoded in separate builds. The cluster supports
+up to three trusted computers on a private LAN: one coordinator plus up to two
+workers (for example two Windows NVIDIA computers plus one Mac with Apple Silicon).
+Layer splits, capacity checks, and benchmarks already operate over N nodes.
 
 ## Components
 
@@ -9,11 +12,13 @@ not encoded in separate builds.
   and diagnostics. It receives typed events but cannot start arbitrary executables.
 - **Rust application core:** trusted identities, peer protocol, capability discovery, catalogue,
   profile selection, process supervision, API proxy, and persistence.
-- **Runtime manager:** installs only a pinned official `llama.cpp` release whose archive size and
+- **Runtime manager (Windows):** installs only a pinned official `llama.cpp` release whose archive size and
   SHA-256 match the bundled manifest. A previous verified runtime remains available for rollback.
-- **Coordinator runtime:** `llama-server.exe` owns the selected model and connects to the local and
-  remote GPU devices using layer split.
-- **Worker runtime:** `ggml-rpc-server.exe` listens on an ephemeral loopback port. It is reachable
+  On macOS Apple Silicon the app uses the embedded Metal backend compiled in via `llama-cpp-4`
+  (`metal` feature); no external runtime download is required.
+- **Coordinator runtime:** the embedded inference engine owns the selected model and connects to the local and
+  remote GPU devices using layer split (one RPC backend registered per worker).
+- **Worker runtime:** the embedded RPC worker listens on loopback (`127.0.0.1:50052`). It is reachable
   only through the Rust process's peer tunnel.
 - **Local API:** binds to `127.0.0.1`. Chat from the worker is proxied over the peer channel to the
   computer that launched `llama-server`.

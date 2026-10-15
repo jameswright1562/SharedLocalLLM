@@ -59,6 +59,7 @@ pub fn run() {
             commands::network::run_network_test,
             commands::pairing::connect_peer,
             commands::pairing::reset::reset_pairing,
+            commands::pairing::reset::forget_peer,
             commands::cluster::split::estimate_model_split,
             commands::cluster::start_cluster,
             commands::cluster::stop_cluster,

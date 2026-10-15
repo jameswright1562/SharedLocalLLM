@@ -33,6 +33,22 @@ export const demoNodes: NodeCapabilities[] = [
     },
     adapter: { name: "1 GbE", kind: "ethernet", linkSpeedMbps: 1000 },
   },
+  {
+    id: "mac-node",
+    name: "Mac worker (M-series)",
+    online: true,
+    role: "worker",
+    cpu: "Apple M-series",
+    ramTotalGb: 24,
+    ramAvailableGb: 16.4,
+    gpu: {
+      name: "Apple M-series GPU (unified memory, Metal)",
+      vramTotalGb: 24,
+      vramAvailableGb: 12.3,
+      driverVersion: "macOS Metal",
+    },
+    adapter: { name: "Wi-Fi (en0)", kind: "wifi" },
+  },
 ];
 
 export const demoModels: ModelRecord[] = [
@@ -96,7 +112,7 @@ const baseSnapshot: AppSnapshot = {
   setupComplete: true,
   runtime: { status: "ready", version: "llama.cpp b6123" },
   deviceName: "Primary node",
-  nodes: demoNodes,
+  nodes: demoNodes.slice(0, 2),
   models: demoModels,
   modelDirectories: [
     {
